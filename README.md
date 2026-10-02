@@ -45,12 +45,12 @@ controller or a DAW/sequencer.
     Unpitched material such as drums or full mixes leaves them unchanged.
   - **One-shot**: each note plays the whole start–end region and ignores note-off.
   - **Slice**: cuts the region into equal slices, or at detected transients
-    (Sensitivity sets how many), mapped to consecutive notes from Base Note. Load a drum
+    (Sensitivity sets how many), mapped to consecutive notes from First Slice. Load a drum
     break and each pad plays one hit.
 
   It also has start/end, reverse, tune, an amp envelope, a multimode filter, and
   velocity control of level and cutoff. Playback uses 4-point Hermite interpolation. Press
-  `f` to load a WAV or FLAC. Root and Base Note accept names like `c4` or `f#2`. In keyboard play mode a
+  `f` to load a WAV or FLAC. Root Note and First Slice accept names like `c4` or `f#2`. In keyboard play mode a
   sliced sampler starts at its first slice.
 - Every slot has volume, pan, reverb send, transpose and bend range. The polyphonic synths
   also have voice count and glide.

@@ -5,7 +5,7 @@
 //! - **One-shot**: every note plays the whole start..end region; note-off is
 //!   ignored.
 //! - **Slice**: the region is cut into equal slices or at detected transients,
-//!   mapped to consecutive notes from "Base Note", each played as a one-shot.
+//!   mapped to consecutive notes from "First Slice", each played as a one-shot.
 
 use std::sync::Arc;
 
@@ -64,7 +64,7 @@ pub static PARAMS: [P; 26] = [
     P::int("slices", "Slices", "Slice", 2, MAX_SLICES as i32, 16, Unit::None),
     P::choice("slice_by", "Slice By", "Slice", &SLICE_BY, 0),
     P::float("sensitivity", "Sensitivity", "Slice", 0.0, 1.0, 0.5, Unit::Percent),
-    P::int("base_note", "Base Note", "Slice", 0, 127, 36, Unit::Note),
+    P::int("base_note", "First Slice", "Slice", 0, 127, 36, Unit::Note),
     P::float("attack", "Attack", "Amp Env", 0.001, 10.0, 0.002, Unit::Seconds).exp(),
     P::float("decay", "Decay", "Amp Env", 0.005, 20.0, 1.0, Unit::Seconds).exp(),
     P::float("sustain", "Sustain", "Amp Env", 0.0, 1.0, 1.0, Unit::Percent),
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn slice_notes_map_from_base_note() {
         let mut s = synth_with(&[("mode", 2.0), ("slices", 4.0)]);
-        s.note_on(35, 1.0); // below base note: ignored
+        s.note_on(35, 1.0); // below the first slice: ignored
         s.note_on(40, 1.0); // beyond slice 4: ignored
         assert_eq!(s.poly.active_voices(), 0);
         s.note_on(37, 1.0);
