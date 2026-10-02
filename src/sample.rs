@@ -24,6 +24,9 @@ pub struct Sample {
     pub overview: Vec<(f32, f32)>,
     /// Onset positions (in frames) with strength 0..=1, strongest first.
     pub onsets: Vec<(usize, f32)>,
+    /// Detected pitch as a fractional MIDI note, for loaded files that have a
+    /// clear one (see `detect_pitch`).
+    pub pitch: Option<f32>,
 }
 
 pub const OVERVIEW_BUCKETS: usize = 1024;
@@ -49,6 +52,7 @@ impl Sample {
             sample_rate,
             overview: Vec::new(),
             onsets: Vec::new(),
+            pitch: None,
         };
         s.overview = s.compute_overview();
         s.onsets = s.detect_onsets();
@@ -126,6 +130,79 @@ impl Sample {
             .collect()
     }
 
+    /// Estimate the sample's fundamental with the YIN algorithm over several
+    /// windows. Returns a fractional MIDI note, or `None` when the sample
+    /// has no clear, stable pitch (drums, noise, chords).
+    pub fn detect_pitch(&self) -> Option<f32> {
+        const W: usize = 1024; // integration window
+        const WINDOWS: usize = 9;
+        const THRESHOLD: f32 = 0.15;
+        let sr = self.sample_rate;
+        let tau_min = (sr / 2000.0) as usize; // up to ~2 kHz
+        let tau_max = (sr / 40.0) as usize; // down to 40 Hz
+        let span = W + tau_max + 2;
+        let len = self.len();
+        if len < span {
+            return None;
+        }
+        // Skip the attack: analyse from 10% in, or from just after the
+        // loudest point if that comes later.
+        let peak_at = (0..len).step_by(64).max_by(|&a, &b| self.mono_at(a).abs().total_cmp(&self.mono_at(b).abs()))?;
+        let from = (len / 10).max(peak_at + (0.03 * sr) as usize).min(len - span);
+        let to = (len - span).min(from + (2.0 * sr) as usize).max(from);
+        let peak = self.data.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+
+        let mut buf = vec![0.0f32; span];
+        let mut d = vec![0.0f32; tau_max + 2];
+        let mut notes: Vec<f32> = Vec::new();
+        let mut analysed = 0;
+        for k in 0..WINDOWS {
+            let start = from + (to - from) * k / (WINDOWS - 1);
+            for (j, b) in buf.iter_mut().enumerate() {
+                *b = self.mono_at(start + j);
+            }
+            let rms = (buf[..W].iter().map(|v| v * v).sum::<f32>() / W as f32).sqrt();
+            if rms < peak * 0.01 {
+                continue; // too quiet to judge
+            }
+            analysed += 1;
+            // Difference function and its cumulative-mean normalisation.
+            d[0] = 1.0;
+            let mut running = 0.0;
+            for tau in 1..=tau_max + 1 {
+                let mut sum = 0.0;
+                for j in 0..W {
+                    let x = buf[j] - buf[j + tau];
+                    sum += x * x;
+                }
+                running += sum;
+                d[tau] = if running > 0.0 { sum * tau as f32 / running } else { 1.0 };
+            }
+            // First dip under the threshold, then walk down to its minimum.
+            let Some(mut tau) = (tau_min.max(2)..tau_max).find(|&t| d[t] < THRESHOLD) else { continue };
+            while tau + 1 < tau_max && d[tau + 1] < d[tau] {
+                tau += 1;
+            }
+            // Parabolic interpolation for sub-sample accuracy.
+            let (a, b, c) = (d[tau - 1], d[tau], d[tau + 1]);
+            let denom = a - 2.0 * b + c;
+            let shift = if denom.abs() > 1e-9 { 0.5 * (a - c) / denom } else { 0.0 };
+            let freq = sr / (tau as f32 + shift.clamp(-1.0, 1.0));
+            notes.push(69.0 + 12.0 * (freq / 440.0).log2());
+        }
+        if analysed == 0 || notes.len() * 3 < analysed * 2 {
+            return None; // most windows had no clear periodicity
+        }
+        notes.sort_by(f32::total_cmp);
+        let median = notes[notes.len() / 2];
+        // Require the estimates to agree; otherwise the pitch is unstable.
+        let agreeing: Vec<f32> = notes.iter().copied().filter(|n| (n - median).abs() < 0.5).collect();
+        if agreeing.len() * 3 < analysed * 2 {
+            return None;
+        }
+        Some(agreeing.iter().sum::<f32>() / agreeing.len() as f32)
+    }
+
     /// Energy-rise onset detector: frames whose level jumps well above the
     /// preceding frames. Strength is normalised to the strongest onset.
     fn detect_onsets(&self) -> Vec<(usize, f32)> {
@@ -196,7 +273,9 @@ pub fn load_file(path: &Path) -> Result<Sample> {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "sample".into());
-    Ok(Sample::new(name, left, right, sample_rate))
+    let mut sample = Sample::new(name, left, right, sample_rate);
+    sample.pitch = sample.detect_pitch();
+    Ok(sample)
 }
 
 /// Interleaved samples, channel count and sample rate.
@@ -447,6 +526,39 @@ mod tests {
             // Left and right hold different signals, so channels weren't mixed.
             assert_ne!(flac.data, *flac.right.as_ref().unwrap());
         }
+    }
+
+    fn tone(freq: f32, seconds: f32) -> Sample {
+        let sr = 48_000.0;
+        let data = (0..(sr * seconds) as usize)
+            .map(|i| {
+                let t = i as f32 / sr;
+                // A few harmonics, like a real instrument.
+                (1..=5).map(|h| (std::f32::consts::TAU * freq * h as f32 * t).sin() / h as f32).sum::<f32>()
+            })
+            .collect();
+        Sample::new("tone", data, None, sr)
+    }
+
+    #[test]
+    fn detects_pitch_to_within_a_few_cents() {
+        crate::dsp::init_tables();
+        for (freq, note) in [(440.0, 69.0), (55.0, 33.0), (1046.5, 84.0), (440.0 * 2f32.powf(0.3 / 12.0), 69.3)] {
+            let p = tone(freq, 1.0).detect_pitch().unwrap_or_else(|| panic!("{freq} Hz: no pitch"));
+            assert!((p - note).abs() < 0.05, "{freq} Hz: detected {p}, expected {note}");
+        }
+    }
+
+    #[test]
+    fn builtin_sources_read_as_c4_and_noise_has_no_pitch() {
+        crate::dsp::init_tables();
+        let b = builtins();
+        for s in b.iter().filter(|s| matches!(s.name.as_str(), "Choir" | "Saw" | "Pluck")) {
+            let p = s.detect_pitch().unwrap_or_else(|| panic!("{}: no pitch", s.name));
+            assert!((p - 60.0).abs() < 0.1, "{}: {p}", s.name);
+        }
+        let noise = b.iter().find(|s| s.name == "Noise").unwrap();
+        assert_eq!(noise.detect_pitch(), None);
     }
 
     #[test]

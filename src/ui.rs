@@ -458,10 +458,17 @@ fn draw_waveform(f: &mut Frame, app: &App, slot: usize, area: Rect) {
             Span::styled(sample.name.clone(), Style::default().fg(SAMPLER_COLOR).bold()),
             Span::styled(
                 format!(
-                    "  {:.2}s · {} · {:.1} kHz · {}{}",
+                    "  {:.2}s · {} · {:.1} kHz{} · {}{}",
                     sample.duration(),
                     if sample.is_stereo() { "stereo" } else { "mono" },
                     sample.sample_rate / 1000.0,
+                    match sample.pitch {
+                        Some(p) => {
+                            let n = p.round().clamp(0.0, 127.0);
+                            format!(" · pitch {} {:+.0} ct", crate::midi::note_name(n as u8), (p - n) * 100.0)
+                        }
+                        None => String::new(),
+                    },
                     mode,
                     if layout.reverse { " · reversed" } else { "" }
                 ),

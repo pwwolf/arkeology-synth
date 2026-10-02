@@ -561,6 +561,7 @@ impl App {
         match sample::load_file(path) {
             Ok(s) => {
                 let dur = s.duration();
+                let pitch = s.pitch;
                 let arc = Arc::new(s);
                 self.send(Command::SetSample { slot: index, sample: Some(arc.clone()) });
                 if let Some(slot) = self.slots[index].as_mut() {
@@ -573,9 +574,35 @@ impl App {
                     let file = granular::SOURCES.iter().position(|s| *s == "File").unwrap_or(0);
                     self.set_param(Target::Slot(index), src, file as f32);
                 }
-                self.info(format!("loaded {} ({dur:.1}s)", path.display()));
+                let mut msg = format!("loaded {} ({dur:.1}s)", path.display());
+                if kind == Some(SynthKind::Sampler) {
+                    msg.push_str(&self.apply_detected_pitch(index, pitch));
+                }
+                self.info(msg);
             }
             Err(e) => self.error(format!("{e:#}")),
+        }
+    }
+
+    /// Set a sampler's Root Note and Tune from a detected pitch so the sample
+    /// plays in tune across the keyboard. Returns text for the status line.
+    fn apply_detected_pitch(&mut self, index: usize, pitch: Option<f32>) -> String {
+        let Some(p) = pitch else {
+            return " · no clear pitch, Root Note unchanged".to_string();
+        };
+        let root = p.round().clamp(0.0, 127.0);
+        let cents = ((p - root) * 100.0).round();
+        let p_kind = SynthKind::Sampler;
+        let root_i = p_kind.index_of("root").expect("root param");
+        let tune_i = p_kind.index_of("tune").expect("tune param");
+        self.set_param(Target::Slot(index), root_i, root);
+        // Played at its root, the sample must sound exactly that note.
+        self.set_param(Target::Slot(index), tune_i, -cents);
+        let name = crate::midi::note_name(root as u8);
+        if cents == 0.0 {
+            format!(" · pitch {name}: Root Note set to {name}")
+        } else {
+            format!(" · pitch {name} {cents:+.0} ct: Root Note {name}, Tune {:+.0} ct", -cents)
         }
     }
 
@@ -1386,6 +1413,34 @@ mod tests {
             app.on_key(key(KeyCode::Esc));
             assert!(app.popup.is_none());
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn loading_a_sample_sets_root_from_detected_pitch() {
+        let dir = temp_dir("pitch");
+        let mut app = test_app(&dir);
+        app.add_synth(SynthKind::Sampler);
+        let slot = app.selected_slot().unwrap();
+        // One second of A4 played 25 cents flat.
+        let path = dir.join("samples/flat-a4.wav");
+        let spec = hound::WavSpec { channels: 1, sample_rate: 44_100, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut w = hound::WavWriter::create(&path, spec).unwrap();
+        let freq = 440.0 * 2f32.powf(-0.25 / 12.0);
+        for i in 0..44_100 {
+            let t = i as f32 / 44_100.0;
+            let v = (std::f32::consts::TAU * freq * t).sin() * 0.5 + (std::f32::consts::TAU * 2.0 * freq * t).sin() * 0.2;
+            w.write_sample((v * 32767.0) as i16).unwrap();
+        }
+        w.finalize().unwrap();
+
+        app.load_sample(slot, &path);
+        let p = |key: &str| app.param_value(Target::Slot(slot), SynthKind::Sampler.index_of(key).unwrap());
+        assert_eq!(p("root"), 69.0);
+        assert!((p("tune") - 25.0).abs() <= 1.0, "tune {}", p("tune"));
+        assert_eq!(p("source"), 0.0, "source switched to File");
+        let status = app.status.as_ref().unwrap().text.clone();
+        assert!(status.contains("Root Note A4"), "{status}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -40,7 +40,9 @@ controller or a DAW/sequencer.
 - **Sampler**: plays a WAV or FLAC file (mono or stereo) or a built-in source, with a waveform view
   above its parameters. Three modes:
   - **Classic**: pitched across the keyboard from a Root Note, with an optional
-    crossfaded sustain loop. Loop points can be moved while notes play.
+    crossfaded sustain loop. Loop points can be moved while notes play. When you load a
+    file, its pitch is detected (YIN) and Root Note and Tune are set so it plays in tune.
+    Unpitched material such as drums or full mixes leaves them unchanged.
   - **One-shot**: each note plays the whole start–end region and ignores note-off.
   - **Slice**: cuts the region into equal slices, or at detected transients
     (Sensitivity sets how many), mapped to consecutive notes from Base Note. Load a drum
