@@ -161,7 +161,10 @@ impl App {
 
     fn tool_get_params(&self, args: &Value) -> ToolResult {
         let t = self.target_arg(args)?;
-        let params: Vec<Value> = (0..self.param_count(t))
+        // Settings of inactive FX types are hidden, as in the TUI.
+        let params: Vec<Value> = self
+            .visible_params(t)
+            .into_iter()
             .map(|i| {
                 let d = self.param_desc(t, i);
                 let v = self.param_value(t, i);

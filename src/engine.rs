@@ -12,6 +12,7 @@ use std::time::Instant;
 use crossbeam_queue::ArrayQueue;
 
 use crate::dsp::{Smooth, pan_gains};
+use crate::fx::{self, FX_UNITS, FxUnit};
 use crate::midi::{MidiKind, MidiMsg};
 use crate::params::master;
 use crate::reverb::Reverb;
@@ -36,6 +37,9 @@ pub enum Command {
     SetMute { slot: usize, on: bool },
     SetSolo { slot: usize, on: bool },
     SetSample { slot: usize, sample: Option<Arc<Sample>> },
+    /// Swap in a freshly built insert effect (built off the audio thread).
+    SetFx { slot: usize, unit: usize, fx: Box<FxUnit> },
+    SetMasterFx { unit: usize, fx: Box<FxUnit> },
     Panic,
 }
 
@@ -44,6 +48,7 @@ pub enum Command {
 pub enum Garbage {
     Slot(Box<Slot>),
     Sample(Arc<Sample>),
+    Fx(Box<FxUnit>),
 }
 
 pub type CommandQueue = Arc<ArrayQueue<Command>>;
@@ -59,6 +64,8 @@ pub struct Slot {
     gain: Smooth,
     pan: Smooth,
     send: Smooth,
+    fx_base: usize,
+    fx: [Box<FxUnit>; FX_UNITS],
 }
 
 impl Slot {
@@ -75,7 +82,11 @@ impl Slot {
         let _ = inst.set_sample(sample);
         inst.update(&params);
         let ctrl_rate = sample_rate / MAX_BLOCK as f32;
+        let fx_base = kind.fx_base();
+        let fx = std::array::from_fn(|u| FxUnit::from_values(fx::unit_values(&params, fx_base, u), sample_rate));
         Box::new(Slot {
+            fx_base,
+            fx,
             dirty: false,
             channel,
             mute: false,
@@ -132,6 +143,8 @@ pub struct Engine {
     garbage: GarbageQueue,
     telemetry: Arc<Telemetry>,
     master: [f32; master::PARAMS.len()],
+    master_fx: [Box<FxUnit>; FX_UNITS],
+    master_dirty: bool,
     master_gain: Smooth,
     reverb: Reverb,
     buf_l: [f32; MAX_BLOCK],
@@ -170,6 +183,8 @@ impl Engine {
             send_l: [0.0; MAX_BLOCK],
             send_r: [0.0; MAX_BLOCK],
             cpu_avg: 0.0,
+            master_fx: std::array::from_fn(|_| FxUnit::off(sample_rate)),
+            master_dirty: false,
         };
         e.apply_reverb_params();
         e
@@ -233,7 +248,30 @@ impl Engine {
             Command::SetMaster { index, value } => {
                 if let Some(p) = self.master.get_mut(index) {
                     *p = value;
-                    self.apply_reverb_params();
+                    if index >= master::FX_BASE {
+                        self.master_dirty = true;
+                    } else {
+                        self.apply_reverb_params();
+                    }
+                }
+            }
+            Command::SetFx { slot, unit, fx } => {
+                let old = match self.slots.get_mut(slot).and_then(|s| s.as_mut()) {
+                    Some(s) if unit < FX_UNITS => {
+                        s.dirty = true;
+                        std::mem::replace(&mut s.fx[unit], fx)
+                    }
+                    _ => fx,
+                };
+                self.discard(Garbage::Fx(old));
+            }
+            Command::SetMasterFx { unit, fx } => {
+                if unit < FX_UNITS {
+                    self.master_dirty = true;
+                    let old = std::mem::replace(&mut self.master_fx[unit], fx);
+                    self.discard(Garbage::Fx(old));
+                } else {
+                    self.discard(Garbage::Fx(fx));
                 }
             }
             Command::SetChannel { slot, channel } => {
@@ -335,12 +373,19 @@ impl Engine {
             let Some(s) = slot.as_mut() else { continue };
             if s.dirty {
                 s.inst.update(&s.params);
+                for (u, unit) in s.fx.iter_mut().enumerate() {
+                    unit.update(fx::unit_values(&s.params, s.fx_base, u));
+                }
                 s.dirty = false;
             }
             let (bl, br) = (&mut self.buf_l[..n], &mut self.buf_r[..n]);
             bl.fill(0.0);
             br.fill(0.0);
             s.inst.render(bl, br);
+            // Insert effects, pre-fader.
+            for unit in &mut s.fx {
+                unit.process(bl, br);
+            }
 
             let audible = !s.mute && (!any_solo || s.solo);
             let vol = s.params[synth::VOLUME];
@@ -365,6 +410,21 @@ impl Engine {
 
         self.reverb.process(&mut self.send_l[..n], &mut self.send_r[..n]);
         let ret = self.master[master::REVERB_RETURN];
+        for i in 0..n {
+            self.mix_l[i] += self.send_l[i] * ret;
+            self.mix_r[i] += self.send_r[i] * ret;
+        }
+        // Master insert effects, after the reverb return and before the
+        // master volume and clipper.
+        if self.master_dirty {
+            for (u, unit) in self.master_fx.iter_mut().enumerate() {
+                unit.update(fx::unit_values(&self.master, master::FX_BASE, u));
+            }
+            self.master_dirty = false;
+        }
+        for unit in &mut self.master_fx {
+            unit.process(&mut self.mix_l[..n], &mut self.mix_r[..n]);
+        }
         let vol = self.master[master::VOLUME];
         let drive = self.master[master::DRIVE];
         let pre = 1.0 + drive * 8.0;
@@ -372,8 +432,8 @@ impl Engine {
         let (mut peak_l, mut peak_r) = (0.0f32, 0.0f32);
         for i in 0..n {
             let g = self.master_gain.next(vol * vol * MASTER_GAIN);
-            let l = soft_clip((self.mix_l[i] + self.send_l[i] * ret) * g * pre) * post;
-            let r = soft_clip((self.mix_r[i] + self.send_r[i] * ret) * g * pre) * post;
+            let l = soft_clip(self.mix_l[i] * g * pre) * post;
+            let r = soft_clip(self.mix_r[i] * g * pre) * post;
             self.mix_l[i] = l;
             self.mix_r[i] = r;
             peak_l = peak_l.max(l.abs());
@@ -463,5 +523,32 @@ mod tests {
         assert!(out.iter().all(|v| v.is_finite()));
         assert!(rms(&out) > 0.01, "rms {}", rms(&out));
         assert!(out.iter().all(|v| v.abs() <= 1.0));
+    }
+
+    #[test]
+    fn insert_delay_rings_on_after_the_synth_stops() {
+        crate::dsp::init_tables();
+        let sr = 48_000.0;
+        let builtins = sample::builtins();
+        let cmds: CommandQueue = Arc::new(ArrayQueue::new(64));
+        let garbage: GarbageQueue = Arc::new(ArrayQueue::new(64));
+        let mut e = Engine::new(sr, cmds.clone(), garbage, Arc::new(Telemetry::default()));
+        let kind = SynthKind::Drums;
+        let mut values = kind.defaults();
+        let set = |v: &mut Vec<f32>, k: &str, x: f32| v[kind.index_of(k).unwrap()] = x;
+        set(&mut values, "reverb_send", 0.0);
+        set(&mut values, "fx1_type", 1.0); // Delay
+        set(&mut values, "fx1_mix", 0.5);
+        set(&mut values, "fx1_delay_time", 0.5);
+        set(&mut values, "fx1_delay_feedback", 0.6);
+        let slot = Slot::new(kind, values, Some(9), sr, &builtins, None);
+        cmds.push(Command::InstallSlot { slot: 0, data: slot }).ok();
+        cmds.push(Command::NoteOn { slot: 0, note: 37, velocity: 1.0 }).ok(); // short rimshot
+        let mut out = vec![0.0; 2 * 48_000 * 2];
+        e.process(&mut out, 2);
+        // The rim is ~40 ms long; echoes should still be audible a second later.
+        let window = |s: f32| &out[(s * 96_000.0) as usize..((s + 0.1) * 96_000.0) as usize];
+        assert!(rms(window(1.0)) > 0.005, "no echo tail: {}", rms(window(1.0)));
+        assert!(rms(window(0.2)) < 1e-4, "echo arrived early");
     }
 }

@@ -29,6 +29,7 @@ pub enum Unit {
     Pan,
     /// MIDI note number, shown with its name.
     Note,
+    Decibels,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -217,6 +218,7 @@ impl ParamDesc {
             Unit::Cents => format!("{v:+.0} ct"),
             Unit::Ratio => format!("x{v:.3}"),
             Unit::Note => format!("{v:.0}"),
+            Unit::Decibels => format!("{v:+.1} dB"),
             Unit::Pan if v.abs() < 0.005 => "C".into(),
             Unit::Pan if v < 0.0 => format!("L{:.0}", -v * 100.0),
             Unit::Pan => format!("R{:.0}", v * 100.0),
@@ -305,14 +307,32 @@ pub mod master {
     pub const REVERB_RETURN: usize = 4;
     pub const DRIVE: usize = 5;
 
-    pub static PARAMS: [P; 6] = [
+    /// Where the master FX chain's parameters start.
+    pub const FX_BASE: usize = 6;
+
+    const BASE: [P; FX_BASE] = [
         P::float("volume", "Volume", "Master", 0.0, 1.0, 0.8, Unit::Percent),
-        P::float("reverb_size", "Size", "Reverb", 0.0, 1.0, 0.75, Unit::Percent),
-        P::float("reverb_damp", "Damping", "Reverb", 0.0, 1.0, 0.4, Unit::Percent),
-        P::float("reverb_width", "Width", "Reverb", 0.0, 1.0, 1.0, Unit::Percent),
-        P::float("reverb_return", "Return", "Reverb", 0.0, 1.0, 0.5, Unit::Percent),
+        P::float("reverb_size", "Size", "Reverb Send", 0.0, 1.0, 0.75, Unit::Percent),
+        P::float("reverb_damp", "Damping", "Reverb Send", 0.0, 1.0, 0.4, Unit::Percent),
+        P::float("reverb_width", "Width", "Reverb Send", 0.0, 1.0, 1.0, Unit::Percent),
+        P::float("reverb_return", "Return", "Reverb Send", 0.0, 1.0, 0.5, Unit::Percent),
         P::float("drive", "Drive", "Master", 0.0, 1.0, 0.0, Unit::Percent),
     ];
+
+    const LEN: usize = FX_BASE + crate::fx::TABLE.len();
+
+    const fn build() -> [P; LEN] {
+        let mut out = [BASE[0]; LEN];
+        let mut i = 0;
+        while i < LEN {
+            out[i] = if i < FX_BASE { BASE[i] } else { crate::fx::TABLE[i - FX_BASE] };
+            i += 1;
+        }
+        out
+    }
+
+    /// Master bus parameters followed by the master FX chain.
+    pub static PARAMS: [P; LEN] = build();
 }
 
 #[cfg(test)]

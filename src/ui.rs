@@ -273,6 +273,12 @@ enum GridLine {
 }
 
 fn group_title(app: &App, target: Target, group: &str) -> String {
+    if let Some(n) = group.strip_prefix("FX ").and_then(|n| n.parse::<usize>().ok()) {
+        let i = app.fx_base(target) + (n - 1) * crate::fx::STRIDE + crate::fx::TYPE;
+        let kind = crate::fx::FxKind::from_value(app.param_value(target, i));
+        let title = if target == Target::Master { format!("Master FX {n}") } else { group.to_string() };
+        return format!("{title} · {}", kind.name());
+    }
     if let Target::Slot(i) = target
         && let Some(s) = &app.slots[i]
         && s.kind == SynthKind::Fm
@@ -317,15 +323,19 @@ fn draw_params(f: &mut Frame, app: &mut App, area: Rect) {
         inner = rest;
     }
 
-    let count = app.param_count(target);
-    if count == 0 || inner.height < 2 {
+    let visible = app.visible_params(target);
+    if visible.is_empty() || inner.height < 2 {
         return;
     }
-    app.param_cursor = app.param_cursor.min(count - 1);
+    // Keep the cursor on a visible parameter (e.g. after an FX type change).
+    if !visible.contains(&app.param_cursor) {
+        let pos = visible.iter().rposition(|&i| i <= app.param_cursor).unwrap_or(0);
+        app.param_cursor = visible[pos];
+    }
 
-    // Split params into contiguous groups.
+    // Split visible params into contiguous groups.
     let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
-    for i in 0..count {
+    for &i in &visible {
         let g = app.param_desc(target, i).group;
         match groups.last_mut() {
             Some((name, idx)) if name == g => idx.push(i),
@@ -835,6 +845,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         k("enter", "type an exact value (e.g. 250ms, 2.5k, 40%)"),
         k("⌫", "reset to default"),
         k("c / C", "MIDI-learn a CC to this parameter / clear mapping"),
+        k("FX 1-3", "set an FX unit's Type (delay, reverb, chorus, drive, EQ…) to show its controls"),
         h("Patches & sessions"),
         k("l / w", "load / write the selected synth's patch"),
         k("L / W", "load / write the whole rack as a session"),

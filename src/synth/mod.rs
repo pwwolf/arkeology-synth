@@ -85,16 +85,29 @@ impl SynthKind {
     }
 
     pub fn param_count(self) -> usize {
+        self.fx_base() + crate::fx::PARAMS.len()
+    }
+
+    /// Index where this synth's insert FX parameters start.
+    pub fn fx_base(self) -> usize {
         COMMON.len() + self.specific().len()
     }
 
-    /// Full parameter list = the common output section followed by synth params.
+    /// Full parameter list: the common output section, the synth's own
+    /// parameters, then its insert FX chain.
     pub fn param(self, i: usize) -> &'static P {
-        if i < COMMON.len() { &COMMON[i] } else { &self.specific()[i - COMMON.len()] }
+        let fx = self.fx_base();
+        if i < COMMON.len() {
+            &COMMON[i]
+        } else if i < fx {
+            &self.specific()[i - COMMON.len()]
+        } else {
+            &crate::fx::PARAMS[i - fx]
+        }
     }
 
     pub fn params(self) -> impl Iterator<Item = &'static P> {
-        COMMON.iter().chain(self.specific().iter())
+        COMMON.iter().chain(self.specific().iter()).chain(crate::fx::PARAMS.iter())
     }
 
     pub fn defaults(self) -> Vec<f32> {

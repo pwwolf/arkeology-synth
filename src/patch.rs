@@ -26,7 +26,14 @@ impl Patch {
         Patch {
             name: name.to_string(),
             kind,
-            params: kind.params().zip(values).map(|(p, v)| (p.key.to_string(), *v)).collect(),
+            // Settings of inactive FX types are left out to keep files readable.
+            params: kind
+                .params()
+                .zip(values)
+                .enumerate()
+                .filter(|(i, _)| crate::fx::visible(values, kind.fx_base(), *i))
+                .map(|(_, (p, v))| (p.key.to_string(), *v))
+                .collect(),
             sample,
         }
     }
@@ -224,6 +231,11 @@ pub fn factory_patches() -> Vec<Patch> {
             "E.Piano",
             Fm,
             &[
+                ("fx1_type", 11.0),
+                ("fx1_mix", 1.0),
+                ("fx1_trem_rate", 4.0),
+                ("fx1_trem_depth", 0.35),
+                ("fx1_trem_pan", 1.0),
                 ("algorithm", 4.0),
                 ("op1_level", 0.8),
                 ("op1_decay", 2.5),
@@ -567,6 +579,11 @@ pub fn factory_patches() -> Vec<Patch> {
             "Acid Squelch",
             Acid,
             &[
+                ("fx1_type", 1.0),
+                ("fx1_mix", 0.25),
+                ("fx1_delay_time", 0.28),
+                ("fx1_delay_feedback", 0.45),
+                ("fx1_delay_tone", 3000.0),
                 ("cutoff", 260.0),
                 ("resonance", 0.88),
                 ("env_mod", 0.75),
@@ -631,6 +648,13 @@ pub fn factory_patches() -> Vec<Patch> {
             "909 Kit",
             Drums,
             &[
+                ("fx1_type", 9.0),
+                ("fx1_mix", 1.0),
+                ("fx1_comp_threshold", -20.0),
+                ("fx1_comp_ratio", 4.0),
+                ("fx1_comp_attack", 0.01),
+                ("fx1_comp_release", 0.1),
+                ("fx1_comp_makeup", 1.0),
                 ("kick_tune", 1.0),
                 ("kick_decay", 0.35),
                 ("kick_tone", 0.85),
@@ -650,6 +674,10 @@ pub fn factory_patches() -> Vec<Patch> {
             "Lo-Fi Kit",
             Drums,
             &[
+                ("fx1_type", 10.0),
+                ("fx1_mix", 1.0),
+                ("fx1_crush_bits", 10.0),
+                ("fx1_crush_downsample", 3.0),
                 ("transpose", -3.0),
                 ("kick_decay", 0.4),
                 ("kick_tone", 0.6),
@@ -788,6 +816,10 @@ pub fn factory_patches() -> Vec<Patch> {
             "Supersaw Lead",
             Analog,
             &[
+                ("fx1_type", 1.0),
+                ("fx1_mix", 0.2),
+                ("fx1_delay_time", 0.33),
+                ("fx1_delay_feedback", 0.35),
                 ("voices", 4.0),
                 ("glide", 0.03),
                 ("unison", 7.0),
@@ -887,6 +919,12 @@ pub fn factory_patches() -> Vec<Patch> {
             "Clav",
             Physical,
             &[
+                ("fx1_type", 7.0),
+                ("fx1_mix", 1.0),
+                ("fx1_filter_cutoff", 1200.0),
+                ("fx1_filter_resonance", 0.6),
+                ("fx1_filter_lfo_rate", 2.0),
+                ("fx1_filter_lfo_depth", 0.5),
                 ("hardness", 0.85),
                 ("position", 0.08),
                 ("decay", 1.2),
@@ -1026,6 +1064,48 @@ pub fn factory_patches() -> Vec<Patch> {
                 ("release_damp", 0.3),
                 ("body", 0.3),
                 ("reverb_send", 0.3),
+            ],
+        ),
+        make(
+            "Dub Chord",
+            Analog,
+            &[
+                ("osc2_detune", 6.0),
+                ("cutoff", 700.0),
+                ("resonance", 0.25),
+                ("filter_env", 0.5),
+                ("f_decay", 0.18),
+                ("f_sustain", 0.0),
+                ("decay", 0.3),
+                ("sustain", 0.0),
+                ("release", 0.15),
+                ("reverb_send", 0.0),
+                ("fx1_type", 1.0),
+                ("fx1_mix", 0.35),
+                ("fx1_delay_time", 0.375),
+                ("fx1_delay_feedback", 0.6),
+                ("fx1_delay_tone", 2500.0),
+                ("fx2_type", 2.0),
+                ("fx2_mix", 0.25),
+                ("fx2_reverb_size", 0.8),
+            ],
+        ),
+        make(
+            "Flanged Pad",
+            Analog,
+            &[
+                ("osc2_detune", 9.0),
+                ("cutoff", 1500.0),
+                ("filter_env", 0.1),
+                ("attack", 0.6),
+                ("sustain", 1.0),
+                ("release", 2.0),
+                ("reverb_send", 0.4),
+                ("fx1_type", 4.0),
+                ("fx1_mix", 0.5),
+                ("fx1_flanger_rate", 0.12),
+                ("fx1_flanger_depth", 0.8),
+                ("fx1_flanger_feedback", 0.7),
             ],
         ),
     ]

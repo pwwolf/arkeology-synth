@@ -72,6 +72,27 @@ controller or a DAW/sequencer.
   velocity control of level and cutoff. Playback uses 4-point Hermite interpolation. Press
   `f` to load a WAV or FLAC. Root Note and First Slice accept names like `c4` or `f#2`. In keyboard play mode a
   sliced sampler starts at its first slice.
+- **Effects**: every synth has 3 insert effects (synth → FX 1 → FX 2 → FX 3 → volume/pan),
+  and the master bus has 3 more after the reverb return.
+
+  | Effect | Controls |
+  |--------|----------|
+  | Delay | time up to 2 s, feedback, ping-pong, feedback tone |
+  | Reverb | size, damping, width, pre-delay |
+  | Chorus | rate, depth |
+  | Flanger | rate, depth, feedback (±) |
+  | Phaser | 6-stage; rate, depth, feedback |
+  | Drive | soft, hard, foldback or tube; drive, tone, output |
+  | Filter | low/band/high-pass with LFO (auto-wah) |
+  | EQ | 3-band: low shelf, sweepable mid, high shelf |
+  | Compressor | threshold, ratio, attack, release, makeup |
+  | Crusher | bit depth and sample-rate reduction |
+  | Tremolo | rate, depth, sine/square, auto-pan |
+
+  Pick an effect with the unit's **Type**. Only that effect's controls are shown, and
+  **Mix** sets dry/wet (it resets to a sensible amount when you change type). Synth FX are
+  saved in the patch, and master FX in the session. Effects are built off the audio
+  thread, so changing type mid-performance doesn't glitch the engine.
 - Every slot has volume, pan, reverb send, transpose and bend range. The polyphonic synths
   also have voice count and glide.
   The master bus has a stereo reverb and a soft-clipping drive stage.
@@ -199,6 +220,7 @@ tables, and those tables also drive the generic TUI editor and patch serialisati
 | `src/dsp.rs`, `src/reverb.rs` | oscillator table, ADSR, SVF filter, Freeverb |
 | `src/app.rs`, `src/ui.rs` | TUI state, input and rendering |
 | `src/patch.rs` | patches, sessions, factory presets |
+| `src/fx.rs` | insert effects (delay, reverb, modulation, drive, filter, EQ, dynamics, crusher, tremolo) |
 | `src/mcp.rs`, `src/app/tools.rs` | embedded MCP server (HTTP + JSON-RPC) and its tools |
 
 To add a synth type, write a parameter table and an engine, then add a variant to

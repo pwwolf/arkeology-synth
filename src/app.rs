@@ -18,6 +18,7 @@ use crate::midi::{MidiKind, MidiManager, MidiMsg, note_name};
 use crate::params::{ParamDesc, StepSize, master};
 use crate::patch::{CcMapping, Patch, PatchEntry, Session, SessionSlot, Storage, master_index, read_json};
 use crate::sample::{self, Builtins, Sample};
+use crate::fx::{self, FxKind, FxUnit};
 use crate::synth::{SynthKind, granular, sampler};
 
 /// Which parameter set is being viewed/edited.
@@ -282,6 +283,7 @@ impl App {
 
     pub fn set_param(&mut self, t: Target, i: usize, value: f32) {
         let value = self.param_desc(t, i).clamp(value);
+        let old = self.param_value(t, i);
         match t {
             Target::Master => {
                 self.master[i] = value;
@@ -293,6 +295,48 @@ impl App {
                     self.send(Command::SetParam { slot: s, index: i, value });
                 }
             }
+        }
+        if let Some(unit) = fx::type_param_unit(self.fx_base(t), i)
+            && old != value
+        {
+            self.rebuild_fx(t, unit);
+        }
+    }
+
+    /// Where a target's insert-FX parameters start.
+    pub fn fx_base(&self, t: Target) -> usize {
+        match t {
+            Target::Master => master::FX_BASE,
+            Target::Slot(s) => self.slots[s].as_ref().map_or(usize::MAX, |s| s.kind.fx_base()),
+        }
+    }
+
+    fn values(&self, t: Target) -> &[f32] {
+        match t {
+            Target::Master => &self.master,
+            Target::Slot(s) => self.slots[s].as_ref().map_or(&[], |s| &s.params),
+        }
+    }
+
+    /// Whether a parameter is shown (FX parameters of inactive types are hidden).
+    pub fn param_visible(&self, t: Target, i: usize) -> bool {
+        fx::visible(self.values(t), self.fx_base(t), i)
+    }
+
+    pub fn visible_params(&self, t: Target) -> Vec<usize> {
+        (0..self.param_count(t)).filter(|&i| self.param_visible(t, i)).collect()
+    }
+
+    /// An FX unit's type changed: give it that effect's usual mix and swap in
+    /// a newly built unit (allocated here, never on the audio thread).
+    fn rebuild_fx(&mut self, t: Target, unit: usize) {
+        let base = self.fx_base(t) + unit * fx::STRIDE;
+        let kind = FxKind::from_value(self.param_value(t, base + fx::TYPE));
+        self.set_param(t, base + fx::MIX, kind.default_mix());
+        let built = FxUnit::from_values(fx::unit_values(self.values(t), self.fx_base(t), unit), self.sample_rate);
+        match t {
+            Target::Master => self.send(Command::SetMasterFx { unit, fx: built }),
+            Target::Slot(slot) => self.send(Command::SetFx { slot, unit, fx: built }),
         }
     }
 
@@ -470,7 +514,9 @@ impl App {
             master: master::PARAMS
                 .iter()
                 .zip(&self.master)
-                .map(|(p, v)| (p.key.to_string(), *v))
+                .enumerate()
+                .filter(|(i, _)| fx::visible(&self.master, master::FX_BASE, *i))
+                .map(|(_, (p, v))| (p.key.to_string(), *v))
                 .collect(),
             slots: self
                 .slots
@@ -1032,27 +1078,32 @@ impl App {
         if count == 0 {
             return;
         }
-        let cur = self.param_cursor.min(count - 1);
-        let group_of = |app: &App, i: usize| app.param_desc(target, i).group;
+        // Navigate over visible parameters only (hidden FX settings are skipped).
+        let vis = self.visible_params(target);
+        let pos = vis.iter().rposition(|&i| i <= self.param_cursor).unwrap_or(0);
+        let cur = vis[pos];
+        let group_of = |i: usize| self.param_desc(target, vis[i]).group;
         match key.code {
-            KeyCode::Up => self.param_cursor = cur.saturating_sub(1),
-            KeyCode::Down => self.param_cursor = (cur + 1).min(count - 1),
-            KeyCode::Home => self.param_cursor = 0,
-            KeyCode::End => self.param_cursor = count - 1,
+            KeyCode::Up => self.param_cursor = vis[pos.saturating_sub(1)],
+            KeyCode::Down => self.param_cursor = vis[(pos + 1).min(vis.len() - 1)],
+            KeyCode::Home => self.param_cursor = vis[0],
+            KeyCode::End => self.param_cursor = vis[vis.len() - 1],
             KeyCode::PageDown => {
-                let g = group_of(self, cur);
-                self.param_cursor = (cur..count).find(|&i| group_of(self, i) != g).unwrap_or(cur);
+                let g = group_of(pos);
+                let next = (pos..vis.len()).find(|&k| group_of(k) != g).unwrap_or(pos);
+                self.param_cursor = vis[next];
             }
             KeyCode::PageUp => {
                 // Start of this group, or of the previous one if already at the start.
-                let g = group_of(self, cur);
-                let start = (0..=cur).rev().take_while(|&i| group_of(self, i) == g).last().unwrap_or(cur);
-                self.param_cursor = if start == cur && cur > 0 {
-                    let pg = group_of(self, cur - 1);
-                    (0..cur).rev().take_while(|&i| group_of(self, i) == pg).last().unwrap_or(0)
+                let g = group_of(pos);
+                let start = (0..=pos).rev().take_while(|&k| group_of(k) == g).last().unwrap_or(pos);
+                let k = if start == pos && pos > 0 {
+                    let pg = group_of(pos - 1);
+                    (0..pos).rev().take_while(|&k| group_of(k) == pg).last().unwrap_or(0)
                 } else {
                     start
                 };
+                self.param_cursor = vis[k];
             }
             KeyCode::Left | KeyCode::Right | KeyCode::Char(',') | KeyCode::Char('.') => {
                 let dir = if matches!(key.code, KeyCode::Left | KeyCode::Char(',')) { -1.0 } else { 1.0 };
@@ -1548,6 +1599,57 @@ mod tests {
         app.on_key(repeat(KeyCode::Down));
         app.on_key(repeat(KeyCode::Down));
         assert_eq!(app.rack_cursor, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn insert_fx_build_show_and_save() {
+        let dir = temp_dir("fx");
+        let mut app = test_app(&dir);
+        app.default_rack();
+        let t = Target::Slot(0);
+        let key = |k: &str| SynthKind::Fm.index_of(k).unwrap();
+        while app.commands.pop().is_some() {}
+
+        // Choosing a type swaps in a built unit and applies that effect's usual mix.
+        app.set_param(t, key("fx1_type"), 1.0);
+        let mut swapped = false;
+        while let Some(cmd) = app.commands.pop() {
+            swapped |= matches!(cmd, Command::SetFx { slot: 0, unit: 0, .. });
+        }
+        assert!(swapped, "no SetFx sent");
+        assert_eq!(app.param_value(t, key("fx1_mix")), 0.3);
+        // Re-setting the same type keeps a user's mix.
+        app.set_param(t, key("fx1_mix"), 0.8);
+        app.set_param(t, key("fx1_type"), 1.0);
+        assert_eq!(app.param_value(t, key("fx1_mix")), 0.8);
+
+        // Only the active type's settings are visible.
+        assert!(app.param_visible(t, key("fx1_delay_time")));
+        assert!(!app.param_visible(t, key("fx1_reverb_size")));
+        assert!(!app.param_visible(t, key("fx2_mix")), "unit 2 is off");
+        let s = screen(&mut app, 150, 60);
+        assert!(s.contains("FX 1 · Delay") && s.contains("FX 2 · Off"), "{s}");
+
+        // Saved patches keep the active FX and omit hidden settings.
+        app.set_param(t, key("fx1_delay_feedback"), 0.6);
+        let patch = app.current_patch(0).unwrap();
+        assert_eq!(patch.params.get("fx1_delay_feedback"), Some(&0.6));
+        assert!(!patch.params.contains_key("fx1_reverb_size"));
+        assert_eq!(patch.values()[key("fx1_delay_feedback")], 0.6);
+
+        // Master FX work the same way and are saved with the session.
+        let m = master::FX_BASE + fx::STRIDE; // master FX 2 type
+        app.set_param(Target::Master, m, 8.0); // EQ
+        assert!(app.session().master.contains_key("fx2_eq_low"));
+        assert!(!app.session().master.contains_key("fx1_mix"));
+
+        // MCP: types by name, settings appear once the type is set.
+        app.run_tool("set_params", &serde_json::json!({ "slot": 1, "values": { "fx2_type": "reverb", "fx2_reverb_size": "90%" } }))
+            .unwrap();
+        let params = app.run_tool("get_params", &serde_json::json!({ "slot": 1 })).unwrap();
+        let keys: Vec<&str> = params["params"].as_array().unwrap().iter().map(|p| p["key"].as_str().unwrap()).collect();
+        assert!(keys.contains(&"fx2_reverb_size") && !keys.contains(&"fx2_delay_time"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

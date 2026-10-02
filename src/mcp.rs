@@ -175,7 +175,9 @@ active voices and sample, plus master settings and connected MIDI inputs.",
         {
             "name": "get_params",
             "description": "All parameters of a slot (or the master bus): key, name, group, current value, \
-display text, range and, for choices, the options.",
+display text, range and, for choices, the options. Includes the 3 insert effects (fx1_*, fx2_*, fx3_*); \
+an effect's settings appear once its fxN_type is set (Delay, Reverb, Chorus, Flanger, Phaser, Drive, \
+Filter, EQ, Compressor, Crusher, Tremolo).",
             "inputSchema": { "type": "object", "properties": { "slot": slot_or_master }, "required": ["slot"] },
             "annotations": read_only,
         },

@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod dsp;
 mod engine;
+mod fx;
 mod mcp;
 mod midi;
 mod params;
