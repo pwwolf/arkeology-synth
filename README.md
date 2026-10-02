@@ -147,7 +147,9 @@ claude mcp add --transport http arkeology http://127.0.0.1:7878/mcp
 
 | Tool | What it does |
 |------|--------------|
-| `get_rack`, `get_params` | inspect slots, channels, mute/solo, and every parameter with its range and current value |
+| `get_rack`, `get_params` | inspect slots, channels and mute/solo; every parameter with its range, default, units, scale, current value and mapped CC; and how the instrument responds to MIDI (mod wheel, velocity, sustain, bend, note layout) |
+| `describe_synth` | any synth type's full control reference without adding it, noting which controls apply only to certain physical models or FX types |
+| `map_cc`, `list_midi_mappings`, `clear_midi_mapping` | manage which controller knobs (channel + CC) drive which parameters, like MIDI learn |
 | `set_params` | set parameters on a slot or `"master"`; values can be numbers or strings like `"250ms"`, `"2.5k"`, `"40%"`, `"c4"`, `"LowPass"` |
 | `add_synth`, `remove_synth`, `set_slot` | build the rack: synth type, MIDI channel, mute/solo, name |
 | `list_patches`, `load_patch`, `save_patch` | browse factory and user patches; save the current sound |

@@ -137,7 +137,10 @@ fn call_tool(name: &str, args: Value, jobs: &Sender<Job>) -> Result<Value, Strin
 const INSTRUCTIONS: &str = "Controls the Arkeology Synth running in the user's terminal. \
 The rack has up to 16 slots (numbered 1-16); each holds one synth (fm, analog, physical, granular, acid, drums or sampler) \
 listening on a MIDI channel (1-16 or \"omni\"). Use \"master\" as the slot for the master bus. \
-Call get_rack first, and get_params to see a slot's parameter keys, ranges and current values. \
+Call get_rack first, and get_params to see a slot's parameter keys, ranges, defaults, current values, \
+mapped MIDI CCs and how the instrument responds to MIDI (mod wheel, velocity, sustain, bend). \
+describe_synth gives any synth type's full control reference without touching the rack. \
+map_cc / list_midi_mappings / clear_midi_mapping manage which controller knobs drive which parameters. \
 set_params accepts numbers in the parameter's own units or strings such as \"250ms\", \"2.5k\", \"40%\", \"c4\" \
 or an option name like \"LowPass\". Changes apply live and show in the user's TUI. \
 play_notes auditions sounds through the user's speakers.";
@@ -174,12 +177,66 @@ active voices and sample, plus master settings and connected MIDI inputs.",
         },
         {
             "name": "get_params",
-            "description": "All parameters of a slot (or the master bus): key, name, group, current value, \
-display text, range and, for choices, the options. Includes the 3 insert effects (fx1_*, fx2_*, fx3_*); \
+            "description": "All active parameters of a slot (or the master bus): key, name, group, kind, unit, \
+scale (linear/log), range, default, current value and display text, options for choices, and the MIDI CC \
+mapped to it if any. For a synth slot it also describes how the instrument responds to MIDI (pitch bend, \
+mod wheel, sustain, velocity, note layout). Includes the 3 insert effects (fx1_*, fx2_*, fx3_*); \
 an effect's settings appear once its fxN_type is set (Delay, Reverb, Chorus, Flanger, Phaser, Drive, \
 Filter, EQ, Compressor, Crusher, Tremolo).",
             "inputSchema": { "type": "object", "properties": { "slot": slot_or_master }, "required": ["slot"] },
             "annotations": read_only,
+        },
+        {
+            "name": "describe_synth",
+            "description": "Full control reference for a synth type without adding it: every parameter \
+(with kind, unit, scale, range, default and, where it only applies to some physical models or FX types, \
+an applies_when condition), how it responds to MIDI, and the insert-FX settings for each effect type.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": kind.clone(),
+                    "include_fx": { "type": "boolean", "default": false, "description": "Also list every fx1-3 parameter in full" }
+                },
+                "required": ["kind"]
+            },
+            "annotations": read_only,
+        },
+        {
+            "name": "list_midi_mappings",
+            "description": "Controller mappings: which MIDI channel + CC drives which parameter (slot or master), \
+and whether that parameter is currently active.",
+            "inputSchema": { "type": "object", "properties": {} },
+            "annotations": read_only,
+        },
+        {
+            "name": "map_cc",
+            "description": "Map a MIDI CC (on one channel) to a parameter, like MIDI learn. The CC sweeps the \
+parameter's full range (log-scaled parameters sweep logarithmically; choices step through options). A \
+parameter has at most one CC; one CC can drive several parameters (macros). CC1 and CC64 keep their \
+built-in roles; CC120-127 can't be mapped. Saved with the session.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "channel": { "type": "integer", "minimum": 1, "maximum": 16 },
+                    "cc": { "type": "integer", "minimum": 0, "maximum": 119 },
+                    "slot": slot_or_master.clone(),
+                    "param": { "type": "string", "description": "Parameter key from get_params, e.g. \"cutoff\"" }
+                },
+                "required": ["channel", "cc", "slot", "param"]
+            },
+        },
+        {
+            "name": "clear_midi_mapping",
+            "description": "Remove mappings: either for one parameter (slot + param) or everything on a CC (channel + cc).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "slot": slot_or_master.clone(),
+                    "param": { "type": "string" },
+                    "channel": { "type": "integer", "minimum": 1, "maximum": 16 },
+                    "cc": { "type": "integer", "minimum": 0, "maximum": 127 }
+                }
+            },
         },
         {
             "name": "set_params",
