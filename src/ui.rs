@@ -20,6 +20,8 @@ const WARN: Color = Color::Rgb(230, 200, 80);
 const HOT: Color = Color::Rgb(235, 80, 70);
 const LEARN: Color = Color::Rgb(90, 180, 255);
 
+const SAMPLER_COLOR: Color = Color::Rgb(165, 150, 255);
+
 const COL_WIDTH: u16 = 40;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
@@ -178,6 +180,7 @@ fn draw_rack(f: &mut Frame, app: &App, area: Rect) {
                         SynthKind::Granular => Color::Rgb(120, 220, 200),
                         SynthKind::Acid => Color::Rgb(190, 230, 90),
                         SynthKind::Drums => Color::Rgb(255, 210, 90),
+                        SynthKind::Sampler => SAMPLER_COLOR,
                     };
                     let name: String = s.name.chars().take(13).collect();
                     let mut spans = vec![
@@ -295,8 +298,18 @@ fn draw_params(f: &mut Frame, app: &mut App, area: Rect) {
         }
     };
     let b = block(&title, focused);
-    let inner = b.inner(area);
+    let mut inner = b.inner(area);
     f.render_widget(b, area);
+
+    // Samplers get a waveform view above their parameters.
+    if let Target::Slot(i) = target
+        && app.slots[i].as_ref().is_some_and(|s| s.kind == SynthKind::Sampler)
+        && inner.height >= 18
+    {
+        let [wave, rest] = Layout::vertical([Constraint::Length(9), Constraint::Min(4)]).areas(inner);
+        draw_waveform(f, app, i, wave);
+        inner = rest;
+    }
 
     let count = app.param_count(target);
     if count == 0 || inner.height < 2 {
@@ -405,6 +418,102 @@ fn partition(sizes: &[usize], k: usize) -> Vec<usize> {
     }
     breaks.reverse();
     breaks
+}
+
+fn draw_waveform(f: &mut Frame, app: &App, slot: usize, area: Rect) {
+    use crate::synth::sampler::{self, Mode};
+    use ratatui::style::Stylize;
+    use ratatui::symbols::Marker;
+    use ratatui::widgets::canvas::{Canvas, Line as CLine};
+
+    let Some(s) = app.slots[slot].as_ref() else { return };
+    let [info, canvas_area, _gap] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)]).areas(area);
+    let Some(sample) = app.slot_sample(slot).filter(|x| !x.is_empty()) else {
+        f.render_widget(
+            Paragraph::new("No sample loaded: press f to load a WAV, or pick a built-in Source.")
+                .style(Style::default().fg(FG_DIM)),
+            info,
+        );
+        return;
+    };
+    let layout = sampler::Layout::new(&s.params[crate::synth::COMMON.len()..], &sample);
+    let len = sample.len() as f64;
+    let buckets = sample.overview.len() as f64;
+    let to_x = |frame: usize| frame as f64 / len * buckets;
+
+    let mode = match layout.mode {
+        Mode::Classic if layout.looping.is_some() => "classic · looping".to_string(),
+        Mode::Classic => "classic".to_string(),
+        Mode::OneShot => "one-shot".to_string(),
+        Mode::Slice => format!(
+            "{} slices · notes {}–{}",
+            layout.slices.count,
+            layout.base_note,
+            layout.base_note as usize + layout.slices.count - 1
+        ),
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(sample.name.clone(), Style::default().fg(SAMPLER_COLOR).bold()),
+            Span::styled(
+                format!(
+                    "  {:.2}s · {} · {:.1} kHz · {}{}",
+                    sample.duration(),
+                    if sample.is_stereo() { "stereo" } else { "mono" },
+                    sample.sample_rate / 1000.0,
+                    mode,
+                    if layout.reverse { " · reversed" } else { "" }
+                ),
+                Style::default().fg(FG_DIM),
+            ),
+        ])),
+        info,
+    );
+
+    let chars_per_bucket = canvas_area.width as f64 / buckets;
+    let canvas = Canvas::default()
+        .marker(Marker::Braille)
+        .x_bounds([0.0, buckets])
+        .y_bounds([-1.0, 1.0])
+        .paint(|ctx| {
+            let (rs, re) = (to_x(layout.start), to_x(layout.end));
+            let lp = layout.looping.map(|(a, b)| (to_x(a), to_x(b)));
+            for (b, &(lo, hi)) in sample.overview.iter().enumerate() {
+                let x = b as f64 + 0.5;
+                let color = if x < rs || x > re {
+                    BAR_EMPTY
+                } else if lp.is_some_and(|(a, z)| x >= a && x <= z) {
+                    LEARN
+                } else {
+                    SAMPLER_COLOR
+                };
+                ctx.draw(&CLine { x1: x, y1: lo as f64, x2: x, y2: hi.max(lo + 0.01) as f64, color });
+            }
+            ctx.layer();
+            let vline = |ctx: &mut ratatui::widgets::canvas::Context, x: f64, color: Color| {
+                ctx.draw(&CLine { x1: x, y1: -1.0, x2: x, y2: 1.0, color });
+            };
+            if layout.mode == Mode::Slice {
+                for (i, &p) in layout.slices.points[..=layout.slices.count].iter().enumerate() {
+                    vline(ctx, to_x(p), WARN);
+                    // Label each slice with its note when there's room.
+                    if let Some((a, z)) = layout.slices.range(i)
+                        && (to_x(z) - to_x(a)) * chars_per_bucket >= 4.0
+                    {
+                        ctx.print(to_x(a) + 1.0, 1.0, format!("{}", layout.base_note as usize + i).fg(WARN));
+                    }
+                }
+            } else {
+                vline(ctx, rs, ACCENT);
+                vline(ctx, re, ACCENT);
+                if let Some((a, z)) = lp {
+                    vline(ctx, a, LEARN);
+                    vline(ctx, z, LEARN);
+                }
+            }
+        });
+    f.render_widget(canvas, canvas_area);
 }
 
 fn param_line(app: &App, target: Target, i: usize, width: usize, focused: bool) -> Line<'static> {
@@ -703,7 +812,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         h("Rack"),
         k("↑ ↓", "select master / synth slot"),
         k("← → / - +", "change the slot's MIDI channel (omni, 1-16)"),
-        k("a", "add a synth (FM, Granular, 303 Acid or Drums)"),
+        k("a", "add a synth (FM, Granular, 303 Acid, Drums or Sampler)"),
         k("d / ⌫", "remove the selected synth"),
         k("r", "rename      m  mute      s  solo"),
         k("tab / enter", "edit parameters"),
@@ -716,7 +825,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         h("Patches & sessions"),
         k("l / w", "load / write the selected synth's patch"),
         k("L / W", "load / write the whole rack as a session"),
-        k("f", "load a WAV into a granular synth"),
+        k("f", "load a WAV into a granular synth or sampler"),
         h("Playing"),
         k("k", "play the selected synth from the computer keyboard"),
         k("p", "choose MIDI input ports"),

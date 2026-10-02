@@ -4,6 +4,7 @@ pub mod acid;
 pub mod drums;
 pub mod fm;
 pub mod granular;
+pub mod sampler;
 
 use std::sync::Arc;
 
@@ -24,10 +25,12 @@ pub enum SynthKind {
     Granular,
     Acid,
     Drums,
+    Sampler,
 }
 
 impl SynthKind {
-    pub const ALL: [SynthKind; 4] = [SynthKind::Fm, SynthKind::Granular, SynthKind::Acid, SynthKind::Drums];
+    pub const ALL: [SynthKind; 5] =
+        [SynthKind::Fm, SynthKind::Granular, SynthKind::Acid, SynthKind::Drums, SynthKind::Sampler];
 
     /// Position in `ALL`, used for sorting.
     pub fn order(self) -> usize {
@@ -40,6 +43,7 @@ impl SynthKind {
             SynthKind::Granular => "GRN",
             SynthKind::Acid => "303",
             SynthKind::Drums => "DRM",
+            SynthKind::Sampler => "SMP",
         }
     }
 
@@ -49,6 +53,7 @@ impl SynthKind {
             SynthKind::Granular => "Granular",
             SynthKind::Acid => "Acid (303-style mono bass)",
             SynthKind::Drums => "Drums (808/909-style kit)",
+            SynthKind::Sampler => "Sampler (classic / one-shot / slice)",
         }
     }
 
@@ -58,6 +63,7 @@ impl SynthKind {
             SynthKind::Granular => &granular::PARAMS,
             SynthKind::Acid => &acid::PARAMS,
             SynthKind::Drums => &drums::PARAMS,
+            SynthKind::Sampler => &sampler::PARAMS,
         }
     }
 
@@ -123,6 +129,11 @@ pub trait Voice {
     /// `from_note` is the note to glide from, if glide is active.
     fn start(&mut self, note: u8, velocity: f32, from_note: Option<f32>, shared: &Self::Shared);
     fn release(&mut self);
+    /// Stop quickly regardless of mode (panic, voice-count reduction).
+    /// One-shot voices ignore `release`, so they override this.
+    fn kill(&mut self) {
+        self.release();
+    }
     fn is_active(&self) -> bool;
     /// Add this voice's output into `l` / `r`.
     fn render(&mut self, shared: &Self::Shared, ctl: &Controls, l: &mut [f32], r: &mut [f32]);
@@ -177,7 +188,7 @@ impl<V: Voice> Poly<V> {
         let limit = (voices.round() as usize).clamp(1, MAX_VOICES);
         if limit < self.limit {
             for s in &mut self.slots[limit..] {
-                s.voice.release();
+                s.voice.kill();
                 s.held = false;
                 s.sustained = false;
             }
@@ -269,7 +280,7 @@ impl<V: Voice> Poly<V> {
         for s in &mut self.slots {
             s.held = false;
             s.sustained = false;
-            s.voice.release();
+            s.voice.kill();
         }
     }
 
@@ -312,6 +323,7 @@ pub enum Instrument {
     Granular(granular::GranularSynth),
     Acid(acid::AcidSynth),
     Drums(Box<drums::DrumsSynth>),
+    Sampler(Box<sampler::SamplerSynth>),
 }
 
 impl Instrument {
@@ -323,6 +335,9 @@ impl Instrument {
             }
             SynthKind::Acid => Instrument::Acid(acid::AcidSynth::new(sample_rate)),
             SynthKind::Drums => Instrument::Drums(Box::new(drums::DrumsSynth::new(sample_rate))),
+            SynthKind::Sampler => {
+                Instrument::Sampler(Box::new(sampler::SamplerSynth::new(sample_rate, builtins.clone())))
+            }
         }
     }
 
@@ -332,6 +347,7 @@ impl Instrument {
             Instrument::Granular(s) => s.update(params),
             Instrument::Acid(s) => s.update(params),
             Instrument::Drums(s) => s.update(params),
+            Instrument::Sampler(s) => s.update(params),
         }
     }
 
@@ -341,6 +357,7 @@ impl Instrument {
             Instrument::Granular(s) => s.poly.note_on(note, velocity, &s.shared),
             Instrument::Acid(s) => s.note_on(note, velocity),
             Instrument::Drums(s) => s.note_on(note, velocity),
+            Instrument::Sampler(s) => s.note_on(note, velocity),
         }
     }
 
@@ -350,6 +367,7 @@ impl Instrument {
             Instrument::Granular(s) => f(&mut s.poly),
             Instrument::Acid(s) => f(s),
             Instrument::Drums(s) => f(s.as_mut()),
+            Instrument::Sampler(s) => f(&mut s.poly),
         }
     }
 
@@ -382,6 +400,7 @@ impl Instrument {
     pub fn set_sample(&mut self, sample: Option<Arc<Sample>>) -> Option<Arc<Sample>> {
         match self {
             Instrument::Granular(s) => s.set_file_sample(sample),
+            Instrument::Sampler(s) => s.set_file_sample(sample),
             Instrument::Fm(_) | Instrument::Acid(_) | Instrument::Drums(_) => sample,
         }
     }
@@ -392,6 +411,7 @@ impl Instrument {
             Instrument::Granular(s) => s.render(l, r),
             Instrument::Acid(s) => s.render(l, r),
             Instrument::Drums(s) => s.render(l, r),
+            Instrument::Sampler(s) => s.render(l, r),
         }
     }
 }

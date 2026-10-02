@@ -27,6 +27,8 @@ pub enum Unit {
     Cents,
     Ratio,
     Pan,
+    /// MIDI note number, shown with its name.
+    Note,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -195,6 +197,7 @@ impl ParamDesc {
             Kind::Int => {
                 let i = v.round() as i32;
                 return match self.unit {
+                    Unit::Note => format!("{i} {}", crate::midi::note_name(i.clamp(0, 127) as u8)),
                     Unit::Semitones if i > 0 => format!("+{i} st"),
                     Unit::Semitones => format!("{i} st"),
                     _ => format!("{i}"),
@@ -213,6 +216,7 @@ impl ParamDesc {
             Unit::Semitones => format!("{v:+.2} st"),
             Unit::Cents => format!("{v:+.0} ct"),
             Unit::Ratio => format!("x{v:.3}"),
+            Unit::Note => format!("{v:.0}"),
             Unit::Pan if v.abs() < 0.005 => "C".into(),
             Unit::Pan if v < 0.0 => format!("L{:.0}", -v * 100.0),
             Unit::Pan => format!("R{:.0}", v * 100.0),
@@ -227,6 +231,9 @@ impl ParamDesc {
                 if let Some(i) = opts.iter().position(|o| o.to_ascii_lowercase().starts_with(&t)) {
                     return Some(i as f32);
                 }
+            }
+            _ if self.unit == Unit::Note && t.starts_with(|c: char| c.is_ascii_alphabetic()) => {
+                return parse_note_name(&t).map(|n| self.clamp(n as f32));
             }
             Kind::Toggle => match t.as_str() {
                 "on" | "yes" | "true" => return Some(1.0),
@@ -250,6 +257,34 @@ impl ParamDesc {
         }
         Some(self.clamp(v))
     }
+}
+
+/// Parse names like "c4", "f#2" or "bb1" (middle C = C4 = 60).
+fn parse_note_name(t: &str) -> Option<i32> {
+    let mut chars = t.chars().peekable();
+    let base = match chars.next()? {
+        'c' => 0,
+        'd' => 2,
+        'e' => 4,
+        'f' => 5,
+        'g' => 7,
+        'a' => 9,
+        'b' => 11,
+        _ => return None,
+    };
+    let accidental = match chars.peek() {
+        Some('#') => {
+            chars.next();
+            1
+        }
+        Some('b') => {
+            chars.next();
+            -1
+        }
+        _ => 0,
+    };
+    let octave: i32 = chars.collect::<String>().parse().ok()?;
+    Some((octave + 1) * 12 + base + accidental)
 }
 
 pub fn index_of(table: &[ParamDesc], key: &str) -> Option<usize> {
@@ -296,6 +331,11 @@ mod tests {
         let t = ParamDesc::float("t", "T", "G", 0.001, 10.0, 0.1, Unit::Seconds).exp();
         assert!((t.parse("250ms").unwrap() - 0.25).abs() < 1e-6);
         assert!((t.parse("1.5").unwrap() - 1.5).abs() < 1e-6);
+        let n = ParamDesc::int("n", "N", "G", 0, 127, 60, Unit::Note);
+        assert_eq!(n.parse("c4"), Some(60.0));
+        assert_eq!(n.parse("F#2"), Some(42.0));
+        assert_eq!(n.parse("36"), Some(36.0));
+        assert_eq!(n.format(36.0), "36 C2");
         let f = ParamDesc::float("f", "F", "G", 20.0, 20_000.0, 1000.0, Unit::Hz).exp();
         assert!((f.parse("2.5k").unwrap() - 2500.0).abs() < 1e-3);
     }

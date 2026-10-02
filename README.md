@@ -37,12 +37,25 @@ controller or a DAW/sequencer.
   sensitivity and drive, and Transpose/pitch bend retune the whole kit. In keyboard play
   mode a drum slot starts at the kick, so the home row plays the kit (`a` kick, `s` snare,
   `e` clap, `t` closed hat, `u` open hat).
+- **Sampler**: plays a WAV (mono or stereo) or a built-in source, with a waveform view
+  above its parameters. Three modes:
+  - **Classic**: pitched across the keyboard from a Root Note, with an optional
+    crossfaded sustain loop. Loop points can be moved while notes play.
+  - **One-shot**: each note plays the whole start–end region and ignores note-off.
+  - **Slice**: cuts the region into equal slices, or at detected transients
+    (Sensitivity sets how many), mapped to consecutive notes from Base Note. Load a drum
+    break and each pad plays one hit.
+
+  It also has start/end, reverse, tune, an amp envelope, a multimode filter, and
+  velocity control of level and cutoff. Playback uses 4-point Hermite interpolation. Press
+  `f` to load a WAV. Root and Base Note accept names like `c4` or `f#2`. In keyboard play mode a
+  sliced sampler starts at its first slice.
 - Every slot has volume, pan, reverb send, transpose and bend range. The polyphonic synths
   also have voice count and glide.
   The master bus has a stereo reverb and a soft-clipping drive stage.
 - Built-in patches for every engine: FM Strings, E.Piano, Glass Bell, Marimba, Soft Pad,
-  Brass, Organ, Mono Lead, Choir Cloud, Shimmer Pad, five acid basses, 808/909/Lo-Fi kits
-  and more. Press `l`
+  Brass, Organ, Mono Lead, Choir Cloud, Shimmer Pad, five acid basses, 808/909/Lo-Fi kits,
+  sampler examples (Choir Loop, Pluck Slices, Saw Stab, Reverse Glass) and more. Press `l`
   to browse them (`tab` switches synth type, `space` auditions). Edit one and press `w` to
   save your own version.
 - You can save and load patches (one synth) and sessions (the whole rack, plus MIDI
@@ -79,7 +92,7 @@ keyboard. To send a test phrase to the virtual port, run
 | `a` | add a synth |
 | `l` / `w` | browse/load patches (factory and yours; `tab` filters by synth, `space` auditions) / write the selected synth's patch |
 | `L` / `W` | load / write a session |
-| `f` | load a WAV into a granular synth |
+| `f` | load a WAV into a granular synth or sampler |
 | `r` `m` `s` | rename, mute, solo |
 | `c` / `C` | MIDI-learn a CC for the selected parameter / clear it |
 | `p` | MIDI input ports |
@@ -132,7 +145,8 @@ tables, and those tables also drive the generic TUI editor and patch serialisati
 |------|----------|
 | `src/engine.rs` | slots, MIDI routing, mixer, telemetry |
 | `src/synth/mod.rs` | `SynthKind`, common params, the `Poly`/`Voice` voice allocator (stealing, sustain, glide) |
-| `src/synth/fm.rs`, `granular.rs`, `acid.rs`, `drums.rs` | the four engines |
+| `src/synth/fm.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `sampler.rs` | the five engines |
+| `src/sample.rs` | WAV loading, built-in sources, waveform overview and onset detection |
 | `src/dsp.rs`, `src/reverb.rs` | oscillator table, ADSR, SVF filter, Freeverb |
 | `src/app.rs`, `src/ui.rs` | TUI state, input and rendering |
 | `src/patch.rs` | patches, sessions, factory presets |

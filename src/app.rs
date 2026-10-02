@@ -15,7 +15,7 @@ use crate::midi::{MidiKind, MidiManager, MidiMsg, note_name};
 use crate::params::{ParamDesc, StepSize, master};
 use crate::patch::{CcMapping, Patch, PatchEntry, Session, SessionSlot, Storage, master_index, read_json};
 use crate::sample::{self, Builtins, Sample};
-use crate::synth::{SynthKind, granular};
+use crate::synth::{SynthKind, granular, sampler};
 
 /// Which parameter set is being viewed/edited.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -220,6 +220,27 @@ impl App {
         }
     }
 
+    /// The sample a granular/sampler slot is currently playing: its loaded
+    /// file, or one of the built-in sources.
+    pub fn slot_sample(&self, index: usize) -> Option<Arc<Sample>> {
+        let s = self.slots.get(index)?.as_ref()?;
+        let src = s.params[s.kind.index_of("source")?].round() as usize;
+        if src == 0 { s.sample.clone() } else { self.builtins.get(src - 1).cloned() }
+    }
+
+    /// Lowest playable note for synths that aren't laid out chromatically.
+    fn fixed_keyboard_base(&self, index: usize) -> Option<i32> {
+        let s = self.slots[index].as_ref()?;
+        match s.kind {
+            SynthKind::Drums => Some(36),
+            SynthKind::Sampler => {
+                let p = &s.params[crate::synth::COMMON.len()..];
+                (p[sampler::MODE].round() as usize == 2).then(|| p[sampler::BASE_NOTE].round() as i32)
+            }
+            _ => None,
+        }
+    }
+
     pub fn selected_slot(&self) -> Option<usize> {
         match self.selected() {
             Target::Slot(i) => Some(i),
@@ -299,7 +320,7 @@ impl App {
         solo: bool,
     ) {
         let mut sample = None;
-        if kind == SynthKind::Granular
+        if matches!(kind, SynthKind::Granular | SynthKind::Sampler)
             && let Some(path) = &sample_path
         {
             match sample::load_wav(path) {
@@ -547,8 +568,11 @@ impl App {
                     slot.sample_path = Some(path.to_path_buf());
                 }
                 // Switch the source to "File" so the new sample is heard.
-                let src = SynthKind::Granular.index_of("source").expect("source param");
-                self.set_param(Target::Slot(index), src, granular::SOURCES.iter().position(|s| *s == "File").unwrap() as f32);
+                let kind = self.slots[index].as_ref().map(|s| s.kind);
+                if let Some(src) = kind.and_then(|k| k.index_of("source")) {
+                    let file = granular::SOURCES.iter().position(|s| *s == "File").unwrap_or(0);
+                    self.set_param(Target::Slot(index), src, file as f32);
+                }
                 self.info(format!("loaded {} ({dur:.1}s)", path.display()));
             }
             Err(e) => self.error(format!("{e:#}")),
@@ -734,9 +758,12 @@ impl App {
                 self.error("select a synth to play it from the keyboard");
                 return true;
             };
-            let is_drums = self.slots[slot].as_ref().is_some_and(|s| s.kind == SynthKind::Drums);
-            // Drum kits start at the GM kick (36) so the home row plays the kit.
-            let base = if is_drums { (self.keyboard.octave - 2) * 12 } else { (self.keyboard.octave + 1) * 12 };
+            // Drum kits and sliced samples put their first sound on the home
+            // row's first key; z/x still shift by octaves from there.
+            let base = match self.fixed_keyboard_base(slot) {
+                Some(b) => b + (self.keyboard.octave - 4) * 12,
+                None => (self.keyboard.octave + 1) * 12,
+            };
             let note = base + offset as i32;
             let Ok(note) = u8::try_from(note) else { return true };
             if note > 127 {
@@ -870,7 +897,7 @@ impl App {
                 self.popup = Some(Popup::Ports { items, cursor: 0 });
             }
             KeyCode::Char('f') => match slot.and_then(|i| self.slots[i].as_ref().map(|s| (i, s))) {
-                Some((_, s)) if s.kind == SynthKind::Granular => {
+                Some((_, s)) if matches!(s.kind, SynthKind::Granular | SynthKind::Sampler) => {
                     let dir = s
                         .sample_path
                         .as_ref()
@@ -878,7 +905,7 @@ impl App {
                         .unwrap_or_else(|| self.storage.samples_dir());
                     self.open_files(dir);
                 }
-                _ => self.error("select a granular synth to load a sample"),
+                _ => self.error("select a granular synth or sampler to load a sample"),
             },
             KeyCode::Char('c') => {
                 if self.param_count(target) > 0 {
@@ -1278,6 +1305,21 @@ mod tests {
         if std::env::var("SHOW_UI").is_ok() {
             println!("{s}");
         }
+        // A sampler shows its waveform; slice mode labels slices with notes.
+        app.add_synth(SynthKind::Sampler);
+        let idx = app.selected_slot().unwrap();
+        let mode = SynthKind::Sampler.index_of("mode").unwrap();
+        let src = SynthKind::Sampler.index_of("source").unwrap();
+        let slice_by = SynthKind::Sampler.index_of("slice_by").unwrap();
+        app.set_param(Target::Slot(idx), src, 4.0);
+        app.set_param(Target::Slot(idx), mode, 2.0);
+        app.set_param(Target::Slot(idx), slice_by, 1.0);
+        let s = screen(&mut app, 150, 42);
+        assert!(s.contains("Pluck") && s.contains("slices · notes 36"), "{s}");
+        if std::env::var("SHOW_UI").is_ok() {
+            println!("{s}");
+        }
+        app.remove_slot(idx);
         app.select(Target::Slot(0));
 
         // Move to the granular slot and edit a parameter.
@@ -1324,10 +1366,10 @@ mod tests {
         let Some(Popup::Patches { all, filter, .. }) = &app.popup else { panic!("no browser") };
         assert_eq!(*filter, Some(SynthKind::Granular));
         assert_ne!(patch_view(all, *filter).len(), fm_count);
-        // Load "FM Strings" into slot 1.
-        app.on_key(key(KeyCode::Tab));
-        app.on_key(key(KeyCode::Tab));
-        app.on_key(key(KeyCode::Tab));
+        // Tab on to "all synths", then load "FM Strings" into slot 1.
+        while !matches!(&app.popup, Some(Popup::Patches { filter: None, .. })) {
+            app.on_key(key(KeyCode::Tab));
+        }
         let Some(Popup::Patches { all, filter, .. }) = &app.popup else { panic!("no browser") };
         let pos = patch_view(all, *filter).iter().position(|e| e.patch.name == "FM Strings").unwrap();
         for _ in 0..pos {

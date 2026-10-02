@@ -1,5 +1,6 @@
-//! Audio sources for the granular engine: WAV loading plus a handful of
-//! procedurally generated built-in sources so it makes sound out of the box.
+//! Audio sources for the granular synth and sampler: WAV loading, analysis,
+//! and a handful of procedurally generated built-in sources so both make
+//! sound out of the box.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -8,16 +9,52 @@ use anyhow::{Context, Result, bail};
 
 use crate::dsp::{FilterMode, Rng, Svf, SvfCoefs, sin_cycles};
 
-/// A mono sample buffer. Built-ins are tuned so MIDI note 60 plays at the
-/// recorded pitch; loaded files are assumed to be at C4 too (use Transpose
-/// and Fine to correct).
+/// A sample buffer (mono or stereo) plus analysis done once at load time: a
+/// waveform overview for display and detected onsets for slicing.
+///
+/// Built-ins are tuned so MIDI note 60 plays at the recorded pitch; loaded
+/// files are assumed to be at C4 too (use Transpose/Tune or Root to correct).
 pub struct Sample {
     pub name: String,
+    /// Left channel, or the only channel of a mono sample.
     pub data: Vec<f32>,
+    pub right: Option<Vec<f32>>,
     pub sample_rate: f32,
+    /// `OVERVIEW_BUCKETS` (min, max) pairs of the mono mix, for drawing.
+    pub overview: Vec<(f32, f32)>,
+    /// Onset positions (in frames) with strength 0..=1, strongest first.
+    pub onsets: Vec<(usize, f32)>,
 }
 
+pub const OVERVIEW_BUCKETS: usize = 1024;
+const ONSET_HOP: usize = 256;
+const MAX_ONSETS: usize = 512;
+
 impl Sample {
+    /// Build a sample, normalising its peak to -1 dB and analysing it.
+    pub fn new(name: impl Into<String>, mut data: Vec<f32>, mut right: Option<Vec<f32>>, sample_rate: f32) -> Self {
+        let peak = data
+            .iter()
+            .chain(right.iter().flatten())
+            .fold(0.0f32, |m, v| m.max(v.abs()));
+        if peak > 1e-6 {
+            let g = 0.9 / peak;
+            data.iter_mut().for_each(|v| *v *= g);
+            right.iter_mut().flatten().for_each(|v| *v *= g);
+        }
+        let mut s = Sample {
+            name: name.into(),
+            data,
+            right,
+            sample_rate,
+            overview: Vec::new(),
+            onsets: Vec::new(),
+        };
+        s.overview = s.compute_overview();
+        s.onsets = s.detect_onsets();
+        s
+    }
+
     pub fn len(&self) -> usize {
         self.data.len()
     }
@@ -26,20 +63,106 @@ impl Sample {
         self.data.is_empty()
     }
 
+    pub fn is_stereo(&self) -> bool {
+        self.right.is_some()
+    }
+
     pub fn duration(&self) -> f32 {
         self.data.len() as f32 / self.sample_rate
     }
 
-    /// Linear-interpolated read with wrap-around.
+    #[inline]
+    fn mono_at(&self, i: usize) -> f32 {
+        match &self.right {
+            Some(r) => 0.5 * (self.data[i] + r[i]),
+            None => self.data[i],
+        }
+    }
+
+    /// Linear-interpolated mono read with wrap-around (used by grains).
     #[inline]
     pub fn read(&self, pos: f64) -> f32 {
         let len = self.data.len();
         let p = pos.rem_euclid(len as f64);
         let i = p as usize;
         let f = (p - i as f64) as f32;
-        let a = self.data[i % len];
-        let b = self.data[(i + 1) % len];
+        let a = self.mono_at(i % len);
+        let b = self.mono_at((i + 1) % len);
         a + (b - a) * f
+    }
+
+    /// 4-point Hermite stereo read; positions outside the buffer read silence.
+    #[inline]
+    pub fn read_stereo(&self, pos: f64) -> (f32, f32) {
+        let len = self.data.len() as isize;
+        let i = pos.floor() as isize;
+        let f = (pos - i as f64) as f32;
+        let at = |buf: &[f32], k: isize| if (0..len).contains(&k) { buf[k as usize] } else { 0.0 };
+        let interp = |buf: &[f32]| {
+            let (xm1, x0, x1, x2) = (at(buf, i - 1), at(buf, i), at(buf, i + 1), at(buf, i + 2));
+            let c1 = 0.5 * (x1 - xm1);
+            let c2 = xm1 - 2.5 * x0 + 2.0 * x1 - 0.5 * x2;
+            let c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
+            ((c3 * f + c2) * f + c1) * f + x0
+        };
+        let l = interp(&self.data);
+        match &self.right {
+            Some(r) => (l, interp(r)),
+            None => (l, l),
+        }
+    }
+
+    fn compute_overview(&self) -> Vec<(f32, f32)> {
+        let len = self.len();
+        (0..OVERVIEW_BUCKETS)
+            .map(|b| {
+                let a = b * len / OVERVIEW_BUCKETS;
+                let e = ((b + 1) * len / OVERVIEW_BUCKETS).max(a + 1).min(len);
+                (a..e).fold((0.0f32, 0.0f32), |(lo, hi), i| {
+                    let v = self.mono_at(i);
+                    (lo.min(v), hi.max(v))
+                })
+            })
+            .collect()
+    }
+
+    /// Energy-rise onset detector: frames whose level jumps well above the
+    /// preceding frames. Strength is normalised to the strongest onset.
+    fn detect_onsets(&self) -> Vec<(usize, f32)> {
+        let frames = self.len() / ONSET_HOP;
+        if frames < 3 {
+            return Vec::new();
+        }
+        let db: Vec<f32> = (0..frames)
+            .map(|f| {
+                let e: f32 = (f * ONSET_HOP..(f + 1) * ONSET_HOP).map(|i| self.mono_at(i).powi(2)).sum();
+                10.0 * (e / ONSET_HOP as f32 + 1e-10).log10()
+            })
+            .collect();
+        let max_db = db.iter().fold(f32::MIN, |m, v| m.max(*v));
+        let rise: Vec<f32> = (0..frames)
+            .map(|f| {
+                if f < 2 {
+                    return 0.0;
+                }
+                (db[f] - db[f - 1].max(db[f - 2])).max(0.0)
+            })
+            .collect();
+        let mut onsets: Vec<(usize, f32)> = (2..frames)
+            .filter(|&f| {
+                let next = rise.get(f + 1).copied().unwrap_or(0.0);
+                rise[f] > 3.0 && rise[f] >= rise[f - 1] && rise[f] >= next && db[f] > max_db - 50.0
+            })
+            // Start a little before the frame so the attack isn't clipped.
+            .map(|f| ((f * ONSET_HOP).saturating_sub(ONSET_HOP / 2), rise[f]))
+            .collect();
+        let strongest = onsets.iter().fold(0.0f32, |m, o| m.max(o.1));
+        if strongest > 0.0 {
+            onsets.iter_mut().for_each(|o| o.1 /= strongest);
+        }
+        onsets.sort_by(|a, b| b.1.total_cmp(&a.1));
+        onsets.truncate(MAX_ONSETS);
+        onsets
     }
 }
 
@@ -58,28 +181,18 @@ pub fn load_wav(path: &Path) -> Result<Sample> {
                 .collect::<Result<_, _>>()?
         }
     };
-    let mut data: Vec<f32> = interleaved
-        .chunks(channels)
-        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-        .collect();
-    if data.len() < 64 {
-        bail!("{} is too short to granulate", path.display());
-    }
-    // Normalise so quiet recordings are usable.
-    let peak = data.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-    if peak > 1e-6 {
-        let g = 0.9 / peak;
-        data.iter_mut().for_each(|v| *v *= g);
+    // Keep the first two channels; anything beyond stereo is dropped.
+    let left: Vec<f32> = interleaved.chunks(channels).map(|f| f[0]).collect();
+    let right: Option<Vec<f32>> =
+        (channels > 1).then(|| interleaved.chunks(channels).map(|f| f[1]).collect());
+    if left.len() < 64 {
+        bail!("{} is too short to use", path.display());
     }
     let name = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "sample".into());
-    Ok(Sample {
-        name,
-        data,
-        sample_rate: spec.sample_rate as f32,
-    })
+    Ok(Sample::new(name, left, right, spec.sample_rate as f32))
 }
 
 // ---------------------------------------------------------------------------
@@ -100,24 +213,10 @@ pub fn builtins() -> Builtins {
     gens.iter()
         .zip(BUILTIN_NAMES)
         .map(|(g, name)| {
-            let mut data = g();
-            normalize(&mut data);
-            Arc::new(Sample {
-                name: name.to_string(),
-                data,
-                sample_rate: GEN_SR,
-            })
+            Arc::new(Sample::new(name, g(), None, GEN_SR))
         })
         .collect::<Vec<_>>()
         .into()
-}
-
-fn normalize(data: &mut [f32]) {
-    let peak = data.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-    if peak > 0.0 {
-        let g = 0.9 / peak;
-        data.iter_mut().for_each(|v| *v *= g);
-    }
 }
 
 fn frames() -> usize {

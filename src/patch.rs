@@ -217,7 +217,7 @@ fn make(name: &str, kind: SynthKind, overrides: &[(&str, f32)]) -> Patch {
 }
 
 pub fn factory_patches() -> Vec<Patch> {
-    use SynthKind::{Acid, Drums, Fm, Granular};
+    use SynthKind::{Acid, Drums, Fm, Granular, Sampler};
     vec![
         make("FM Init", Fm, &[]),
         make(
@@ -661,6 +661,61 @@ pub fn factory_patches() -> Vec<Patch> {
                 ("cymbal_tone", 0.1),
                 ("drive", 0.75),
                 ("reverb_send", 0.2),
+            ],
+        ),
+        make("Sampler Init", Sampler, &[]),
+        make(
+            "Choir Loop",
+            Sampler,
+            &[
+                ("source", 1.0),
+                ("loop_start", 0.15),
+                ("loop_end", 0.85),
+                ("crossfade", 0.3),
+                ("attack", 0.25),
+                ("release", 1.2),
+                ("cutoff", 7000.0),
+                ("reverb_send", 0.45),
+            ],
+        ),
+        make(
+            "Pluck Slices",
+            Sampler,
+            &[
+                ("source", 4.0),
+                ("mode", 2.0),
+                ("slices", 8.0),
+                ("slice_by", 1.0),
+                ("sensitivity", 0.8),
+                ("reverb_send", 0.25),
+            ],
+        ),
+        make(
+            "Saw Stab",
+            Sampler,
+            &[
+                ("source", 3.0),
+                ("mode", 1.0),
+                ("start", 0.55),
+                ("end", 0.62),
+                ("filter_type", 0.0),
+                ("cutoff", 3000.0),
+                ("resonance", 0.3),
+                ("vel_cutoff", 0.6),
+                ("reverb_send", 0.3),
+            ],
+        ),
+        make(
+            "Reverse Glass",
+            Sampler,
+            &[
+                ("source", 2.0),
+                ("mode", 1.0),
+                ("reverse", 1.0),
+                ("start", 0.0),
+                ("end", 0.5),
+                ("attack", 0.4),
+                ("reverb_send", 0.5),
             ],
         ),
     ]
