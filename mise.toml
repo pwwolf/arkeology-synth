@@ -1,0 +1,19 @@
+[tools]
+rust = "stable"
+
+[tasks.run]
+description = "Run the synth (release build)"
+run = "cargo run --release --"
+
+[tasks.test]
+description = "Run the test suite"
+run = "cargo test"
+
+[tasks.demo]
+description = "Render the offline demo to demo.wav"
+run = "cargo run --release -- --render-demo demo.wav"
+
+[tasks.midi-send]
+description = "Send a test phrase to the running synth's virtual MIDI port"
+run = "cargo run --release --example midi_send --"
+
