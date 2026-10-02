@@ -240,6 +240,32 @@ impl App {
             "load_session" => self.tool_load_session(args),
             "load_sample" => self.tool_load_sample(args),
             "play_notes" => self.tool_play_notes(args),
+            "start_recording" => {
+                let name = args.get("name").and_then(Value::as_str);
+                let path = self.start_recording(name)?;
+                self.mcp_note(format!("recording to {}", path.display()));
+                Ok(json!({ "recording": path }))
+            }
+            "stop_recording" => {
+                let Some((path, _)) = self.stop_recording() else {
+                    return Err("not recording".into());
+                };
+                // The engine stops on its next callback; wait for the file.
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while self.finishing.iter().any(|r| !r.is_finished()) && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                let rec = self.finishing.iter().find(|r| r.path == path);
+                let (seconds, dropped) = rec.map_or((0.0, 0.0), |r| (r.seconds(), r.dropped_seconds()));
+                let finalized = rec.is_some_and(|r| r.is_finished());
+                self.poll_recordings();
+                Ok(json!({
+                    "saved": path,
+                    "seconds": (seconds * 100.0).round() / 100.0,
+                    "dropped_seconds": dropped,
+                    "finalized": finalized,
+                }))
+            }
             "panic" => {
                 self.scheduled.clear();
                 self.all_keyboard_notes_off();
@@ -300,6 +326,7 @@ impl App {
             "master": master,
             "midi_inputs": self.midi.connected_names(),
             "midi_mappings": self.cc_map.len(),
+            "recording": self.recording.as_ref().map(|r| json!({ "path": r.path, "seconds": r.seconds() })),
             "virtual_midi_port": self.midi.has_virtual().then_some(crate::midi::CLIENT_NAME),
             "sample_rate": self.sample_rate,
             "data_dir": self.storage.root,

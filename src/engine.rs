@@ -13,6 +13,7 @@ use crossbeam_queue::ArrayQueue;
 
 use crate::dsp::{Smooth, pan_gains};
 use crate::fx::{self, FX_UNITS, FxUnit};
+use crate::recorder::RecordTap;
 use crate::midi::{MidiKind, MidiMsg};
 use crate::params::master;
 use crate::reverb::Reverb;
@@ -40,6 +41,9 @@ pub enum Command {
     /// Swap in a freshly built insert effect (built off the audio thread).
     SetFx { slot: usize, unit: usize, fx: Box<FxUnit> },
     SetMasterFx { unit: usize, fx: Box<FxUnit> },
+    /// Start copying the master output to a recorder (replacing any other).
+    StartRecording(Box<RecordTap>),
+    StopRecording,
     Panic,
 }
 
@@ -49,6 +53,7 @@ pub enum Garbage {
     Slot(Box<Slot>),
     Sample(Arc<Sample>),
     Fx(Box<FxUnit>),
+    Recorder(Box<RecordTap>),
 }
 
 pub type CommandQueue = Arc<ArrayQueue<Command>>;
@@ -145,6 +150,7 @@ pub struct Engine {
     master: [f32; master::PARAMS.len()],
     master_fx: [Box<FxUnit>; FX_UNITS],
     master_dirty: bool,
+    recorder: Option<Box<RecordTap>>,
     master_gain: Smooth,
     reverb: Reverb,
     buf_l: [f32; MAX_BLOCK],
@@ -185,6 +191,7 @@ impl Engine {
             cpu_avg: 0.0,
             master_fx: std::array::from_fn(|_| FxUnit::off(sample_rate)),
             master_dirty: false,
+            recorder: None,
         };
         e.apply_reverb_params();
         e
@@ -297,6 +304,18 @@ impl Engine {
                 };
                 if let Some(old) = old {
                     self.discard(Garbage::Sample(old));
+                }
+            }
+            Command::StartRecording(tap) => {
+                if let Some(old) = self.recorder.replace(tap) {
+                    old.finish();
+                    self.discard(Garbage::Recorder(old));
+                }
+            }
+            Command::StopRecording => {
+                if let Some(old) = self.recorder.take() {
+                    old.finish();
+                    self.discard(Garbage::Recorder(old));
                 }
             }
             Command::Panic => {
@@ -441,6 +460,9 @@ impl Engine {
         }
         store_max(&self.telemetry.peak_l, peak_l);
         store_max(&self.telemetry.peak_r, peak_r);
+        if let Some(rec) = &self.recorder {
+            rec.write(&self.mix_l[..n], &self.mix_r[..n]);
+        }
     }
 }
 

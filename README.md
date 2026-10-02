@@ -133,6 +133,15 @@ With no MIDI hardware attached, press `k` to play the selected synth from the co
 keyboard. To send a test phrase to the virtual port, run
 `cargo run --release --example midi_send`.
 
+### Recording
+
+Press `R` to record what you hear: the master output after FX, volume and drive. The
+header shows a red **● REC** timer while recording. Files are 32-bit float stereo WAVs at
+the device's sample rate, saved to `recordings/` and named by date and time. Earlier takes
+are never overwritten, and quitting while recording finalizes the file. The audio thread
+hands blocks to a writer thread through a lock-free queue, so recording can't cause
+dropouts. If the disk ever falls more than ~5 s behind, the missing time is reported.
+
 `--render-demo out.wav` renders a short multitimbral demo offline (no audio device needed).
 
 ## MCP server
@@ -156,6 +165,7 @@ claude mcp add --transport http arkeology http://127.0.0.1:7878/mcp
 | `list_sessions`, `load_session`, `save_session` | whole-rack snapshots |
 | `load_sample` | load a WAV/FLAC into a granular synth or sampler (with root-note detection) |
 | `play_notes`, `panic` | audition a sound through your speakers; stop everything |
+| `start_recording`, `stop_recording` | record the output to a WAV |
 
 Changes apply live, through the same code as the keyboard, and the status line shows what
 the client did. The server only listens on localhost and rejects browser requests from
@@ -180,6 +190,7 @@ instances) or `--no-mcp` to turn it off.
 | `p` | MIDI input ports |
 | `k` | keyboard play mode (`a w s e d f t g y h u j k …` notes, `z/x` octave, `c/v` velocity, `esc` exits) |
 | `space` | panic (all notes off) |
+| `R` | start / stop recording the output to a WAV |
 | `?` | help · `q` quit |
 
 Most terminals don't report key releases, so in keyboard mode notes auto-release about
@@ -202,6 +213,7 @@ Data lives in `~/Library/Application Support/arkeology-synth` (macOS) or
 patches/    your saved patches, one JSON file each (factory patches are built in)
 sessions/   whole-rack sessions
 samples/    the sample browser starts here; drop WAV/FLAC files in
+recordings/ WAVs recorded with `R` (or MCP start_recording)
 autosave.json
 ```
 

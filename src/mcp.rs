@@ -375,6 +375,20 @@ accurate to about 20 ms). Drums use GM notes: 36 kick, 38 snare, 42 closed hat, 
             },
         },
         {
+            "name": "start_recording",
+            "description": "Record the master output (after FX, volume and drive) to a 32-bit float stereo WAV \
+in the recordings folder. The TUI shows a REC badge while it runs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "name": { "type": "string", "description": "File name; defaults to the date and time" } }
+            },
+        },
+        {
+            "name": "stop_recording",
+            "description": "Stop recording and finalize the WAV; returns its path and length.",
+            "inputSchema": { "type": "object", "properties": {} },
+        },
+        {
             "name": "panic",
             "description": "Stop all sounding and scheduled notes.",
             "inputSchema": { "type": "object", "properties": {} },

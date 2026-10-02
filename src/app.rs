@@ -19,6 +19,7 @@ use crate::params::{ParamDesc, StepSize, master};
 use crate::patch::{CcMapping, Patch, PatchEntry, Session, SessionSlot, Storage, master_index, read_json};
 use crate::sample::{self, Builtins, Sample};
 use crate::fx::{self, FxKind, FxUnit};
+use crate::recorder::Recording;
 use crate::synth::{SynthKind, granular, sampler};
 
 /// Which parameter set is being viewed/edited.
@@ -126,6 +127,9 @@ pub struct App {
     pub mcp_addr: Option<SocketAddr>,
     /// Notes scheduled by MCP `play_notes`, sent when due.
     scheduled: Vec<(Instant, Command)>,
+    /// The recording in progress, and stopped ones still being finalized.
+    pub recording: Option<Recording>,
+    pub(crate) finishing: Vec<Recording>,
 }
 
 pub struct AppInit {
@@ -179,12 +183,93 @@ impl App {
             mcp: None,
             mcp_addr: None,
             scheduled: Vec::new(),
+            recording: None,
+            finishing: Vec::new(),
         }
     }
 
     // -----------------------------------------------------------------------
     // Messaging helpers
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Recording
+    // -----------------------------------------------------------------------
+
+    /// Start recording the master output to `recordings/<name>.wav`
+    /// (default: the date and time).
+    pub fn start_recording(&mut self, name: Option<&str>) -> Result<PathBuf, String> {
+        if let Some(r) = &self.recording {
+            return Err(format!("already recording to {}", r.path.display()));
+        }
+        let stem = match name.map(str::trim).filter(|n| !n.is_empty()) {
+            Some(n) => crate::patch::file_stem(n),
+            None => chrono::Local::now().format("%Y-%m-%d %H-%M-%S").to_string(),
+        };
+        let mut path = self.storage.recordings_dir().join(format!("{stem}.wav"));
+        // Never overwrite an earlier take.
+        let mut k = 2;
+        while path.exists() {
+            path = self.storage.recordings_dir().join(format!("{stem} ({k}).wav"));
+            k += 1;
+        }
+        let (rec, tap) = Recording::start(path.clone(), self.sample_rate).map_err(|e| format!("{e:#}"))?;
+        self.send(Command::StartRecording(tap));
+        self.recording = Some(rec);
+        self.info(format!("recording to {}", path.display()));
+        Ok(path)
+    }
+
+    /// Stop recording; the file is finalized in the background.
+    pub fn stop_recording(&mut self) -> Option<(PathBuf, f64)> {
+        let rec = self.recording.take()?;
+        self.send(Command::StopRecording);
+        let result = (rec.path.clone(), rec.seconds());
+        self.finishing.push(rec);
+        Some(result)
+    }
+
+    fn toggle_recording(&mut self) {
+        if self.recording.is_some() {
+            if let Some((path, secs)) = self.stop_recording() {
+                self.info(format!("stopped recording ({}): saving {}", format_duration(secs), path.display()));
+            }
+        } else if let Err(e) = self.start_recording(None) {
+            self.error(e);
+        }
+    }
+
+    /// Report recordings whose files have been finalized.
+    pub(crate) fn poll_recordings(&mut self) {
+        let mut i = 0;
+        while i < self.finishing.len() {
+            if !self.finishing[i].is_finished() {
+                i += 1;
+                continue;
+            }
+            let rec = self.finishing.remove(i);
+            let (secs, dropped) = (rec.seconds(), rec.dropped_seconds());
+            match rec.join() {
+                Ok(path) if dropped > 0.0 => self.error(format!(
+                    "saved {} ({}), but {dropped:.2}s were dropped because the disk fell behind",
+                    path.display(),
+                    format_duration(secs)
+                )),
+                Ok(path) => self.info(format!("saved {} ({})", path.display(), format_duration(secs))),
+                Err(e) => self.error(format!("recording failed: {e:#}")),
+            }
+        }
+    }
+
+    /// Stop any recording and wait (up to `timeout`) for files to be finalized.
+    pub fn finish_recording(&mut self, timeout: Duration) {
+        self.stop_recording();
+        let deadline = Instant::now() + timeout;
+        while self.finishing.iter().any(|r| !r.is_finished()) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        self.poll_recordings();
+    }
 
     pub fn info(&mut self, text: impl Into<String>) {
         self.status = Some(Status { text: text.into(), error: false, at: Instant::now() });
@@ -696,6 +781,7 @@ impl App {
     // -----------------------------------------------------------------------
 
     pub fn tick(&mut self) {
+        self.poll_recordings();
         if let Some(rx) = &self.mcp {
             let jobs: Vec<crate::mcp::Job> = rx.try_iter().collect();
             for job in jobs {
@@ -942,6 +1028,7 @@ impl App {
                 self.info(format!("keyboard play mode: a-' play notes, z/x octave, c/v velocity, Esc exits{how}"));
             }
             KeyCode::Char('a') => self.popup = Some(Popup::AddSynth { cursor: 0 }),
+            KeyCode::Char('R') => self.toggle_recording(),
             KeyCode::Char('l') => {
                 if slot.is_none() {
                     self.error("select a synth slot to load a patch into (or press 'a' to add one)");
@@ -1347,6 +1434,11 @@ fn list_nav(code: KeyCode, cursor: &mut usize, len: usize) -> ListAction {
     ListAction::Stay
 }
 
+pub fn format_duration(secs: f64) -> String {
+    let s = secs.max(0.0) as u64;
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
 pub fn channel_label(ch: Option<u8>) -> String {
     match ch {
         None => "omni".into(),
@@ -1676,6 +1768,55 @@ mod tests {
         // Saved patches leave out the other models' settings.
         let patch = app.current_patch(i).unwrap();
         assert!(patch.params.contains_key("bow_pressure") && !patch.params.contains_key("hardness"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recording_captures_the_master_output() {
+        use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+        let dir = temp_dir("record");
+        let mut app = test_app(&dir);
+        app.default_rack();
+        // A real engine on its own thread, fed by the app's command queue.
+        let mut engine =
+            crate::engine::Engine::new(48_000.0, app.commands.clone(), app.garbage.clone(), app.telemetry.clone());
+        let running = Arc::new(AtomicBool::new(true));
+        let flag = running.clone();
+        let audio = std::thread::spawn(move || {
+            let mut buf = vec![0.0f32; 256 * 2];
+            while flag.load(Relaxed) {
+                engine.process(&mut buf, 2);
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+
+        let started = app.run_tool("start_recording", &serde_json::json!({ "name": "take" })).unwrap();
+        assert!(started["recording"].as_str().unwrap().ends_with("recordings/take.wav"));
+        app.send(Command::NoteOn { slot: 0, note: 60, velocity: 1.0 });
+        std::thread::sleep(Duration::from_millis(400));
+        let s = screen(&mut app, 120, 30);
+        assert!(s.contains("● REC 0:00"), "{s}");
+        assert!(app.run_tool("get_rack", &serde_json::json!({})).unwrap()["recording"].is_object());
+
+        let stopped = app.run_tool("stop_recording", &serde_json::json!({})).unwrap();
+        assert_eq!(stopped["finalized"], true, "{stopped}");
+        let path = PathBuf::from(stopped["saved"].as_str().unwrap());
+        let mut wav = hound::WavReader::open(&path).unwrap();
+        assert_eq!((wav.spec().channels, wav.spec().sample_rate), (2, 48_000));
+        let samples: Vec<f32> = wav.samples::<f32>().map(Result::unwrap).collect();
+        let secs = samples.len() as f64 / 2.0 / 48_000.0;
+        assert!((secs - stopped["seconds"].as_f64().unwrap()).abs() < 0.01, "{secs}s on disk vs {stopped}");
+        assert!(samples.iter().any(|v| v.abs() > 0.01), "the note isn't in the recording");
+        assert!(app.recording.is_none() && app.run_tool("stop_recording", &serde_json::json!({})).is_err());
+
+        // Another take with the same name doesn't overwrite the first.
+        let again = app.start_recording(Some("take")).unwrap();
+        assert!(again.ends_with("take (2).wav"));
+        app.finish_recording(Duration::from_secs(3));
+        assert!(again.exists() && path.exists());
+
+        running.store(false, Relaxed);
+        audio.join().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

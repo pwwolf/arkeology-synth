@@ -7,6 +7,7 @@ mod mcp;
 mod midi;
 mod params;
 mod patch;
+mod recorder;
 mod reverb;
 mod sample;
 mod synth;
@@ -178,6 +179,8 @@ fn main() -> Result<()> {
 
     let result = run(&mut terminal, &mut app);
 
+    // Finalize any recording while the audio stream is still running.
+    app.finish_recording(Duration::from_secs(5));
     app.autosave();
     if has_release {
         let _ = execute!(stdout(), PopKeyboardEnhancementFlags);

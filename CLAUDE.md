@@ -52,9 +52,9 @@ Adding a parameter means adding a table entry and reading it in `update`. Visibi
 - `app.rs`: `App` state, keyboard and popup handling, patches and sessions.
 - `ui.rs`: rendering, including the ordered column layout (`partition`) and the sampler's braille waveform.
 - `midi.rs`: ports, the virtual "Arkeology Synth" input, CC learn mappings (applied on the UI thread in `App::on_midi`).
-- `mcp.rs` + `app/tools.rs`: an embedded MCP server (Streamable HTTP, `127.0.0.1:7878/mcp`, Origin-checked). It forwards tool calls to the UI thread, which executes them through the same `App` methods as key presses.
+- `recorder.rs` (WAV recording: engine copies blocks into a pre-allocated pool, a writer thread saves them). `mcp.rs` + `app/tools.rs`: an embedded MCP server (Streamable HTTP, `127.0.0.1:7878/mcp`, Origin-checked). It forwards tool calls to the UI thread, which executes them through the same `App` methods as key presses.
 
-**Persistence.** Data lives in `dirs::data_dir()/arkeology-synth` (`--data-dir` to override): `patches/`, `sessions/`, `samples/`, `autosave.json`. The autosave is written on clean quit and restored at start (`--fresh` skips it). Factory patches are built in (`patch::factory_patches`), never written to disk. Samples are referenced by path.
+**Persistence.** Data lives in `dirs::data_dir()/arkeology-synth` (`--data-dir` to override): `patches/`, `sessions/`, `samples/`, `recordings/`, `autosave.json`. The autosave is written on clean quit and restored at start (`--fresh` skips it). Factory patches are built in (`patch::factory_patches`), never written to disk. Samples are referenced by path.
 
 ## Conventions and gotchas
 

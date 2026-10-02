@@ -132,6 +132,13 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Black).bg(OK).bold(),
         ));
     }
+    if let Some(rec) = &app.recording {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!(" ● REC {} ", crate::app::format_duration(rec.seconds())),
+            Style::default().fg(Color::White).bg(HOT).bold(),
+        ));
+    }
     if app.learning.is_some() {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(" MIDI LEARN ", Style::default().fg(Color::Black).bg(LEARN).bold()));
@@ -854,6 +861,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         k("k", "play the selected synth from the computer keyboard"),
         k("p", "choose MIDI input ports"),
         k("space", "panic: all notes off"),
+        k("R", "start / stop recording the output to a WAV (in recordings/)"),
         k("q / ctrl-c", "quit (the rack is autosaved)"),
         Line::raw(""),
         Line::styled(

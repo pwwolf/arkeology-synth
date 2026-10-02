@@ -116,7 +116,7 @@ pub struct Storage {
 impl Storage {
     pub fn new(root: PathBuf) -> Result<Self> {
         let s = Storage { root };
-        for dir in [s.patches_dir(), s.sessions_dir(), s.samples_dir()] {
+        for dir in [s.patches_dir(), s.sessions_dir(), s.samples_dir(), s.recordings_dir()] {
             fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         }
         Ok(s)
@@ -139,6 +139,10 @@ impl Storage {
 
     pub fn samples_dir(&self) -> PathBuf {
         self.root.join("samples")
+    }
+
+    pub fn recordings_dir(&self) -> PathBuf {
+        self.root.join("recordings")
     }
 
     pub fn autosave_path(&self) -> PathBuf {
