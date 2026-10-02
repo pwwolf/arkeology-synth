@@ -323,7 +323,7 @@ impl App {
         if matches!(kind, SynthKind::Granular | SynthKind::Sampler)
             && let Some(path) = &sample_path
         {
-            match sample::load_wav(path) {
+            match sample::load_file(path) {
                 Ok(s) => sample = Some(Arc::new(s)),
                 Err(e) => self.error(format!("sample: {e:#}")),
             }
@@ -558,7 +558,7 @@ impl App {
     }
 
     fn load_sample(&mut self, index: usize, path: &Path) {
-        match sample::load_wav(path) {
+        match sample::load_file(path) {
             Ok(s) => {
                 let dur = s.duration();
                 let arc = Arc::new(s);
@@ -594,10 +594,7 @@ impl App {
                             return None;
                         }
                         let is_dir = path.is_dir();
-                        let is_wav = path
-                            .extension()
-                            .is_some_and(|x| x.eq_ignore_ascii_case("wav") || x.eq_ignore_ascii_case("wave"));
-                        (is_dir || is_wav).then_some(FileEntry { name, path, is_dir })
+                        (is_dir || sample::is_audio_file(&path)).then_some(FileEntry { name, path, is_dir })
                     })
                     .collect()
             })

@@ -6,7 +6,7 @@ controller or a DAW/sequencer.
 
 - **FM**: 4 operators, 8 algorithms, op-4 feedback, per-operator ADSR, ratio/detune and
   velocity sensitivity, vibrato (mod wheel adds depth).
-- **Granular**: a grain cloud per voice over a WAV file or one of five built-in sources
+- **Granular**: a grain cloud per voice over a WAV/FLAC file or one of five built-in sources
   (Choir, Glass, Saw, Pluck, Noise). Controls for position, spray, scan speed, size,
   density, jitter, pitch spray, stereo spread, reverse probability and window shape, plus
   an amp envelope and a multimode filter. The mod wheel adds spray.
@@ -37,7 +37,7 @@ controller or a DAW/sequencer.
   sensitivity and drive, and Transpose/pitch bend retune the whole kit. In keyboard play
   mode a drum slot starts at the kick, so the home row plays the kit (`a` kick, `s` snare,
   `e` clap, `t` closed hat, `u` open hat).
-- **Sampler**: plays a WAV (mono or stereo) or a built-in source, with a waveform view
+- **Sampler**: plays a WAV or FLAC file (mono or stereo) or a built-in source, with a waveform view
   above its parameters. Three modes:
   - **Classic**: pitched across the keyboard from a Root Note, with an optional
     crossfaded sustain loop. Loop points can be moved while notes play.
@@ -48,7 +48,7 @@ controller or a DAW/sequencer.
 
   It also has start/end, reverse, tune, an amp envelope, a multimode filter, and
   velocity control of level and cutoff. Playback uses 4-point Hermite interpolation. Press
-  `f` to load a WAV. Root and Base Note accept names like `c4` or `f#2`. In keyboard play mode a
+  `f` to load a WAV or FLAC. Root and Base Note accept names like `c4` or `f#2`. In keyboard play mode a
   sliced sampler starts at its first slice.
 - Every slot has volume, pan, reverb send, transpose and bend range. The polyphonic synths
   also have voice count and glide.
@@ -92,7 +92,7 @@ keyboard. To send a test phrase to the virtual port, run
 | `a` | add a synth |
 | `l` / `w` | browse/load patches (factory and yours; `tab` filters by synth, `space` auditions) / write the selected synth's patch |
 | `L` / `W` | load / write a session |
-| `f` | load a WAV into a granular synth or sampler |
+| `f` | load a WAV or FLAC into a granular synth or sampler |
 | `r` `m` `s` | rename, mute, solo |
 | `c` / `C` | MIDI-learn a CC for the selected parameter / clear it |
 | `p` | MIDI input ports |
@@ -119,7 +119,7 @@ Data lives in `~/Library/Application Support/arkeology-synth` (macOS) or
 ```
 patches/    your saved patches, one JSON file each (factory patches are built in)
 sessions/   whole-rack sessions
-samples/    the sample browser starts here; drop WAVs in
+samples/    the sample browser starts here; drop WAV/FLAC files in
 autosave.json
 ```
 
@@ -146,7 +146,7 @@ tables, and those tables also drive the generic TUI editor and patch serialisati
 | `src/engine.rs` | slots, MIDI routing, mixer, telemetry |
 | `src/synth/mod.rs` | `SynthKind`, common params, the `Poly`/`Voice` voice allocator (stealing, sustain, glide) |
 | `src/synth/fm.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `sampler.rs` | the five engines |
-| `src/sample.rs` | WAV loading, built-in sources, waveform overview and onset detection |
+| `src/sample.rs` | WAV/FLAC loading, built-in sources, waveform overview and onset detection |
 | `src/dsp.rs`, `src/reverb.rs` | oscillator table, ADSR, SVF filter, Freeverb |
 | `src/app.rs`, `src/ui.rs` | TUI state, input and rendering |
 | `src/patch.rs` | patches, sessions, factory presets |

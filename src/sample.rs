@@ -1,4 +1,4 @@
-//! Audio sources for the granular synth and sampler: WAV loading, analysis,
+//! Audio sources for the granular synth and sampler: WAV/FLAC loading, analysis,
 //! and a handful of procedurally generated built-in sources so both make
 //! sound out of the box.
 
@@ -166,20 +166,24 @@ impl Sample {
     }
 }
 
-pub fn load_wav(path: &Path) -> Result<Sample> {
-    let mut reader = hound::WavReader::open(path)
+/// File extensions the sample browser offers.
+pub const AUDIO_EXTENSIONS: [&str; 3] = ["wav", "wave", "flac"];
+
+pub fn is_audio_file(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|x| AUDIO_EXTENSIONS.iter().any(|e| x.eq_ignore_ascii_case(e)))
+}
+
+/// Load a WAV or FLAC file, chosen by its header rather than its extension.
+pub fn load_file(path: &Path) -> Result<Sample> {
+    let mut magic = [0u8; 4];
+    std::fs::File::open(path)
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut magic))
         .with_context(|| format!("opening {}", path.display()))?;
-    let spec = reader.spec();
-    let channels = spec.channels.max(1) as usize;
-    let interleaved: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Float => reader.samples::<f32>().collect::<Result<_, _>>()?,
-        hound::SampleFormat::Int => {
-            let scale = 1.0 / (1i64 << (spec.bits_per_sample - 1)) as f32;
-            reader
-                .samples::<i32>()
-                .map(|s| s.map(|v| v as f32 * scale))
-                .collect::<Result<_, _>>()?
-        }
+    let (interleaved, channels, sample_rate) = match &magic {
+        b"fLaC" => decode_flac(path)?,
+        b"RIFF" | b"RF64" => decode_wav(path)?,
+        _ => bail!("{} isn't a WAV or FLAC file", path.display()),
     };
     // Keep the first two channels; anything beyond stereo is dropped.
     let left: Vec<f32> = interleaved.chunks(channels).map(|f| f[0]).collect();
@@ -192,7 +196,38 @@ pub fn load_wav(path: &Path) -> Result<Sample> {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "sample".into());
-    Ok(Sample::new(name, left, right, spec.sample_rate as f32))
+    Ok(Sample::new(name, left, right, sample_rate))
+}
+
+/// Interleaved samples, channel count and sample rate.
+type Decoded = (Vec<f32>, usize, f32);
+
+fn decode_wav(path: &Path) -> Result<Decoded> {
+    let mut reader = hound::WavReader::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let spec = reader.spec();
+    let interleaved: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Float => reader.samples::<f32>().collect::<Result<_, _>>()?,
+        hound::SampleFormat::Int => {
+            let scale = 1.0 / (1i64 << (spec.bits_per_sample - 1)) as f32;
+            reader
+                .samples::<i32>()
+                .map(|s| s.map(|v| v as f32 * scale))
+                .collect::<Result<_, _>>()?
+        }
+    };
+    Ok((interleaved, spec.channels.max(1) as usize, spec.sample_rate as f32))
+}
+
+fn decode_flac(path: &Path) -> Result<Decoded> {
+    let mut reader = claxon::FlacReader::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let info = reader.streaminfo();
+    let scale = 1.0 / (1i64 << (info.bits_per_sample - 1)) as f32;
+    let interleaved: Vec<f32> = reader
+        .samples()
+        .map(|s| s.map(|v| v as f32 * scale))
+        .collect::<Result<_, _>>()
+        .with_context(|| format!("decoding {}", path.display()))?;
+    Ok((interleaved, info.channels.max(1) as usize, info.sample_rate as f32))
 }
 
 // ---------------------------------------------------------------------------
@@ -388,4 +423,35 @@ fn gen_noise() -> Vec<f32> {
             f.process(&coefs, rng.bipolar())
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+    }
+
+    /// The FLAC fixtures were encoded from the WAV fixtures with the reference
+    /// `flac` encoder, so both decoders must produce identical samples.
+    #[test]
+    fn flac_matches_wav() {
+        for bits in [16, 24] {
+            let wav = load_file(&fixture(&format!("stereo{bits}.wav"))).unwrap();
+            let flac = load_file(&fixture(&format!("stereo{bits}.flac"))).unwrap();
+            assert!(flac.is_stereo(), "{bits}-bit");
+            assert_eq!(flac.sample_rate, wav.sample_rate);
+            assert_eq!(flac.data, wav.data, "{bits}-bit left");
+            assert_eq!(flac.right, wav.right, "{bits}-bit right");
+            // Left and right hold different signals, so channels weren't mixed.
+            assert_ne!(flac.data, *flac.right.as_ref().unwrap());
+        }
+    }
+
+    #[test]
+    fn rejects_non_audio() {
+        let err = load_file(&fixture("../../Cargo.toml")).err().unwrap();
+        assert!(err.to_string().contains("isn't a WAV or FLAC"), "{err}");
+    }
 }

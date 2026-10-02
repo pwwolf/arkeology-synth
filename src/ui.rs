@@ -431,7 +431,7 @@ fn draw_waveform(f: &mut Frame, app: &App, slot: usize, area: Rect) {
         Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)]).areas(area);
     let Some(sample) = app.slot_sample(slot).filter(|x| !x.is_empty()) else {
         f.render_widget(
-            Paragraph::new("No sample loaded: press f to load a WAV, or pick a built-in Source.")
+            Paragraph::new("No sample loaded: press f to load a WAV or FLAC, or pick a built-in Source.")
                 .style(Style::default().fg(FG_DIM)),
             info,
         );
@@ -825,7 +825,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         h("Patches & sessions"),
         k("l / w", "load / write the selected synth's patch"),
         k("L / W", "load / write the whole rack as a session"),
-        k("f", "load a WAV into a granular synth or sampler"),
+        k("f", "load a WAV or FLAC into a granular synth or sampler"),
         h("Playing"),
         k("k", "play the selected synth from the computer keyboard"),
         k("p", "choose MIDI input ports"),
