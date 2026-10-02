@@ -779,8 +779,9 @@ impl App {
             return;
         }
 
-        if self.popup.is_some() {
-            if key.kind == KeyEventKind::Press {
+        if let Some(popup) = &self.popup {
+            let typing = matches!(popup, Popup::Text { .. });
+            if key.kind == KeyEventKind::Press || repeatable(key.code, typing) {
                 self.on_popup_key(key);
             }
             return;
@@ -789,7 +790,7 @@ impl App {
         if self.keyboard.enabled && self.on_play_key(key) {
             return;
         }
-        if key.kind == KeyEventKind::Repeat && !matches!(key.code, KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Char(',') | KeyCode::Char('.')) {
+        if key.kind == KeyEventKind::Repeat && !repeatable(key.code, false) {
             return;
         }
         self.on_main_key(key);
@@ -1256,6 +1257,18 @@ pub fn patch_view(all: &[PatchEntry], filter: Option<SynthKind>) -> Vec<&PatchEn
     all.iter().filter(|e| filter.is_none_or(|k| e.patch.kind == k)).collect()
 }
 
+/// Keys that act again while held (terminals that report repeats separately
+/// from presses). Actions like Enter, Esc or Space only fire once.
+fn repeatable(code: KeyCode, typing: bool) -> bool {
+    match code {
+        KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right | KeyCode::PageUp | KeyCode::PageDown => true,
+        // Fine parameter steps.
+        KeyCode::Char(',') | KeyCode::Char('.') => true,
+        KeyCode::Char(_) | KeyCode::Backspace => typing,
+        _ => false,
+    }
+}
+
 enum ListAction {
     Stay,
     Select,
@@ -1492,6 +1505,49 @@ mod tests {
         assert_eq!(p("source"), 0.0, "source switched to File");
         let status = app.status.as_ref().unwrap().text.clone();
         assert!(status.contains("Root Note A4"), "{status}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn held_keys_repeat_in_lists_but_not_for_actions() {
+        let dir = temp_dir("repeat");
+        let mut app = test_app(&dir);
+        app.default_rack();
+        let repeat = |code| KeyEvent { kind: KeyEventKind::Repeat, ..key(code) };
+
+        // Holding Down scrolls the patch browser.
+        app.on_key(key(KeyCode::Char('l')));
+        let cursor = |app: &App| match &app.popup {
+            Some(Popup::Patches { cursor, .. }) => *cursor,
+            _ => panic!("browser closed"),
+        };
+        let start = cursor(&app);
+        for _ in 0..3 {
+            app.on_key(repeat(KeyCode::Down));
+        }
+        assert_eq!(cursor(&app), start + 3);
+        // A repeated Enter doesn't load anything; a press does.
+        app.on_key(repeat(KeyCode::Enter));
+        assert!(app.popup.is_some());
+        app.on_key(key(KeyCode::Esc));
+
+        // Holding a key types repeatedly in text fields, and Backspace deletes.
+        app.on_key(key(KeyCode::Char('W')));
+        app.on_key(key(KeyCode::Char('a')));
+        app.on_key(repeat(KeyCode::Char('a')));
+        app.on_key(repeat(KeyCode::Char('a')));
+        app.on_key(repeat(KeyCode::Backspace));
+        match &app.popup {
+            Some(Popup::Text { input, .. }) => assert_eq!(input, "aa"),
+            _ => panic!("text popup closed"),
+        }
+        app.on_key(key(KeyCode::Esc));
+
+        // Holding Down in the rack keeps moving too.
+        app.rack_cursor = 0;
+        app.on_key(repeat(KeyCode::Down));
+        app.on_key(repeat(KeyCode::Down));
+        assert_eq!(app.rack_cursor, 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
