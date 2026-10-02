@@ -15,6 +15,17 @@ controller or a DAW/sequencer.
   - Separate amp and filter envelopes, and a global LFO (sine, triangle, square or
     sample-and-hold) routable to pitch, cutoff and pulse width.
   - A Juno-style stereo chorus (I, II, I+II).
+- **Physical**: physically modelled instruments with two models.
+  - **String** is an extended Karplus-Strong plucked string. A fractional all-pass keeps it
+    in tune, and it has damping for brightness and dispersion for stiffness
+    (piano-like stretched partials). Pick position shapes the excitation.
+  - **Mallet** is modal synthesis: a strike rings up to 8 resonators tuned to a material's
+    partials (wood/marimba, metal/vibraphone, glass, free bar, bell, membrane, tine).
+  - Both models have hardness (velocity makes notes brighter), strike/pluck position,
+    decay, HF damping, damping on key release, a wooden body resonance, tone and
+    stereo width.
+  - Every element's phase delay is compensated, so strings and mallets measure within a
+    few cents of pitch across the keyboard.
 - **Granular**: a grain cloud per voice over a WAV/FLAC file or one of five built-in sources
   (Choir, Glass, Saw, Pluck, Noise). Controls for position, spray, scan speed, size,
   density, jitter, pitch spray, stereo spread, reverse probability and window shape, plus
@@ -66,7 +77,8 @@ controller or a DAW/sequencer.
   The master bus has a stereo reverb and a soft-clipping drive stage.
 - Built-in patches for every engine: FM Strings, E.Piano, Glass Bell, Marimba, Soft Pad,
   Brass, Organ, Mono Lead, Choir Cloud, Shimmer Pad, Warm Pad, Poly Brass, Juno Strings, Supersaw Lead,
-  Poly Stab, Soft Bass, five acid basses, 808/909/Lo-Fi kits,
+  Poly Stab, Soft Bass, Nylon/Steel Guitar, Harp, Clav, Koto, Modelled Marimba, Vibraphone,
+  Xylophone, Church Bell, Kalimba, five acid basses, 808/909/Lo-Fi kits,
   sampler examples (Choir Loop, Pluck Slices, Saw Stab, Reverse Glass) and more. Press `l`
   to browse them (`tab` switches synth type, `space` auditions). Edit one and press `w` to
   save your own version.
@@ -182,7 +194,7 @@ tables, and those tables also drive the generic TUI editor and patch serialisati
 |------|----------|
 | `src/engine.rs` | slots, MIDI routing, mixer, telemetry |
 | `src/synth/mod.rs` | `SynthKind`, common params, the `Poly`/`Voice` voice allocator (stealing, sustain, glide) |
-| `src/synth/fm.rs`, `analog.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `sampler.rs` | the six engines |
+| `src/synth/fm.rs`, `analog.rs`, `physical.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `sampler.rs` | the seven engines |
 | `src/sample.rs` | WAV/FLAC loading, built-in sources, waveform overview and onset detection |
 | `src/dsp.rs`, `src/reverb.rs` | oscillator table, ADSR, SVF filter, Freeverb |
 | `src/app.rs`, `src/ui.rs` | TUI state, input and rendering |
