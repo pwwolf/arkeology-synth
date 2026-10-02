@@ -82,6 +82,31 @@ keyboard. To send a test phrase to the virtual port, run
 
 `--render-demo out.wav` renders a short multitimbral demo offline (no audio device needed).
 
+## MCP server
+
+The synth runs an MCP server on `http://127.0.0.1:7878/mcp` (Streamable HTTP transport), so
+an assistant like Claude Code can inspect and configure it while you play. To connect
+Claude Code:
+
+```sh
+claude mcp add --transport http arkeology http://127.0.0.1:7878/mcp
+```
+
+| Tool | What it does |
+|------|--------------|
+| `get_rack`, `get_params` | inspect slots, channels, mute/solo, and every parameter with its range and current value |
+| `set_params` | set parameters on a slot or `"master"`; values can be numbers or strings like `"250ms"`, `"2.5k"`, `"40%"`, `"c4"`, `"LowPass"` |
+| `add_synth`, `remove_synth`, `set_slot` | build the rack: synth type, MIDI channel, mute/solo, name |
+| `list_patches`, `load_patch`, `save_patch` | browse factory and user patches; save the current sound |
+| `list_sessions`, `load_session`, `save_session` | whole-rack snapshots |
+| `load_sample` | load a WAV/FLAC into a granular synth or sampler (with root-note detection) |
+| `play_notes`, `panic` | audition a sound through your speakers; stop everything |
+
+Changes apply live, through the same code as the keyboard, and the status line shows what
+the client did. The server only listens on localhost and rejects browser requests from
+other origins. Use `--mcp-port` to change the port (for example, when running two
+instances) or `--no-mcp` to turn it off.
+
 ## Keys
 
 | Key | Action |
@@ -152,6 +177,7 @@ tables, and those tables also drive the generic TUI editor and patch serialisati
 | `src/dsp.rs`, `src/reverb.rs` | oscillator table, ADSR, SVF filter, Freeverb |
 | `src/app.rs`, `src/ui.rs` | TUI state, input and rendering |
 | `src/patch.rs` | patches, sessions, factory presets |
+| `src/mcp.rs`, `src/app/tools.rs` | embedded MCP server (HTTP + JSON-RPC) and its tools |
 
 To add a synth type, write a parameter table and an engine, then add a variant to
 `SynthKind` and `Instrument`. A polyphonic engine implements `Voice` and reuses `Poly` for

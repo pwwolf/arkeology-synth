@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod dsp;
 mod engine;
+mod mcp;
 mod midi;
 mod params;
 mod patch;
@@ -52,6 +53,12 @@ struct Args {
     /// Don't connect to MIDI ports automatically.
     #[arg(long)]
     no_midi: bool,
+    /// Port for the embedded MCP server (http://127.0.0.1:PORT/mcp).
+    #[arg(long, default_value_t = mcp::DEFAULT_PORT)]
+    mcp_port: u16,
+    /// Don't start the embedded MCP server.
+    #[arg(long)]
+    no_mcp: bool,
     /// Don't create the "Arkeology Synth" virtual MIDI input.
     #[arg(long)]
     no_virtual: bool,
@@ -152,6 +159,16 @@ fn main() -> Result<()> {
         None => {
             app.default_rack();
             app.info("welcome! press ? for help, k to play from the keyboard");
+        }
+    }
+    if !args.no_mcp {
+        let (tx, rx) = std::sync::mpsc::channel();
+        match mcp::start(args.mcp_port, tx) {
+            Ok(addr) => {
+                app.mcp = Some(rx);
+                app.mcp_addr = Some(addr);
+            }
+            Err(e) => startup_notes.push(format!("{e:#} (another instance running? try --mcp-port)")),
         }
     }
     if let Some(n) = startup_notes.pop() {

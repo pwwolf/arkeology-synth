@@ -260,7 +260,7 @@ impl ParamDesc {
 }
 
 /// Parse names like "c4", "f#2" or "bb1" (middle C = C4 = 60).
-fn parse_note_name(t: &str) -> Option<i32> {
+pub(crate) fn parse_note_name(t: &str) -> Option<i32> {
     let mut chars = t.chars().peekable();
     let base = match chars.next()? {
         'c' => 0,

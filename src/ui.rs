@@ -112,6 +112,10 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(" · ", Style::default().fg(BAR_EMPTY)),
         Span::styled(midi_txt, Style::default().fg(FG_DIM)),
     ];
+    if let Some(addr) = app.mcp_addr {
+        spans.push(Span::styled(" · ", Style::default().fg(BAR_EMPTY)));
+        spans.push(Span::styled(format!("MCP :{}", addr.port()), Style::default().fg(FG_DIM)));
+    }
     if app.keyboard.enabled {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(

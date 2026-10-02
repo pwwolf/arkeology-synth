@@ -7,6 +7,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+use std::net::SocketAddr;
+use std::sync::mpsc::Receiver;
+
 use crossbeam_queue::ArrayQueue;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -117,6 +120,11 @@ pub struct App {
     pub master_meter: (f32, f32),
     pub cpu: f32,
     pub quit: bool,
+    /// Tool calls from the embedded MCP server, and where it listens.
+    pub mcp: Option<Receiver<crate::mcp::Job>>,
+    pub mcp_addr: Option<SocketAddr>,
+    /// Notes scheduled by MCP `play_notes`, sent when due.
+    scheduled: Vec<(Instant, Command)>,
 }
 
 pub struct AppInit {
@@ -167,6 +175,9 @@ impl App {
             master_meter: (0.0, 0.0),
             cpu: 0.0,
             quit: false,
+            mcp: None,
+            mcp_addr: None,
+            scheduled: Vec::new(),
         }
     }
 
@@ -636,6 +647,28 @@ impl App {
     // -----------------------------------------------------------------------
 
     pub fn tick(&mut self) {
+        if let Some(rx) = &self.mcp {
+            let jobs: Vec<crate::mcp::Job> = rx.try_iter().collect();
+            for job in jobs {
+                let result = self.run_tool(&job.tool, &job.args);
+                if let Err(e) = &result {
+                    self.error(format!("MCP {}: {e}", job.tool));
+                }
+                let _ = job.reply.send(result);
+            }
+        }
+        if !self.scheduled.is_empty() {
+            let now = Instant::now();
+            let (mut due, later): (Vec<_>, Vec<_>) =
+                std::mem::take(&mut self.scheduled).into_iter().partition(|(at, _)| *at <= now);
+            self.scheduled = later;
+            // Stable sort keeps a note-on ahead of its note-off at equal times.
+            due.sort_by_key(|(at, _)| *at);
+            for (_, cmd) in due {
+                self.send(cmd);
+            }
+        }
+
         while let Some(e) = self.errors.pop() {
             self.error(e);
         }
@@ -1254,19 +1287,15 @@ pub fn channel_label(ch: Option<u8>) -> String {
     }
 }
 
+mod tools;
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests_support {
     use super::*;
     use crate::engine::Telemetry;
     use crate::midi::Sink;
-    use ratatui::backend::TestBackend;
-    use ratatui::crossterm::event::KeyEventState;
 
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent { code, modifiers: KeyModifiers::NONE, kind: KeyEventKind::Press, state: KeyEventState::NONE }
-    }
-
-    fn test_app(dir: &Path) -> App {
+    pub fn test_app(dir: &Path) -> App {
         let commands: CommandQueue = Arc::new(ArrayQueue::new(4096));
         let midi_in = Arc::new(ArrayQueue::new(64));
         let midi = MidiManager::new(Sink { engine: commands.clone(), ui: midi_in.clone() });
@@ -1285,6 +1314,24 @@ mod tests {
         })
     }
 
+    pub fn temp_dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("arkeology-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tests_support::{temp_dir, test_app};
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::KeyEventState;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent { code, modifiers: KeyModifiers::NONE, kind: KeyEventKind::Press, state: KeyEventState::NONE }
+    }
+
     fn screen(app: &mut App, w: u16, h: u16) -> String {
         let mut term = ratatui::Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| crate::ui::draw(f, app)).unwrap();
@@ -1293,12 +1340,6 @@ mod tests {
             .map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
-    }
-
-    fn temp_dir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("arkeology-test-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        d
     }
 
     #[test]
