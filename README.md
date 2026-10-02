@@ -15,17 +15,26 @@ controller or a DAW/sequencer.
   - Separate amp and filter envelopes, and a global LFO (sine, triangle, square or
     sample-and-hold) routable to pitch, cutoff and pulse width.
   - A Juno-style stereo chorus (I, II, I+II).
-- **Physical**: physically modelled instruments with two models.
+- **Physical**: physically modelled instruments with four models. Only the selected
+  model's controls are shown.
   - **String** is an extended Karplus-Strong plucked string. A fractional all-pass keeps it
-    in tune, and it has damping for brightness and dispersion for stiffness
-    (piano-like stretched partials). Pick position shapes the excitation.
+    in tune, and it has damping for brightness and dispersion for stiffness. Pick
+    position shapes the excitation.
   - **Mallet** is modal synthesis: a strike rings up to 8 resonators tuned to a material's
     partials (wood/marimba, metal/vibraphone, glass, free bar, bell, membrane, tine).
-  - Both models have hardness (velocity makes notes brighter), strike/pluck position,
-    decay, HF damping, damping on key release, a wooden body resonance, tone and
-    stereo width.
-  - Every element's phase delay is compensated, so strings and mallets measure within a
-    few cents of pitch across the keyboard.
+  - **Piano** uses 1–3 detuned stiff strings per note, as on a real piano, so notes beat
+    and decay in two stages. A felt hammer's contact time shortens as you play harder,
+    making loud notes brighter. Stiffness and decay vary across the keyboard, dampers
+    stop notes on key-up (the top octave and a half has none, as on a real piano), the
+    sustain pedal holds, and each strike has a little hammer thump.
+  - **Bowed** is a bowed-string waveguide with a nonlinear stick-slip friction junction.
+    Velocity sets bow speed, Bow Pressure and the mod wheel set bow force, and you choose
+    bow position, bow attack and delayed vibrato. Instrument picks a violin, viola, cello
+    or bass body. Notes sustain while held, and force follows speed and position as on a
+    real bow, so notes from E2 to E6 settle into a proper bowed tone at any velocity.
+    The very top of the violin range (above ~E6) is less reliable.
+  - Every element's phase delay is compensated, so strings, mallets and pianos measure
+    within a few cents of pitch across the keyboard.
 - **Granular**: a grain cloud per voice over a WAV/FLAC file or one of five built-in sources
   (Choir, Glass, Saw, Pluck, Noise). Controls for position, spray, scan speed, size,
   density, jitter, pitch spray, stereo spread, reverse probability and window shape, plus
@@ -98,8 +107,9 @@ controller or a DAW/sequencer.
   The master bus has a stereo reverb and a soft-clipping drive stage.
 - Built-in patches for every engine: FM Strings, E.Piano, Glass Bell, Marimba, Soft Pad,
   Brass, Organ, Mono Lead, Choir Cloud, Shimmer Pad, Warm Pad, Poly Brass, Juno Strings, Supersaw Lead,
-  Poly Stab, Soft Bass, Nylon/Steel Guitar, Harp, Clav, Koto, Modelled Marimba, Vibraphone,
-  Xylophone, Church Bell, Kalimba, five acid basses, 808/909/Lo-Fi kits,
+  Poly Stab, Soft Bass, Grand/Upright/Felt/Honky-Tonk Piano, Solo Violin, Viola, Cello, Double Bass, String Section,
+  Nylon/Steel Guitar, Harp, Clav, Koto, Modelled Marimba, Vibraphone, Xylophone, Church Bell,
+  Kalimba, five acid basses, 808/909/Lo-Fi kits,
   sampler examples (Choir Loop, Pluck Slices, Saw Stab, Reverse Glass) and more. Press `l`
   to browse them (`tab` switches synth type, `space` auditions). Edit one and press `w` to
   save your own version.

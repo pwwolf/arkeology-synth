@@ -160,7 +160,7 @@ fn tool_definitions() -> Value {
         "type": "string",
         "enum": ["fm", "analog", "physical", "granular", "acid", "drums", "sampler"],
         "description": "fm: 4-op FM · analog: poly subtractive (pads, brass, leads) · \
-physical: modelled plucked strings and struck mallets/bells · granular: grain clouds · \
+physical: modelled plucked strings, mallets/bells, piano and bowed strings (violin family) · granular: grain clouds · \
 acid: 303-style mono bass · drums: 808/909 kit on the GM drum map · sampler: WAV/FLAC sampler (classic/one-shot/slice)"
     });
     let read_only = json!({ "readOnlyHint": true });

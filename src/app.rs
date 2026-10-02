@@ -320,7 +320,10 @@ impl App {
 
     /// Whether a parameter is shown (FX parameters of inactive types are hidden).
     pub fn param_visible(&self, t: Target, i: usize) -> bool {
-        fx::visible(self.values(t), self.fx_base(t), i)
+        match t {
+            Target::Master => fx::visible(&self.master, master::FX_BASE, i),
+            Target::Slot(s) => self.slots[s].as_ref().is_some_and(|slot| slot.kind.param_visible(&slot.params, i)),
+        }
     }
 
     pub fn visible_params(&self, t: Target) -> Vec<usize> {
@@ -1650,6 +1653,29 @@ mod tests {
         let params = app.run_tool("get_params", &serde_json::json!({ "slot": 1 })).unwrap();
         let keys: Vec<&str> = params["params"].as_array().unwrap().iter().map(|p| p["key"].as_str().unwrap()).collect();
         assert!(keys.contains(&"fx2_reverb_size") && !keys.contains(&"fx2_delay_time"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn physical_page_shows_only_the_selected_models_controls() {
+        let dir = temp_dir("phys-ui");
+        let mut app = test_app(&dir);
+        app.add_synth(SynthKind::Physical);
+        let i = app.selected_slot().unwrap();
+        let t = Target::Slot(i);
+        let key = |k: &str| SynthKind::Physical.index_of(k).unwrap();
+        let shown = |app: &App, k: &str| app.param_visible(t, key(k));
+        app.set_param(t, key("model"), 2.0); // Piano
+        assert!(shown(&app, "unison") && shown(&app, "hardness") && !shown(&app, "bow_pressure") && !shown(&app, "material"));
+        let s = screen(&mut app, 150, 50);
+        assert!(s.contains("Unison Detune") && !s.contains("Bow Pressure"), "{s}");
+        app.set_param(t, key("model"), 3.0); // Bowed
+        assert!(shown(&app, "bow_pressure") && shown(&app, "vibrato") && !shown(&app, "hardness") && !shown(&app, "decay"));
+        let s = screen(&mut app, 150, 50);
+        assert!(s.contains("Bow Pressure") && s.contains("Instrument") && !s.contains("Hardness"), "{s}");
+        // Saved patches leave out the other models' settings.
+        let patch = app.current_patch(i).unwrap();
+        assert!(patch.params.contains_key("bow_pressure") && !patch.params.contains_key("hardness"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

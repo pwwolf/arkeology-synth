@@ -313,6 +313,86 @@ impl Ladder {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Biquad
+// ---------------------------------------------------------------------------
+
+/// RBJ "Audio EQ Cookbook" biquad, transposed direct form II.
+#[derive(Clone, Copy, Default)]
+pub struct Biquad {
+    b: [f32; 3],
+    a: [f32; 2],
+    z: [f32; 2],
+}
+
+impl Biquad {
+    fn from_coefs(b0: f64, b1: f64, b2: f64, a0: f64, a1: f64, a2: f64) -> Self {
+        Biquad {
+            b: [(b0 / a0) as f32, (b1 / a0) as f32, (b2 / a0) as f32],
+            a: [(a1 / a0) as f32, (a2 / a0) as f32],
+            z: [0.0; 2],
+        }
+    }
+
+    pub fn low_shelf(f0: f32, gain_db: f32, sr: f32) -> Self {
+        let a = 10f64.powf(gain_db as f64 / 40.0);
+        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
+        let (c, alpha) = (w.cos(), w.sin() / 2.0 * 2f64.sqrt());
+        let sa = 2.0 * a.sqrt() * alpha;
+        Self::from_coefs(
+            a * ((a + 1.0) - (a - 1.0) * c + sa),
+            2.0 * a * ((a - 1.0) - (a + 1.0) * c),
+            a * ((a + 1.0) - (a - 1.0) * c - sa),
+            (a + 1.0) + (a - 1.0) * c + sa,
+            -2.0 * ((a - 1.0) + (a + 1.0) * c),
+            (a + 1.0) + (a - 1.0) * c - sa,
+        )
+    }
+
+    pub fn high_shelf(f0: f32, gain_db: f32, sr: f32) -> Self {
+        let a = 10f64.powf(gain_db as f64 / 40.0);
+        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
+        let (c, alpha) = (w.cos(), w.sin() / 2.0 * 2f64.sqrt());
+        let sa = 2.0 * a.sqrt() * alpha;
+        Self::from_coefs(
+            a * ((a + 1.0) + (a - 1.0) * c + sa),
+            -2.0 * a * ((a - 1.0) + (a + 1.0) * c),
+            a * ((a + 1.0) + (a - 1.0) * c - sa),
+            (a + 1.0) - (a - 1.0) * c + sa,
+            2.0 * ((a - 1.0) - (a + 1.0) * c),
+            (a + 1.0) - (a - 1.0) * c - sa,
+        )
+    }
+
+    pub fn peaking(f0: f32, gain_db: f32, q: f32, sr: f32) -> Self {
+        let a = 10f64.powf(gain_db as f64 / 40.0);
+        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
+        let (c, alpha) = (w.cos(), w.sin() / (2.0 * q as f64));
+        Self::from_coefs(1.0 + alpha * a, -2.0 * c, 1.0 - alpha * a, 1.0 + alpha / a, -2.0 * c, 1.0 - alpha / a)
+    }
+
+    /// 12 dB/oct high-pass.
+    pub fn high_pass(f0: f32, q: f32, sr: f32) -> Self {
+        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
+        let (c, alpha) = (w.cos(), w.sin() / (2.0 * q as f64));
+        Self::from_coefs((1.0 + c) / 2.0, -(1.0 + c), (1.0 + c) / 2.0, 1.0 + alpha, -2.0 * c, 1.0 - alpha)
+    }
+
+    #[inline]
+    pub fn process(&mut self, x: f32) -> f32 {
+        let y = self.b[0] * x + self.z[0];
+        self.z[0] = self.b[1] * x - self.a[0] * y + self.z[1];
+        self.z[1] = self.b[2] * x - self.a[1] * y;
+        y
+    }
+
+    /// Replace coefficients but keep the filter state (no click on edits).
+    pub fn retune(&mut self, other: Biquad) {
+        self.b = other.b;
+        self.a = other.a;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

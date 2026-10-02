@@ -88,6 +88,19 @@ impl SynthKind {
         self.fx_base() + crate::fx::PARAMS.len()
     }
 
+    /// Whether parameter `i` applies given the current values: hides the
+    /// settings of inactive FX types and of other physical models.
+    pub fn param_visible(self, values: &[f32], i: usize) -> bool {
+        if !crate::fx::visible(values, self.fx_base(), i) {
+            return false;
+        }
+        let c = COMMON.len();
+        if self == SynthKind::Physical && (c..self.fx_base()).contains(&i) && values.len() > c {
+            return physical::param_visible(&values[c..], i - c);
+        }
+        true
+    }
+
     /// Index where this synth's insert FX parameters start.
     pub fn fx_base(self) -> usize {
         COMMON.len() + self.specific().len()

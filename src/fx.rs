@@ -6,7 +6,7 @@
 //! A unit's DSP state (delay lines etc.) is allocated when it is built, on the
 //! UI thread; the engine only swaps finished units in.
 
-use crate::dsp::{FilterMode, Svf, SvfCoefs, sin_cycles};
+use crate::dsp::{Biquad, FilterMode, Svf, SvfCoefs, sin_cycles};
 use crate::params::{ParamDesc as P, Unit};
 use crate::reverb::Reverb;
 use crate::synth::MAX_BLOCK;
@@ -484,75 +484,6 @@ impl FilterFx {
             r[i] = self.svf[1].process(&self.coefs, r[i]);
             self.phase = (self.phase + self.rate).fract();
         }
-    }
-}
-
-/// RBJ "Audio EQ Cookbook" biquad, transposed direct form II.
-#[derive(Clone, Copy, Default)]
-struct Biquad {
-    b: [f32; 3],
-    a: [f32; 2],
-    z: [f32; 2],
-}
-
-impl Biquad {
-    fn from_coefs(b0: f64, b1: f64, b2: f64, a0: f64, a1: f64, a2: f64) -> Self {
-        Biquad {
-            b: [(b0 / a0) as f32, (b1 / a0) as f32, (b2 / a0) as f32],
-            a: [(a1 / a0) as f32, (a2 / a0) as f32],
-            z: [0.0; 2],
-        }
-    }
-
-    fn low_shelf(f0: f32, gain_db: f32, sr: f32) -> Self {
-        let a = 10f64.powf(gain_db as f64 / 40.0);
-        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
-        let (c, alpha) = (w.cos(), w.sin() / 2.0 * 2f64.sqrt());
-        let sa = 2.0 * a.sqrt() * alpha;
-        Self::from_coefs(
-            a * ((a + 1.0) - (a - 1.0) * c + sa),
-            2.0 * a * ((a - 1.0) - (a + 1.0) * c),
-            a * ((a + 1.0) - (a - 1.0) * c - sa),
-            (a + 1.0) + (a - 1.0) * c + sa,
-            -2.0 * ((a - 1.0) + (a + 1.0) * c),
-            (a + 1.0) + (a - 1.0) * c - sa,
-        )
-    }
-
-    fn high_shelf(f0: f32, gain_db: f32, sr: f32) -> Self {
-        let a = 10f64.powf(gain_db as f64 / 40.0);
-        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
-        let (c, alpha) = (w.cos(), w.sin() / 2.0 * 2f64.sqrt());
-        let sa = 2.0 * a.sqrt() * alpha;
-        Self::from_coefs(
-            a * ((a + 1.0) + (a - 1.0) * c + sa),
-            -2.0 * a * ((a - 1.0) + (a + 1.0) * c),
-            a * ((a + 1.0) + (a - 1.0) * c - sa),
-            (a + 1.0) - (a - 1.0) * c + sa,
-            2.0 * ((a - 1.0) - (a + 1.0) * c),
-            (a + 1.0) - (a - 1.0) * c - sa,
-        )
-    }
-
-    fn peaking(f0: f32, gain_db: f32, q: f32, sr: f32) -> Self {
-        let a = 10f64.powf(gain_db as f64 / 40.0);
-        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
-        let (c, alpha) = (w.cos(), w.sin() / (2.0 * q as f64));
-        Self::from_coefs(1.0 + alpha * a, -2.0 * c, 1.0 - alpha * a, 1.0 + alpha / a, -2.0 * c, 1.0 - alpha / a)
-    }
-
-    #[inline]
-    fn process(&mut self, x: f32) -> f32 {
-        let y = self.b[0] * x + self.z[0];
-        self.z[0] = self.b[1] * x - self.a[0] * y + self.z[1];
-        self.z[1] = self.b[2] * x - self.a[1] * y;
-        y
-    }
-
-    /// Replace coefficients but keep the filter state (no click on edits).
-    fn retune(&mut self, other: Biquad) {
-        self.b = other.b;
-        self.a = other.a;
     }
 }
 

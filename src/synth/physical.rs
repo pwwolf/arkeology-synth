@@ -1,53 +1,90 @@
-//! Physical-modelling synth with two models:
+//! Physical-modelling synth with four models:
 //!
 //! - **String**: extended Karplus-Strong. A delay loop tuned to the note's
 //!   period (with a first-order Thiran all-pass for the fractional part)
 //!   contains a one-zero damping filter (brightness), an optional chain of
-//!   dispersion all-passes (stiffness, as in piano strings) and a loop gain
-//!   set from the decay time. The phase delay of every loop element is
-//!   measured at the fundamental and subtracted, so notes stay in tune at any
-//!   setting. It is excited by filtered noise, comb-filtered by pick position.
+//!   dispersion all-passes (stiffness) and a loop gain set from the decay
+//!   time. The phase delay of every loop element is measured at the
+//!   fundamental and subtracted, so notes stay in tune at any setting. It is
+//!   excited by filtered noise, comb-filtered by pick position.
 //! - **Mallet**: modal synthesis. A short raised-cosine strike (its width set
 //!   by hardness) rings a bank of two-pole resonators tuned to a material's
 //!   partial ratios, with higher modes decaying faster.
+//! - **Piano**: one to three slightly detuned stiff strings per note (as on a
+//!   real piano), struck by a felt hammer whose contact time shortens with
+//!   velocity, with register-dependent stiffness and decay, dampers that act
+//!   on key release (none in the top octave and a half) and a hammer thump.
+//! - **Bowed**: a bowed-string waveguide (McIntyre/Schumacher/Woodhouse,
+//!   Smith). The string is split at the bow into neck and bridge segments and
+//!   the bow drives it through a nonlinear stick-slip friction curve. Bow
+//!   speed (velocity + mod wheel), pressure and position shape the tone;
+//!   delayed vibrato and a violin-family body filter finish it.
 
-use crate::dsp::{FilterMode, Rng, Svf, SvfCoefs, midi_to_freq, pan_gains};
+use crate::dsp::{Biquad, FilterMode, Rng, Svf, SvfCoefs, midi_to_freq, pan_gains, sin_cycles};
 use crate::params::{ParamDesc as P, Unit};
 
 use super::{COMMON, Controls, MAX_BLOCK, Poly, VOICES_PARAM, Voice};
 
-pub const MODELS: [&str; 2] = ["String", "Mallet"];
+pub const MODELS: [&str; 4] = ["String", "Mallet", "Piano", "Bowed"];
 pub const MATERIALS: [&str; 7] = ["Wood", "Metal", "Glass", "Free Bar", "Bell", "Membrane", "Tine"];
+pub const BOWED_BODIES: [&str; 4] = ["Violin", "Viola", "Cello", "Bass"];
 
 pub const VOICES: usize = 0;
 pub const MODEL: usize = 1;
 pub const HARDNESS: usize = 2;
 pub const POSITION: usize = 3;
 pub const VEL_BRIGHT: usize = 4;
-pub const DECAY: usize = 5;
-pub const HF_DAMP: usize = 6;
-pub const STIFFNESS: usize = 7;
-pub const MATERIAL: usize = 8;
-pub const BODY: usize = 9;
-pub const RELEASE_DAMP: usize = 10;
-pub const TONE: usize = 11;
-pub const WIDTH: usize = 12;
+pub const BOW_PRESSURE: usize = 5;
+pub const BOW_POSITION: usize = 6;
+pub const BOW_ATTACK: usize = 7;
+pub const VIBRATO: usize = 8;
+pub const VIBRATO_RATE: usize = 9;
+pub const BOWED_BODY: usize = 10;
+pub const DECAY: usize = 11;
+pub const HF_DAMP: usize = 12;
+pub const STIFFNESS: usize = 13;
+pub const UNISON: usize = 14;
+pub const MATERIAL: usize = 15;
+pub const BODY: usize = 16;
+pub const RELEASE_DAMP: usize = 17;
+pub const TONE: usize = 18;
+pub const WIDTH: usize = 19;
 
-pub static PARAMS: [P; 13] = [
+pub static PARAMS: [P; 20] = [
     VOICES_PARAM,
     P::choice("model", "Model", "Model", &MODELS, 0),
     P::float("hardness", "Hardness", "Exciter", 0.0, 1.0, 0.5, Unit::Percent),
     P::float("position", "Position", "Exciter", 0.02, 0.5, 0.18, Unit::Percent),
     P::float("vel_bright", "Vel>Bright", "Exciter", 0.0, 1.0, 0.6, Unit::Percent),
+    P::float("bow_pressure", "Bow Pressure", "Bow", 0.0, 1.0, 0.55, Unit::Percent),
+    P::float("bow_position", "Bow Position", "Bow", 0.08, 0.25, 0.13, Unit::Percent),
+    P::float("bow_attack", "Bow Attack", "Bow", 0.005, 2.0, 0.12, Unit::Seconds).exp(),
+    P::float("vibrato", "Vibrato", "Bow", 0.0, 50.0, 18.0, Unit::Cents).step(1.0),
+    P::float("vibrato_rate", "Vibrato Rate", "Bow", 3.0, 8.0, 5.5, Unit::Hz),
+    P::choice("bowed_body", "Instrument", "Bow", &BOWED_BODIES, 0),
     P::float("decay", "Decay", "Resonator", 0.05, 30.0, 3.0, Unit::Seconds).exp(),
     P::float("hf_damp", "HF Damping", "Resonator", 0.0, 1.0, 0.4, Unit::Percent),
     P::float("stiffness", "Stiffness", "Resonator", 0.0, 1.0, 0.0, Unit::Percent),
-    P::choice("material", "Mallet Material", "Resonator", &MATERIALS, 0),
+    P::float("unison", "Unison Detune", "Resonator", 0.0, 12.0, 1.2, Unit::Cents).step(0.1),
+    P::choice("material", "Material", "Resonator", &MATERIALS, 0),
     P::float("body", "Body", "Response", 0.0, 1.0, 0.25, Unit::Percent),
     P::float("release_damp", "Release Damp", "Response", 0.0, 1.0, 0.6, Unit::Percent),
     P::float("tone", "Tone", "Response", 200.0, 20_000.0, 20_000.0, Unit::Hz).exp(),
     P::float("width", "Stereo Width", "Response", 0.0, 1.0, 0.4, Unit::Percent),
 ];
+
+/// Which of this synth's own parameters apply to the selected model.
+/// `p` is the synth-specific slice (after the common section).
+pub fn param_visible(p: &[f32], local: usize) -> bool {
+    let model = model_from(p[MODEL]);
+    match local {
+        HARDNESS | POSITION | VEL_BRIGHT | STIFFNESS | DECAY | RELEASE_DAMP => model != Model::Bowed,
+        BOW_PRESSURE | BOW_POSITION | BOW_ATTACK | VIBRATO | VIBRATO_RATE | BOWED_BODY => model == Model::Bowed,
+        UNISON => model == Model::Piano,
+        MATERIAL => model == Model::Mallet,
+        _ => true,
+    }
+}
 
 /// Partial ratios, relative amplitudes and a decay multiplier per material.
 struct Material {
@@ -81,16 +118,35 @@ const MATERIAL_TABLE: [Material; 7] = [
 ];
 
 const MAX_MODES: usize = 8;
+const MAX_STRINGS: usize = 3;
 const DELAY_LEN: usize = 4096;
 const DISPERSION_STAGES: usize = 4;
 const STRING_GAIN: f32 = 0.45;
+const PIANO_GAIN: f32 = 0.16;
 const MALLET_GAIN: f32 = 0.32;
+const BOWED_GAIN: f32 = 0.4;
+/// Bowed strings need substantial losses for a stable Helmholtz motion
+/// (with too little loss the bow locks onto higher modes): STK's value.
+const BOWED_LOSS: f32 = 0.95;
+/// Piano strings above this note have no dampers and ring after release.
+const PIANO_UNDAMPED_FROM: u8 = 89;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 enum Model {
     #[default]
     String,
     Mallet,
+    Piano,
+    Bowed,
+}
+
+fn model_from(v: f32) -> Model {
+    match v.round() as usize {
+        1 => Model::Mallet,
+        2 => Model::Piano,
+        3 => Model::Bowed,
+        _ => Model::String,
+    }
 }
 
 #[derive(Default)]
@@ -100,10 +156,18 @@ pub struct PhysicalShared {
     hardness: f32,
     position: f32,
     vel_bright: f32,
+    bow_pressure: f32,
+    bow_position: f32,
+    bow_attack: f32,
+    vibrato: f32,
+    vibrato_rate: f32,
+    bowed_body: usize,
     decay: f32,
     hf_damp: f32,
     stiffness: f32,
+    unison: f32,
     material: usize,
+    body: f32,
     release_damp: f32,
     width: f32,
 }
@@ -116,12 +180,278 @@ fn phase_delay(re: f64, im: f64, w: f64) -> f64 {
 /// First-order all-pass (a + z^-1)/(1 + a z^-1) evaluated at `w`.
 fn allpass_at(a: f64, w: f64) -> (f64, f64) {
     let (c, s) = (w.cos(), w.sin());
-    // numerator a + e^{-jw}, denominator 1 + a e^{-jw}
     let (nr, ni) = (a + c, -s);
     let (dr, di) = (1.0 + a * c, -a * s);
     let den = dr * dr + di * di;
     ((nr * dr + ni * di) / den, (ni * dr - nr * di) / den)
 }
+
+// ---------------------------------------------------------------------------
+// Karplus-Strong string loop (used by String and Piano)
+// ---------------------------------------------------------------------------
+
+struct WaveString {
+    buf: Vec<f32>,
+    w: usize,
+    period: f32,
+    n_int: usize,
+    ap_a: f32,
+    ap_x1: f32,
+    ap_y1: f32,
+    disp_a: f32,
+    disp: [(f32, f32); DISPERSION_STAGES],
+    damp_s: f32,
+    lp_x1: f32,
+    loop_gain: f32,
+}
+
+impl WaveString {
+    fn new() -> Self {
+        WaveString {
+            buf: vec![0.0; DELAY_LEN],
+            w: 0,
+            period: 100.0,
+            n_int: 100,
+            ap_a: 0.0,
+            ap_x1: 0.0,
+            ap_y1: 0.0,
+            disp_a: 0.0,
+            disp: [(0.0, 0.0); DISPERSION_STAGES],
+            damp_s: 0.25,
+            lp_x1: 0.0,
+            loop_gain: 0.99,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.buf.fill(0.0);
+        self.ap_x1 = 0.0;
+        self.ap_y1 = 0.0;
+        self.lp_x1 = 0.0;
+        self.disp = [(0.0, 0.0); DISPERSION_STAGES];
+    }
+
+    /// Tune the loop to `f0` with the given damping (0..1), stiffness (0..1)
+    /// and 60 dB decay time.
+    fn tune(&mut self, sr: f32, f0: f32, hf_damp: f32, stiffness: f32, t60: f32) {
+        let f0 = f0.clamp(sr / (DELAY_LEN as f32 - 8.0), sr * 0.2);
+        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
+        let period = (sr / f0) as f64;
+
+        // The damping filter loses a little at the fundamental every pass and
+        // the loop gain can't exceed 1 (DC would grow), so cap the damping at
+        // what still allows the requested decay; otherwise treble notes, which
+        // pass through the loop thousands of times a second, die instantly.
+        let per_period = 10f32.powf(-3.0 / (f0 * t60.max(0.005)));
+        let wanted = 0.03 + 0.47 * hf_damp;
+        let c = (1.0 - per_period * per_period) / (2.0 * (1.0 - w.cos() as f32));
+        let max_s = if c >= 0.25 { 0.5 } else { (1.0 - (1.0 - 4.0 * c).sqrt()) / 2.0 };
+        self.damp_s = wanted.min(max_s * 0.98);
+        let sd = self.damp_s as f64;
+        let (lp_re, lp_im) = ((1.0 - sd) + sd * w.cos(), -sd * w.sin());
+        let lp_delay = phase_delay(lp_re, lp_im, w);
+        let lp_mag = (lp_re * lp_re + lp_im * lp_im).sqrt() as f32;
+
+        self.disp_a = -0.75 * stiffness.clamp(0.0, 1.0);
+        let (dr, di) = allpass_at(self.disp_a as f64, w);
+        let disp_delay = if stiffness > 0.0 { phase_delay(dr, di, w) * DISPERSION_STAGES as f64 } else { 0.0 };
+
+        let remaining = (period - lp_delay - disp_delay).max(2.5);
+        // Keep the Thiran all-pass delay within 0.5..1.5 samples for accuracy.
+        let n = (remaining - 0.5).floor().max(1.0);
+        let d = remaining - n;
+        self.n_int = n as usize;
+        self.ap_a = ((1.0 - d) / (1.0 + d)) as f32;
+        self.period = period as f32;
+
+        // Loop gain for a 60 dB decay, compensating the damping filter's loss
+        // at the fundamental.
+        self.loop_gain = (per_period / lp_mag).min(0.9999);
+    }
+
+    /// Add an excitation into the samples the loop reads next, so re-strikes
+    /// of a ringing string add to its vibration.
+    fn inject(&mut self, exc: &[f32], amp: f32) {
+        let mask = DELAY_LEN - 1;
+        let start = self.w + DELAY_LEN - self.n_int;
+        for (i, e) in exc.iter().take(self.n_int).enumerate() {
+            self.buf[(start + i) & mask] += e * amp;
+        }
+    }
+
+    #[inline]
+    fn tick(&mut self) -> f32 {
+        let mask = DELAY_LEN - 1;
+        let x = self.buf[(self.w + DELAY_LEN - self.n_int) & mask];
+        let a = self.ap_a;
+        let mut y = a * x + self.ap_x1 - a * self.ap_y1;
+        self.ap_x1 = x;
+        self.ap_y1 = y;
+        let da = self.disp_a;
+        if da != 0.0 {
+            for st in &mut self.disp {
+                let out = da * y + st.0 - da * st.1;
+                st.0 = y;
+                st.1 = out;
+                y = out;
+            }
+        }
+        let sd = self.damp_s;
+        let z = (1.0 - sd) * y + sd * self.lp_x1;
+        self.lp_x1 = y;
+        self.buf[self.w] = z * self.loop_gain;
+        self.w = (self.w + 1) & mask;
+        z
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bowed string waveguide
+// ---------------------------------------------------------------------------
+
+/// Stick-slip friction: reflection coefficient of the bow as a function of
+/// the bow/string velocity difference (STK's "bow table").
+#[inline]
+fn bow_table(dv: f32, slope: f32) -> f32 {
+    let x = (dv * slope).abs() + 0.75;
+    let x2 = x * x;
+    (1.0 / (x2 * x2)).clamp(0.01, 0.98)
+}
+
+/// String-loss filter pole, with its cutoff a fixed number of harmonics above
+/// the note (16 bright .. 4 dark). Real string losses are relative to the
+/// string's own harmonics; a fixed cutoff lets low notes fall into
+/// multi-slip regimes (their upper harmonics barely damped) and over-damps
+/// high notes towards a sine.
+fn bowed_loss_pole(s: &PhysicalShared, f0: f32) -> f32 {
+    let harmonics = 16.0 * 0.25f32.powf(s.hf_damp);
+    (-std::f32::consts::TAU * f0 * harmonics / s.sample_rate).exp().clamp(0.05, 0.95)
+}
+
+/// Bow speed (velocity 0.8) at which `bow_slope` was measured.
+const BOW_REF_SPEED: f32 = 0.194;
+
+/// Friction-curve slope from bow pressure (plus mod wheel) and position.
+///
+/// Measured across G2-G6, slopes much above ~2.2 leave too little bow force
+/// for Helmholtz motion on many notes (double slip, or the string sticking),
+/// so pressure spans the stable window from light to heavy. The mod wheel
+/// adds force, which stays stable (adding bow speed alone does not), and
+/// force rises automatically for bow positions near the bridge, where the
+/// minimum force grows steeply (Schelleng).
+fn bow_slope(s: &PhysicalShared, modwheel: f32) -> f32 {
+    let pressure = (s.bow_pressure + 0.5 * modwheel).min(1.0);
+    let near = (s.bow_position / 0.13).min(1.0).powf(1.6);
+    (2.0 - 0.9 * pressure) * near
+}
+
+struct BowedString {
+    neck: Vec<f32>,
+    bridge: Vec<f32>,
+    w: usize,
+    d_bridge: f32,
+    d_neck: f32,
+    d_neck_target: f32,
+    lp_pole: f32,
+    lp_y: f32,
+    loss: f32,
+    level: f32,
+    slope: f32,
+    speed: f32,
+    contact: f32,
+    attack_coef: f32,
+    lift_coef: f32,
+    vib_phase: f32,
+    vib_time: f32,
+    body: [Biquad; 6],
+}
+
+impl BowedString {
+    fn new() -> Self {
+        BowedString {
+            neck: vec![0.0; DELAY_LEN],
+            bridge: vec![0.0; DELAY_LEN],
+            w: 0,
+            d_bridge: 10.0,
+            d_neck: 90.0,
+            d_neck_target: 90.0,
+            lp_pole: 0.6,
+            lp_y: 0.0,
+            loss: BOWED_LOSS,
+            level: 1.0,
+            slope: 3.0,
+            speed: 0.0,
+            contact: 0.0,
+            attack_coef: 0.999,
+            lift_coef: 0.99,
+            vib_phase: 0.0,
+            vib_time: 0.0,
+            body: [Biquad::default(); 6],
+        }
+    }
+
+    fn clear(&mut self) {
+        self.neck.fill(0.0);
+        self.bridge.fill(0.0);
+        self.lp_y = 0.0;
+        self.speed = 0.0;
+        self.contact = 0.0;
+        self.vib_time = 0.0;
+        for b in &mut self.body {
+            *b = Biquad::default();
+        }
+    }
+
+    /// Total loop delay in samples for `f0`, minus the string filter's phase delay.
+    fn loop_delay(&self, sr: f32, f0: f32) -> f32 {
+        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
+        // One-pole low-pass (1-p)/(1 - p z^-1).
+        let p = self.lp_pole as f64;
+        let (dr, di) = (1.0 - p * w.cos(), p * w.sin());
+        let lp_delay = -(-di).atan2(dr) / w;
+        (sr / f0) - lp_delay as f32
+    }
+
+    fn tune(&mut self, s: &PhysicalShared, f0: f32) {
+        let sr = s.sample_rate;
+        let f0 = f0.clamp(sr / (DELAY_LEN as f32 - 8.0), sr * 0.15);
+        self.lp_pole = bowed_loss_pole(s, f0);
+        let total = self.loop_delay(sr, f0);
+        // Both segments are fractional (as in STK): rounding the short
+        // bow-to-bridge segment would distort high notes badly.
+        self.d_bridge = (total * s.bow_position).clamp(1.0, (DELAY_LEN / 2) as f32);
+        self.d_neck_target = (total - self.d_bridge).max(2.0);
+        self.loss = BOWED_LOSS;
+        self.slope = bow_slope(s, 0.0);
+        // A bow nearer the bridge drives a bigger string motion (~1/beta).
+        self.level = s.bow_position / 0.13;
+        self.attack_coef = (-1.0 / (s.bow_attack.max(0.005) * 0.3 * sr)).exp();
+        self.lift_coef = (-1.0 / (0.04 * sr)).exp();
+        self.set_body(s);
+    }
+
+    fn set_body(&mut self, s: &PhysicalShared) {
+        let sr = s.sample_rate;
+        // Violin-family body: air (A0) and main wood resonances, the "bridge
+        // hill" and a high roll-off, scaled down for larger instruments.
+        let scale = [1.0, 0.82, 0.45, 0.3][s.bowed_body.min(3)];
+        let new = [
+            Biquad::high_pass(180.0 * scale, 0.7, sr),
+            Biquad::peaking(275.0 * scale, 9.0, 5.0, sr),
+            Biquad::peaking(460.0 * scale, 9.0, 4.0, sr),
+            Biquad::peaking(540.0 * scale, 6.0, 4.0, sr),
+            Biquad::peaking(2_800.0 * scale.sqrt(), 6.0, 1.0, sr),
+            Biquad::high_shelf(6_000.0, -10.0, sr),
+        ];
+        for (b, n) in self.body.iter_mut().zip(new) {
+            b.retune(n);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Voice
+// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Default)]
 struct Mode {
@@ -145,28 +475,23 @@ pub struct PhysicalVoice {
     quiet_blocks: u32,
     rng: Rng,
     pan: (f32, f32),
-    // String state.
-    buf: Vec<f32>,
     exc: Vec<f32>,
-    w: usize,
-    period: f32,
-    n_int: usize,
-    ap_a: f32,
-    ap_x1: f32,
-    ap_y1: f32,
-    disp_a: f32,
-    disp: [(f32, f32); DISPERSION_STAGES],
-    damp_s: f32,
-    lp_x1: f32,
-    loop_gain: f32,
+    // String / Piano
+    strings: [WaveString; MAX_STRINGS],
+    string_count: usize,
     dc_x1: f32,
     dc_y1: f32,
-    // Mallet state.
+    thump: f32,
+    thump_coef: f32,
+    thump_lp: f32,
+    // Mallet
     modes: [Mode; MAX_MODES],
     mode_count: usize,
     mallet_f0: f32,
     pulse_len: u32,
     pulse_amp: f32,
+    // Bowed
+    bow: BowedString,
 }
 
 impl PhysicalVoice {
@@ -184,26 +509,20 @@ impl PhysicalVoice {
             quiet_blocks: 0,
             rng: Rng::new(0xB0D1_0000 ^ seed.wrapping_mul(0x9E37_79B9)),
             pan: (1.0, 1.0),
-            buf: vec![0.0; DELAY_LEN],
             exc: vec![0.0; DELAY_LEN],
-            w: 0,
-            period: 100.0,
-            n_int: 100,
-            ap_a: 0.0,
-            ap_x1: 0.0,
-            ap_y1: 0.0,
-            disp_a: 0.0,
-            disp: [(0.0, 0.0); DISPERSION_STAGES],
-            damp_s: 0.25,
-            lp_x1: 0.0,
-            loop_gain: 0.99,
+            strings: std::array::from_fn(|_| WaveString::new()),
+            string_count: 1,
             dc_x1: 0.0,
             dc_y1: 0.0,
+            thump: 0.0,
+            thump_coef: 0.0,
+            thump_lp: 0.0,
             modes: [Mode::default(); MAX_MODES],
             mode_count: 0,
             mallet_f0: 440.0,
             pulse_len: 0,
             pulse_amp: 0.0,
+            bow: BowedString::new(),
         }
     }
 
@@ -212,9 +531,10 @@ impl PhysicalVoice {
     }
 
     fn decay_time(&self, s: &PhysicalShared) -> f32 {
+        let damped = self.released && !(self.model == Model::Piano && self.note >= PIANO_UNDAMPED_FROM);
         if self.killed {
             0.01
-        } else if self.released && s.release_damp > 0.0 {
+        } else if damped && s.release_damp > 0.0 {
             // Damping blends towards a quick 30 ms mute.
             let t = s.decay * (1.0 - s.release_damp) + 0.03 * s.release_damp;
             t.min(s.decay)
@@ -223,40 +543,41 @@ impl PhysicalVoice {
         }
     }
 
-    /// Set up the string loop for fundamental `f0`.
     fn tune_string(&mut self, s: &PhysicalShared, f0: f32) {
-        let sr = s.sample_rate;
-        let f0 = f0.clamp(sr / (DELAY_LEN as f32 - 8.0), sr * 0.2);
-        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
-        let period = (sr / f0) as f64;
+        let t60 = self.decay_time(s);
+        self.string_count = 1;
+        self.strings[0].tune(s.sample_rate, f0, s.hf_damp, s.stiffness, t60);
+    }
 
-        self.damp_s = 0.03 + 0.47 * s.hf_damp;
-        let sd = self.damp_s as f64;
-        let (lp_re, lp_im) = ((1.0 - sd) + sd * w.cos(), -sd * w.sin());
-        let lp_delay = phase_delay(lp_re, lp_im, w);
-        let lp_mag = (lp_re * lp_re + lp_im * lp_im).sqrt() as f32;
+    /// Strings per note and their detune (cents), like a real piano.
+    fn piano_layout(&self, s: &PhysicalShared) -> (usize, [f32; MAX_STRINGS]) {
+        let d = s.unison;
+        match self.note {
+            0..=32 => (1, [0.0; 3]),
+            33..=44 => (2, [-d * 0.5, d * 0.5, 0.0]),
+            _ => (3, [-d, 0.0, d]),
+        }
+    }
 
-        self.disp_a = -0.75 * s.stiffness;
-        let (dr, di) = allpass_at(self.disp_a as f64, w);
-        let disp_delay = if s.stiffness > 0.0 { phase_delay(dr, di, w) * DISPERSION_STAGES as f64 } else { 0.0 };
-
-        let remaining = (period - lp_delay - disp_delay).max(2.5);
-        // Keep the Thiran all-pass delay within 0.5..1.5 samples for accuracy.
-        let n = (remaining - 0.5).floor().max(1.0);
-        let d = remaining - n;
-        self.n_int = n as usize;
-        self.ap_a = ((1.0 - d) / (1.0 + d)) as f32;
-        self.period = period as f32;
-
-        // Loop gain for a 60 dB decay over the decay time, compensating the
-        // damping filter's loss at the fundamental.
-        let per_period = 10f32.powf(-3.0 / (f0 * self.decay_time(s)));
-        self.loop_gain = (per_period / lp_mag).min(0.9999);
+    fn tune_piano(&mut self, s: &PhysicalShared, f0: f32) {
+        let (count, detune) = self.piano_layout(s);
+        self.string_count = count;
+        // Register: decay is long in the bass and short in the treble, and
+        // strings get stiffer (more inharmonic) towards the top.
+        let reg = ((self.note as f32 - 21.0) / 87.0).clamp(0.0, 1.0);
+        let t60 = (self.decay_time(s) * ((60.0 - self.note as f32) / 18.0).exp2()).clamp(0.02, 40.0);
+        let stiffness = (s.stiffness * (0.4 + 1.2 * reg)).min(1.0);
+        // Slightly different decays per string give the two-stage decay.
+        let spread = [1.0, 0.75, 1.3];
+        for k in 0..count {
+            let f = f0 * (detune[k] / 1200.0).exp2();
+            self.strings[k].tune(s.sample_rate, f, s.hf_damp, stiffness, t60 * spread[k]);
+        }
     }
 
     fn excite_string(&mut self, s: &PhysicalShared) {
         let sr = s.sample_rate;
-        let n = (self.period.round() as usize).clamp(2, DELAY_LEN - 1);
+        let n = (self.strings[0].period.round() as usize).clamp(2, DELAY_LEN - 1);
         let h = self.effective_hardness(s);
         let fc = 150.0 * 2f32.powf(h * 7.5);
         let c = (-std::f32::consts::TAU * fc / sr).exp();
@@ -279,13 +600,39 @@ impl PhysicalVoice {
             self.exc[i] -= self.exc[i - pick];
         }
         let amp = self.vel / (2.0 * peak);
-        // Add into the samples the loop reads next, so re-plucks of a
-        // ringing string add to its vibration rather than replacing it.
-        let mask = DELAY_LEN - 1;
-        let start = self.w + DELAY_LEN - self.n_int;
-        for i in 0..n.min(self.n_int) {
-            self.buf[(start + i) & mask] += self.exc[i] * amp;
+        let (exc, string) = (&self.exc[..n], &mut self.strings[0]);
+        string.inject(exc, amp);
+    }
+
+    fn excite_piano(&mut self, s: &PhysicalShared) {
+        let sr = s.sample_rate;
+        let period = self.strings[0].period;
+        let h = self.effective_hardness(s);
+        // Felt hammer: felt stiffens with force, so contact time shrinks
+        // steeply as the hammer hits harder (~3.5 ms soft to ~0.4 ms hard),
+        // capped to half a period so short treble strings still get a strike.
+        let contact = ((0.0045 * (1.0 - h).powf(1.5) + 0.0003) * sr).min(period * 0.5).max(2.0);
+        let width = contact as usize;
+        let strike = ((s.position * period).round() as usize).max(1);
+        let len = (width + strike).min(period as usize).max(width).min(DELAY_LEN - 1);
+        for (i, e) in self.exc[..len].iter_mut().enumerate() {
+            *e = if i < width { 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / contact).cos() } else { 0.0 };
         }
+        // Hammer position: notches the harmonics with a node at the strike
+        // point. Only meaningful when the strike point is well clear of the
+        // contact width; on short treble strings it would cancel the strike.
+        if strike > 2 * width {
+            for i in (strike..len).rev() {
+                self.exc[i] -= self.exc[i - strike];
+            }
+        }
+        let amp = self.vel * 1.2;
+        for k in 0..self.string_count {
+            self.strings[k].inject(&self.exc[..len], amp);
+        }
+        // Key and hammer "thump": a short low burst.
+        self.thump = self.vel * 0.15;
+        self.thump_coef = (-1.0 / (0.012 * sr)).exp();
     }
 
     fn tune_mallet(&mut self, s: &PhysicalShared, f0: f32, keep_state: bool) {
@@ -306,9 +653,7 @@ impl PhysicalVoice {
             let t60 = base_t60 / (1.0 + s.hf_damp * 3.0 * (ratio - 1.0).max(0.0));
             let r = 0.001f32.powf(1.0 / (t60.max(0.005) * sr));
             let theta = std::f32::consts::TAU * f / sr;
-            // Strike position shapes which modes are excited.
             let pos = 0.25 + 0.75 * (std::f32::consts::PI * (k + 1) as f32 * s.position).sin().abs();
-            // Softer mallets excite upper modes less.
             let soft = 1.0 / (1.0 + (1.0 - h) * 4.0 * (ratio - 1.0).max(0.0) / 3.0);
             let m = &mut self.modes[count];
             m.b1 = 2.0 * r * theta.cos();
@@ -326,14 +671,105 @@ impl PhysicalVoice {
     fn excite_mallet(&mut self, s: &PhysicalShared) {
         let h = self.effective_hardness(s);
         // Contact time from hardness, capped at a fraction of the period so
-        // the strike's spectrum always covers the fundamental (a fixed-width
-        // pulse would leave high notes almost silent).
+        // the strike's spectrum always covers the fundamental.
         let contact = (0.0004 + (1.0 - h) * 0.004).min(0.6 / self.mallet_f0);
         let len = (s.sample_rate * contact).max(2.0);
         self.pulse_len = len as u32;
         // Unit-area pulse: low-frequency response is independent of hardness.
         self.pulse_amp = self.vel * 2.0 / len;
         self.age = 0;
+    }
+
+    fn reset(&mut self) {
+        for st in &mut self.strings {
+            st.clear();
+        }
+        self.bow.clear();
+        self.modes = [Mode::default(); MAX_MODES];
+        self.dc_x1 = 0.0;
+        self.dc_y1 = 0.0;
+        self.thump = 0.0;
+        self.thump_lp = 0.0;
+        self.tuned_for = f32::NAN;
+    }
+
+    #[inline]
+    fn dc_block(&mut self, x: f32) -> f32 {
+        let y = x - self.dc_x1 + 0.995 * self.dc_y1;
+        self.dc_x1 = x;
+        self.dc_y1 = y;
+        y
+    }
+
+    fn render_bowed(&mut self, s: &PhysicalShared, ctl: &Controls, l: &mut [f32], r: &mut [f32]) -> f32 {
+        let sr = s.sample_rate;
+        let n = l.len();
+        // Delayed vibrato: fades in over ~0.4 s after a short pause.
+        let b = &mut self.bow;
+        b.vib_time += n as f32 / sr;
+        b.vib_phase = (b.vib_phase + s.vibrato_rate * n as f32 / sr).fract();
+        let onset = ((b.vib_time - 0.25) / 0.4).clamp(0.0, 1.0);
+        let vib = s.vibrato * onset * sin_cycles(b.vib_phase) / 100.0;
+        let f = midi_to_freq(self.note as f32 + ctl.pitch + vib);
+        b.d_neck_target = (b.loop_delay(sr, f) - b.d_bridge).max(2.0);
+        let step = (b.d_neck_target - b.d_neck) / n as f32;
+
+        // Bow speed follows velocity. Bow force must scale with speed for the
+        // same motion (Schelleng), so the friction slope scales inversely:
+        // the regime is then independent of velocity and only the amplitude
+        // follows it.
+        let speed = 0.05 + 0.18 * self.vel;
+        let target_speed = if self.released { 0.0 } else { speed };
+        self.bow.slope = bow_slope(s, ctl.modwheel) * (BOW_REF_SPEED / speed);
+        let mask = DELAY_LEN - 1;
+        let mut peak = 0.0f32;
+        for i in 0..n {
+            let b = &mut self.bow;
+            b.d_neck += step;
+            // Bow speed ramps up over the attack with the bow fully on the
+            // string from the start (as in STK); ramping contact instead
+            // pushes many notes into the wrong oscillation regime.
+            if self.released {
+                b.speed *= b.lift_coef;
+                b.contact *= b.lift_coef;
+            } else {
+                b.speed = target_speed + (b.speed - target_speed) * b.attack_coef;
+                b.contact = 1.0;
+            }
+            let read = |buf: &[f32], delay: f32| {
+                let pos = b.w as f32 + DELAY_LEN as f32 - delay;
+                let k = pos as usize;
+                let fr = pos - k as f32;
+                let a0 = buf[k & mask];
+                a0 + (buf[(k + 1) & mask] - a0) * fr
+            };
+            let bridge_out = read(&b.bridge, b.d_bridge);
+            let neck_out = read(&b.neck, b.d_neck);
+            // String losses at the bridge: one-pole low-pass and gain.
+            b.lp_y = (1.0 - b.lp_pole) * bridge_out + b.lp_pole * b.lp_y;
+            let bridge_refl = -b.lp_y * b.loss;
+            let nut_refl = -neck_out;
+            let string_vel = bridge_refl + nut_refl;
+            let dv = b.speed - string_vel;
+            let new_vel = dv * bow_table(dv, b.slope) * b.contact;
+            b.neck[b.w] = bridge_refl + new_vel;
+            b.bridge[b.w] = nut_refl + new_vel;
+            b.w = (b.w + 1) & mask;
+
+            let mut y = bridge_out;
+            if s.body > 0.0 {
+                let mut body = y;
+                for f in &mut b.body {
+                    body = f.process(body);
+                }
+                y = y * (1.0 - s.body) + body * s.body * 0.5;
+            }
+            let o = self.dc_block(y) * BOWED_GAIN * self.bow.level;
+            peak = peak.max(o.abs());
+            l[i] += o * self.pan.0;
+            r[i] += o * self.pan.1;
+        }
+        peak
     }
 }
 
@@ -342,16 +778,7 @@ impl Voice for PhysicalVoice {
 
     fn start(&mut self, note: u8, velocity: f32, _from_note: Option<f32>, s: &PhysicalShared) {
         if !self.active || note != self.note || self.model != s.model {
-            // A different note or model: start from silence.
-            self.buf.fill(0.0);
-            self.modes = [Mode::default(); MAX_MODES];
-            self.ap_x1 = 0.0;
-            self.ap_y1 = 0.0;
-            self.lp_x1 = 0.0;
-            self.disp = [(0.0, 0.0); DISPERSION_STAGES];
-            self.dc_x1 = 0.0;
-            self.dc_y1 = 0.0;
-            self.tuned_for = f32::NAN;
+            self.reset();
         }
         self.note = note;
         self.vel = velocity;
@@ -390,49 +817,47 @@ impl Voice for PhysicalVoice {
         if self.tuned_for != pitch || self.pending {
             match self.model {
                 Model::String => self.tune_string(s, f0),
+                Model::Piano => self.tune_piano(s, f0),
                 Model::Mallet => self.tune_mallet(s, f0, !self.pending || self.tuned_for.is_finite()),
+                Model::Bowed => {
+                    self.bow.tune(s, f0);
+                    if self.pending {
+                        self.bow.d_neck = self.bow.d_neck_target;
+                    }
+                }
             }
             self.tuned_for = pitch;
         }
         if self.pending {
             match self.model {
                 Model::String => self.excite_string(s),
+                Model::Piano => self.excite_piano(s),
                 Model::Mallet => self.excite_mallet(s),
+                Model::Bowed => {}
             }
             self.pending = false;
         }
 
         let mut peak = 0.0f32;
         match self.model {
-            Model::String => {
-                let mask = DELAY_LEN - 1;
-                let (a, sd, g) = (self.ap_a, self.damp_s, self.loop_gain);
-                let da = self.disp_a;
-                let dispersive = da != 0.0;
+            Model::String | Model::Piano => {
+                let (gain, norm) = if self.model == Model::Piano {
+                    (PIANO_GAIN, 1.0 / (self.string_count as f32).sqrt())
+                } else {
+                    (STRING_GAIN, 1.0)
+                };
+                let thump_c = (-std::f32::consts::TAU * 180.0 / s.sample_rate).exp();
                 for i in 0..n {
-                    let x = self.buf[(self.w + DELAY_LEN - self.n_int) & mask];
-                    // Fractional delay (Thiran all-pass).
-                    let mut y = a * x + self.ap_x1 - a * self.ap_y1;
-                    self.ap_x1 = x;
-                    self.ap_y1 = y;
-                    if dispersive {
-                        for st in &mut self.disp {
-                            let out = da * y + st.0 - da * st.1;
-                            st.0 = y;
-                            st.1 = out;
-                            y = out;
-                        }
+                    let mut z = 0.0;
+                    for st in &mut self.strings[..self.string_count] {
+                        z += st.tick();
                     }
-                    // Damping: one-zero low-pass.
-                    let z = (1.0 - sd) * y + sd * self.lp_x1;
-                    self.lp_x1 = y;
-                    self.buf[self.w] = z * g;
-                    self.w = (self.w + 1) & mask;
-                    // DC blocker on the output.
-                    let out = z - self.dc_x1 + 0.995 * self.dc_y1;
-                    self.dc_x1 = z;
-                    self.dc_y1 = out;
-                    let o = out * STRING_GAIN;
+                    let mut o = self.dc_block(z * norm) * gain;
+                    if self.thump > 1e-5 {
+                        self.thump_lp = (1.0 - thump_c) * self.rng.bipolar() + thump_c * self.thump_lp;
+                        o += self.thump_lp * self.thump * 6.0;
+                        self.thump *= self.thump_coef;
+                    }
                     peak = peak.max(o.abs());
                     l[i] += o * self.pan.0;
                     r[i] += o * self.pan.1;
@@ -460,9 +885,14 @@ impl Voice for PhysicalVoice {
                     r[i] += o * self.pan.1;
                 }
             }
+            Model::Bowed => {
+                peak = self.render_bowed(s, ctl, &mut l[..n], &mut r[..n]);
+            }
         }
-        // Free the voice once it has been effectively silent for a while.
-        if peak < 1e-4 {
+        // Free the voice once it has been effectively silent for a while
+        // (a bowed note is never silent while the bow is on the string).
+        let bowing = self.model == Model::Bowed && !self.released;
+        if peak < 1e-4 && !bowing {
             self.quiet_blocks += 1;
             if self.quiet_blocks > 8 {
                 self.active = false;
@@ -478,6 +908,7 @@ pub struct PhysicalSynth {
     pub shared: PhysicalShared,
     sample_rate: f32,
     body: f32,
+    body_model: Option<Model>,
     body_filters: [[Svf; 3]; 2],
     body_coefs: [SvfCoefs; 3],
     tone: SvfCoefs,
@@ -489,14 +920,14 @@ pub struct PhysicalSynth {
 
 impl PhysicalSynth {
     pub fn new(sample_rate: f32) -> Self {
-        let body_coefs = [98.0, 204.0, 405.0].map(|f| SvfCoefs::new(FilterMode::BandPass, f, 0.6, sample_rate));
         let mut synth = PhysicalSynth {
             poly: Poly::new(|i| PhysicalVoice::new(i as u32 + 1)),
             shared: PhysicalShared::default(),
             sample_rate,
             body: 0.0,
+            body_model: None,
             body_filters: [[Svf::default(); 3]; 2],
-            body_coefs,
+            body_coefs: [SvfCoefs::default(); 3],
             tone: SvfCoefs::default(),
             tone_bypass: true,
             tone_filters: [Svf::default(); 2],
@@ -514,17 +945,35 @@ impl PhysicalSynth {
         self.poly.update_common(params, p[VOICES], 0.0, sr);
         let s = &mut self.shared;
         s.sample_rate = sr;
-        s.model = if p[MODEL].round() as usize == 1 { Model::Mallet } else { Model::String };
+        s.model = model_from(p[MODEL]);
         s.hardness = p[HARDNESS];
         s.position = p[POSITION];
         s.vel_bright = p[VEL_BRIGHT];
+        s.bow_pressure = p[BOW_PRESSURE];
+        s.bow_position = p[BOW_POSITION];
+        s.bow_attack = p[BOW_ATTACK];
+        s.vibrato = p[VIBRATO];
+        s.vibrato_rate = p[VIBRATO_RATE];
+        s.bowed_body = p[BOWED_BODY].round() as usize;
         s.decay = p[DECAY];
         s.hf_damp = p[HF_DAMP];
         s.stiffness = p[STIFFNESS];
+        s.unison = p[UNISON];
         s.material = p[MATERIAL].round() as usize;
+        s.body = p[BODY];
         s.release_damp = p[RELEASE_DAMP];
         s.width = p[WIDTH];
         self.body = p[BODY];
+        // Body resonances: a guitar-like box for strings and mallets, a broader
+        // soundboard for the piano. Bowed voices carry their own body.
+        if self.body_model != Some(s.model) {
+            let (freqs, res) = match s.model {
+                Model::Piano => ([100.0, 260.0, 800.0], 0.35),
+                _ => ([98.0, 204.0, 405.0], 0.6),
+            };
+            self.body_coefs = freqs.map(|f| SvfCoefs::new(FilterMode::BandPass, f, res, sr));
+            self.body_model = Some(s.model);
+        }
         self.tone_bypass = p[TONE] >= 19_000.0;
         self.tone = SvfCoefs::new(FilterMode::LowPass, p[TONE], 0.0, sr);
     }
@@ -535,12 +984,11 @@ impl PhysicalSynth {
         tl.fill(0.0);
         tr.fill(0.0);
         self.poly.render(&self.shared, tl, tr);
-        let body = self.body;
+        let body = if self.shared.model == Model::Bowed { 0.0 } else { self.body };
         for (ch, buf) in [&mut *tl, &mut *tr].into_iter().enumerate() {
             for x in buf.iter_mut() {
                 let mut y = *x;
                 if body > 0.0 {
-                    // Wooden body: three broad resonances blended with the string.
                     let f = &mut self.body_filters[ch];
                     let res = f[0].process(&self.body_coefs[0], y) * 1.4
                         + f[1].process(&self.body_coefs[1], y) * 1.1
@@ -589,12 +1037,19 @@ mod tests {
         out
     }
 
+    fn peak(v: &[f32]) -> f32 {
+        v.iter().fold(0.0f32, |m, x| m.max(x.abs()))
+    }
+
+    fn rms(v: &[f32]) -> f32 {
+        (v.iter().map(|x| x * x).sum::<f32>() / v.len() as f32).sqrt()
+    }
+
     /// Pitch of a rendered note, via the sampler's YIN detector.
     fn measured_pitch(s: &mut PhysicalSynth, note: u8) -> f32 {
         s.poly.note_on(note, 0.8, &s.shared);
         let out = render(s, 48_000);
-        let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-        assert!(out.iter().all(|v| v.is_finite()) && peak > 0.02, "note {note}: peak {peak}");
+        assert!(out.iter().all(|v| v.is_finite()) && peak(&out) > 0.02, "note {note}: peak {}", peak(&out));
         Sample::new("t", out, None, 48_000.0).detect_pitch().unwrap_or(f32::NAN)
     }
 
@@ -611,7 +1066,6 @@ mod tests {
 
     #[test]
     fn mallets_are_in_tune() {
-        // Materials whose strongest partials sit on the harmonic series.
         for material in [0.0, 1.0, 6.0] {
             for note in [57u8, 72, 84] {
                 let mut s = synth_with(&[("model", 1.0), ("material", material), ("body", 0.0)]);
@@ -622,14 +1076,130 @@ mod tests {
     }
 
     #[test]
+    fn pianos_are_in_tune_across_the_keyboard() {
+        for note in [28u8, 40, 52, 64, 76, 88] {
+            let mut s = synth_with(&[("model", 2.0), ("stiffness", 0.3), ("body", 0.0)]);
+            let p = measured_pitch(&mut s, note);
+            assert!((p - note as f32).abs() < 0.06, "piano note {note}: measured {p}");
+        }
+    }
+
+    #[test]
+    fn piano_dampers_stop_notes_except_the_top_octaves() {
+        for (note, should_ring) in [(60u8, false), (96, true)] {
+            let mut s = synth_with(&[("model", 2.0), ("release_damp", 1.0), ("decay", 8.0)]);
+            s.poly.note_on(note, 0.9, &s.shared);
+            render(&mut s, 4_800);
+            s.poly.note_off(note);
+            let after = render(&mut s, 24_000);
+            let late = rms(&after[19_200..]);
+            assert_eq!(late > 1e-3, should_ring, "note {note}: rms after release {late}");
+        }
+    }
+
+    #[test]
+    fn harder_piano_strikes_are_brighter() {
+        let zc = |vel: f32| {
+            let mut s = synth_with(&[("model", 2.0), ("body", 0.0)]);
+            s.poly.note_on(48, vel, &s.shared);
+            let out = render(&mut s, 9_600);
+            out.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count()
+        };
+        assert!(zc(1.0) as f32 > zc(0.2) as f32 * 1.3, "loud {} soft {}", zc(1.0), zc(0.2));
+    }
+
+    #[test]
+    fn bowed_strings_sustain_while_held_and_stop_when_released() {
+        let mut s = synth_with(&[("model", 3.0)]);
+        s.poly.note_on(64, 0.8, &s.shared);
+        let held = render(&mut s, 96_000);
+        assert!(held.iter().all(|v| v.is_finite()));
+        let (early, late) = (rms(&held[24_000..48_000]), rms(&held[72_000..96_000]));
+        assert!(early > 0.02, "bow didn't start the string: {early}");
+        assert!(late > early * 0.6, "note died while bowing: {early} -> {late}");
+        s.poly.note_off(64);
+        render(&mut s, 96_000);
+        assert_eq!(s.poly.active_voices(), 0);
+    }
+
+    #[test]
+    fn bowed_strings_are_in_tune() {
+        for note in [43u8, 55, 62, 69, 76, 84] {
+            let mut s = synth_with(&[("model", 3.0), ("vibrato", 0.0), ("body", 0.0)]);
+            let p = measured_pitch(&mut s, note);
+            assert!((p - note as f32).abs() < 0.12, "bowed note {note}: measured {p}");
+        }
+    }
+
+    #[test]
+    fn bowed_extremes_stay_bounded() {
+        for (pressure, position) in [(0.0, 0.08), (1.0, 0.25), (1.0, 0.08), (0.0, 0.25)] {
+            for body in [0.0, 1.0, 2.0, 3.0] {
+                let mut s = synth_with(&[("model", 3.0), ("bow_pressure", pressure), ("bow_position", position), ("bowed_body", body)]);
+                for note in [36u8, 55, 76] {
+                    s.poly.note_on(note, 1.0, &s.shared);
+                }
+                s.poly.set_modwheel(1.0);
+                let out = render(&mut s, 48_000);
+                assert!(out.iter().all(|v| v.is_finite()));
+                assert!(peak(&out) < 2.0, "pressure {pressure} position {position} body {body}: {}", peak(&out));
+            }
+        }
+    }
+
+    fn harmonic(out: &[f32], f: f32) -> f32 {
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for (i, x) in out.iter().enumerate() {
+            let ph = std::f32::consts::TAU * f * i as f32 / 48_000.0;
+            re += x * ph.cos();
+            im += x * ph.sin();
+        }
+        (re * re + im * im).sqrt() / out.len() as f32 * 2.0
+    }
+
+    /// With default bow settings, every note E2-E6 must settle into Helmholtz
+    /// motion (the fundamental is the strongest harmonic), whatever the
+    /// velocity or mod wheel, rather than multi-slipping or sticking.
+    #[test]
+    fn bowed_strings_find_helmholtz_motion() {
+        for vel in [0.3f32, 1.0] {
+            for wheel in [0.0f32, 1.0] {
+                for note in [40u8, 43, 48, 52, 55, 60, 62, 67, 69, 74, 76, 81, 84, 88] {
+                    let mut s = synth_with(&[("model", 3.0), ("vibrato", 0.0), ("body", 0.0)]);
+                    s.poly.set_modwheel(wheel);
+                    s.poly.note_on(note, vel, &s.shared);
+                    let out = render(&mut s, 48_000);
+                    let f0 = midi_to_freq(note as f32);
+                    let h: Vec<f32> = (1..=6).map(|k| harmonic(&out[24_000..], f0 * k as f32)).collect();
+                    let strongest_other = h[1..].iter().fold(0.0f32, |m, v| m.max(*v));
+                    assert!(
+                        h[0] > 0.005 && h[0] >= 0.8 * strongest_other,
+                        "note {note} vel {vel} wheel {wheel}: harmonics {h:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn controls_follow_the_model() {
+        let mut p = SynthKind::Physical.defaults()[COMMON.len()..].to_vec();
+        p[MODEL] = 2.0; // piano
+        assert!(param_visible(&p, UNISON) && !param_visible(&p, MATERIAL) && !param_visible(&p, BOW_PRESSURE));
+        p[MODEL] = 3.0; // bowed
+        assert!(param_visible(&p, BOW_PRESSURE) && !param_visible(&p, HARDNESS) && !param_visible(&p, UNISON));
+        p[MODEL] = 1.0; // mallet
+        assert!(param_visible(&p, MATERIAL) && param_visible(&p, HARDNESS));
+    }
+
+    #[test]
     fn every_material_rings_and_dies_away() {
         for material in 0..MATERIALS.len() {
             let mut s = synth_with(&[("model", 1.0), ("material", material as f32), ("decay", 0.3)]);
             s.poly.note_on(60, 1.0, &s.shared);
             let out = render(&mut s, 48_000 * 8);
             assert!(out.iter().all(|v| v.is_finite()));
-            let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-            assert!(peak > 0.02 && peak < 1.5, "material {material} peak {peak}");
+            assert!(peak(&out) > 0.02 && peak(&out) < 1.5, "material {material} peak {}", peak(&out));
             assert_eq!(s.poly.active_voices(), 0, "material {material} still ringing");
         }
     }
@@ -646,7 +1216,6 @@ mod tests {
 
     #[test]
     fn harder_strikes_are_brighter() {
-        // Zero-crossing rate is a cheap brightness proxy.
         let zc = |hard: f32| {
             let mut s = synth_with(&[("hardness", hard), ("vel_bright", 0.0), ("body", 0.0)]);
             s.poly.note_on(48, 1.0, &s.shared);
@@ -666,9 +1235,8 @@ mod tests {
                 s.poly.note_on(note, 0.9, &s.shared);
             }
             let out = render(&mut s, 48_000 * 2);
-            let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
             assert!(out.iter().all(|v| v.is_finite()), "{}", patch.name);
-            assert!(peak > 0.05 && peak < 1.5, "{}: peak {peak}", patch.name);
+            assert!(peak(&out) > 0.05 && peak(&out) < 1.5, "{}: peak {}", patch.name, peak(&out));
         }
     }
 }
