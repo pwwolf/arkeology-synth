@@ -7,7 +7,7 @@
 //! and a note that starts while another is still held slides to its pitch
 //! without retriggering the envelopes.
 
-use crate::dsp::{AdsrParams, Env, midi_to_freq};
+use crate::dsp::{AdsrParams, Env, Ladder, midi_to_freq, poly_blep};
 use crate::params::{ParamDesc as P, Unit};
 
 use super::{BEND_RANGE, COMMON, MAX_BLOCK, PolyControl, TRANSPOSE, glide_coef};
@@ -44,43 +44,6 @@ pub static PARAMS: [P; 11] = [
 const ACCENT_DECAY: f32 = 0.2;
 const OUTPUT_GAIN: f32 = 0.35;
 const MAX_HELD: usize = 16;
-
-#[inline]
-fn poly_blep(t: f32, dt: f32) -> f32 {
-    if t < dt {
-        let x = t / dt;
-        x + x - x * x - 1.0
-    } else if t > 1.0 - dt {
-        let x = (t - 1.0) / dt;
-        x * x + x + x + 1.0
-    } else {
-        0.0
-    }
-}
-
-/// Zero-delay-feedback 4-pole ladder with a saturating feedback path.
-#[derive(Default)]
-struct Ladder {
-    s: [f32; 4],
-}
-
-impl Ladder {
-    #[inline]
-    fn process(&mut self, x: f32, g: f32, k: f32) -> f32 {
-        let big_g = g / (1.0 + g);
-        let b = 1.0 / (1.0 + g);
-        let g2 = big_g * big_g;
-        let sigma = (g2 * big_g * self.s[0] + g2 * self.s[1] + big_g * self.s[2] + self.s[3]) * b;
-        let u = ((x - k * sigma) / (1.0 + k * g2 * g2)).tanh();
-        let mut y = u;
-        for s in &mut self.s {
-            let v = (y - *s) * big_g;
-            y = v + *s;
-            *s = y + v;
-        }
-        y
-    }
-}
 
 pub struct AcidSynth {
     sample_rate: f32,

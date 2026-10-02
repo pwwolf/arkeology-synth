@@ -185,6 +185,7 @@ fn draw_rack(f: &mut Frame, app: &App, area: Rect) {
                         SynthKind::Acid => Color::Rgb(190, 230, 90),
                         SynthKind::Drums => Color::Rgb(255, 210, 90),
                         SynthKind::Sampler => SAMPLER_COLOR,
+                        SynthKind::Analog => Color::Rgb(255, 150, 90),
                     };
                     let name: String = s.name.chars().take(13).collect();
                     let mut spans = vec![
@@ -823,7 +824,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         h("Rack"),
         k("↑ ↓", "select master / synth slot"),
         k("← → / - +", "change the slot's MIDI channel (omni, 1-16)"),
-        k("a", "add a synth (FM, Granular, 303 Acid, Drums or Sampler)"),
+        k("a", "add a synth (FM, Analog, Granular, 303 Acid, Drums or Sampler)"),
         k("d / ⌫", "remove the selected synth"),
         k("r", "rename      m  mute      s  solo"),
         k("tab / enter", "edit parameters"),

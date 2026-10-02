@@ -1,6 +1,7 @@
 //! Synth engines and the shared polyphonic voice manager.
 
 pub mod acid;
+pub mod analog;
 pub mod drums;
 pub mod fm;
 pub mod granular;
@@ -26,11 +27,18 @@ pub enum SynthKind {
     Acid,
     Drums,
     Sampler,
+    Analog,
 }
 
 impl SynthKind {
-    pub const ALL: [SynthKind; 5] =
-        [SynthKind::Fm, SynthKind::Granular, SynthKind::Acid, SynthKind::Drums, SynthKind::Sampler];
+    pub const ALL: [SynthKind; 6] = [
+        SynthKind::Fm,
+        SynthKind::Analog,
+        SynthKind::Granular,
+        SynthKind::Acid,
+        SynthKind::Drums,
+        SynthKind::Sampler,
+    ];
 
     /// Position in `ALL`, used for sorting.
     pub fn order(self) -> usize {
@@ -44,6 +52,7 @@ impl SynthKind {
             SynthKind::Acid => "303",
             SynthKind::Drums => "DRM",
             SynthKind::Sampler => "SMP",
+            SynthKind::Analog => "ANA",
         }
     }
 
@@ -54,6 +63,7 @@ impl SynthKind {
             SynthKind::Acid => "Acid (303-style mono bass)",
             SynthKind::Drums => "Drums (808/909-style kit)",
             SynthKind::Sampler => "Sampler (classic / one-shot / slice)",
+            SynthKind::Analog => "Analog (poly subtractive)",
         }
     }
 
@@ -64,6 +74,7 @@ impl SynthKind {
             SynthKind::Acid => &acid::PARAMS,
             SynthKind::Drums => &drums::PARAMS,
             SynthKind::Sampler => &sampler::PARAMS,
+            SynthKind::Analog => &analog::PARAMS,
         }
     }
 
@@ -324,6 +335,7 @@ pub enum Instrument {
     Acid(acid::AcidSynth),
     Drums(Box<drums::DrumsSynth>),
     Sampler(Box<sampler::SamplerSynth>),
+    Analog(Box<analog::AnalogSynth>),
 }
 
 impl Instrument {
@@ -335,6 +347,7 @@ impl Instrument {
             }
             SynthKind::Acid => Instrument::Acid(acid::AcidSynth::new(sample_rate)),
             SynthKind::Drums => Instrument::Drums(Box::new(drums::DrumsSynth::new(sample_rate))),
+            SynthKind::Analog => Instrument::Analog(Box::new(analog::AnalogSynth::new(sample_rate))),
             SynthKind::Sampler => {
                 Instrument::Sampler(Box::new(sampler::SamplerSynth::new(sample_rate, builtins.clone())))
             }
@@ -348,6 +361,7 @@ impl Instrument {
             Instrument::Acid(s) => s.update(params),
             Instrument::Drums(s) => s.update(params),
             Instrument::Sampler(s) => s.update(params),
+            Instrument::Analog(s) => s.update(params),
         }
     }
 
@@ -358,6 +372,7 @@ impl Instrument {
             Instrument::Acid(s) => s.note_on(note, velocity),
             Instrument::Drums(s) => s.note_on(note, velocity),
             Instrument::Sampler(s) => s.note_on(note, velocity),
+            Instrument::Analog(s) => s.poly.note_on(note, velocity, &s.shared),
         }
     }
 
@@ -368,6 +383,7 @@ impl Instrument {
             Instrument::Acid(s) => f(s),
             Instrument::Drums(s) => f(s.as_mut()),
             Instrument::Sampler(s) => f(&mut s.poly),
+            Instrument::Analog(s) => f(&mut s.poly),
         }
     }
 
@@ -401,7 +417,7 @@ impl Instrument {
         match self {
             Instrument::Granular(s) => s.set_file_sample(sample),
             Instrument::Sampler(s) => s.set_file_sample(sample),
-            Instrument::Fm(_) | Instrument::Acid(_) | Instrument::Drums(_) => sample,
+            Instrument::Fm(_) | Instrument::Acid(_) | Instrument::Drums(_) | Instrument::Analog(_) => sample,
         }
     }
 
@@ -412,6 +428,7 @@ impl Instrument {
             Instrument::Acid(s) => s.render(l, r),
             Instrument::Drums(s) => s.render(l, r),
             Instrument::Sampler(s) => s.render(l, r),
+            Instrument::Analog(s) => s.render(l, r),
         }
     }
 }

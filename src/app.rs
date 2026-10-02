@@ -1370,6 +1370,16 @@ mod tests {
         if std::env::var("SHOW_UI").is_ok() {
             println!("{s}");
         }
+        // The analog synth's page lays out all of its sections.
+        app.add_synth(SynthKind::Analog);
+        let idx = app.selected_slot().unwrap();
+        let s = screen(&mut app, 150, 42);
+        assert!(s.contains("Oscillators") && s.contains("Filter Env") && s.contains("Osc 2 Detune"), "{s}");
+        if std::env::var("SHOW_UI").is_ok() {
+            println!("{s}");
+        }
+        app.remove_slot(idx);
+
         // A sampler shows its waveform; slice mode labels slices with notes.
         app.add_synth(SynthKind::Sampler);
         let idx = app.selected_slot().unwrap();
@@ -1429,7 +1439,7 @@ mod tests {
         let fm_count = patch_view(all, *filter).len();
         app.on_key(key(KeyCode::Tab));
         let Some(Popup::Patches { all, filter, .. }) = &app.popup else { panic!("no browser") };
-        assert_eq!(*filter, Some(SynthKind::Granular));
+        assert_eq!(*filter, Some(SynthKind::Analog));
         assert_ne!(patch_view(all, *filter).len(), fm_count);
         // Tab on to "all synths", then load "FM Strings" into slot 1.
         while !matches!(&app.popup, Some(Popup::Patches { filter: None, .. })) {

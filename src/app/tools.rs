@@ -24,7 +24,7 @@ fn kind_name(kind: SynthKind) -> Value {
 
 fn parse_kind(v: &Value) -> Result<SynthKind, String> {
     serde_json::from_value(v.clone()).map_err(|_| {
-        format!("unknown synth type {v}; use one of fm, granular, acid, drums, sampler")
+        format!("unknown synth type {v}; use one of fm, analog, granular, acid, drums, sampler")
     })
 }
 

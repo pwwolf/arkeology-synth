@@ -135,7 +135,7 @@ fn call_tool(name: &str, args: Value, jobs: &Sender<Job>) -> Result<Value, Strin
 }
 
 const INSTRUCTIONS: &str = "Controls the Arkeology Synth running in the user's terminal. \
-The rack has up to 16 slots (numbered 1-16); each holds one synth (fm, granular, acid, drums or sampler) \
+The rack has up to 16 slots (numbered 1-16); each holds one synth (fm, analog, granular, acid, drums or sampler) \
 listening on a MIDI channel (1-16 or \"omni\"). Use \"master\" as the slot for the master bus. \
 Call get_rack first, and get_params to see a slot's parameter keys, ranges and current values. \
 set_params accepts numbers in the parameter's own units or strings such as \"250ms\", \"2.5k\", \"40%\", \"c4\" \
@@ -158,9 +158,9 @@ fn tool_definitions() -> Value {
     });
     let kind = json!({
         "type": "string",
-        "enum": ["fm", "granular", "acid", "drums", "sampler"],
-        "description": "fm: 4-op FM · granular: grain clouds · acid: 303-style mono bass · \
-drums: 808/909 kit on the GM drum map · sampler: WAV/FLAC sampler (classic/one-shot/slice)"
+        "enum": ["fm", "analog", "granular", "acid", "drums", "sampler"],
+        "description": "fm: 4-op FM · analog: poly subtractive (pads, brass, leads) · granular: grain clouds · \
+acid: 303-style mono bass · drums: 808/909 kit on the GM drum map · sampler: WAV/FLAC sampler (classic/one-shot/slice)"
     });
     let read_only = json!({ "readOnlyHint": true });
     json!([

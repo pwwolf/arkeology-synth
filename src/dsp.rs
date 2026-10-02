@@ -269,6 +269,50 @@ impl Svf {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Band-limited oscillator helper and ladder filter
+// ---------------------------------------------------------------------------
+
+/// PolyBLEP residual for a discontinuity at phase 0; `t` is the phase in
+/// cycles and `dt` the per-sample phase increment.
+#[inline]
+pub fn poly_blep(t: f32, dt: f32) -> f32 {
+    if t < dt {
+        let x = t / dt;
+        x + x - x * x - 1.0
+    } else if t > 1.0 - dt {
+        let x = (t - 1.0) / dt;
+        x * x + x + x + 1.0
+    } else {
+        0.0
+    }
+}
+
+/// Zero-delay-feedback 4-pole (24 dB/oct) ladder low-pass with a saturating
+/// feedback path. `g = tan(pi * fc / sr)`, `k` is resonance (0..~4).
+#[derive(Clone, Copy, Default)]
+pub struct Ladder {
+    s: [f32; 4],
+}
+
+impl Ladder {
+    #[inline]
+    pub fn process(&mut self, x: f32, g: f32, k: f32) -> f32 {
+        let big_g = g / (1.0 + g);
+        let b = 1.0 / (1.0 + g);
+        let g2 = big_g * big_g;
+        let sigma = (g2 * big_g * self.s[0] + g2 * self.s[1] + big_g * self.s[2] + self.s[3]) * b;
+        let u = ((x - k * sigma) / (1.0 + k * g2 * g2)).tanh();
+        let mut y = u;
+        for s in &mut self.s {
+            let v = (y - *s) * big_g;
+            y = v + *s;
+            *s = y + v;
+        }
+        y
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,6 +6,15 @@ controller or a DAW/sequencer.
 
 - **FM**: 4 operators, 8 algorithms, op-4 feedback, per-operator ADSR, ratio/detune and
   velocity sensitivity, vibrato (mod wheel adds depth).
+- **Analog**: a polyphonic subtractive synth for pads, brass, stabs and leads.
+  - Two PolyBLEP oscillators (saw, pulse or triangle), plus a sub oscillator, noise and
+    per-note analog drift.
+  - Unison stacks up to 7 detuned copies per note, spread across the stereo field.
+  - The resonant low-pass switches between 12 dB (state-variable) and 24 dB (ladder),
+    with its own envelope, key tracking and velocity.
+  - Separate amp and filter envelopes, and a global LFO (sine, triangle, square or
+    sample-and-hold) routable to pitch, cutoff and pulse width.
+  - A Juno-style stereo chorus (I, II, I+II).
 - **Granular**: a grain cloud per voice over a WAV/FLAC file or one of five built-in sources
   (Choir, Glass, Saw, Pluck, Noise). Controls for position, spray, scan speed, size,
   density, jitter, pitch spray, stereo spread, reverse probability and window shape, plus
@@ -56,7 +65,8 @@ controller or a DAW/sequencer.
   also have voice count and glide.
   The master bus has a stereo reverb and a soft-clipping drive stage.
 - Built-in patches for every engine: FM Strings, E.Piano, Glass Bell, Marimba, Soft Pad,
-  Brass, Organ, Mono Lead, Choir Cloud, Shimmer Pad, five acid basses, 808/909/Lo-Fi kits,
+  Brass, Organ, Mono Lead, Choir Cloud, Shimmer Pad, Warm Pad, Poly Brass, Juno Strings, Supersaw Lead,
+  Poly Stab, Soft Bass, five acid basses, 808/909/Lo-Fi kits,
   sampler examples (Choir Loop, Pluck Slices, Saw Stab, Reverse Glass) and more. Press `l`
   to browse them (`tab` switches synth type, `space` auditions). Edit one and press `w` to
   save your own version.
@@ -172,7 +182,7 @@ tables, and those tables also drive the generic TUI editor and patch serialisati
 |------|----------|
 | `src/engine.rs` | slots, MIDI routing, mixer, telemetry |
 | `src/synth/mod.rs` | `SynthKind`, common params, the `Poly`/`Voice` voice allocator (stealing, sustain, glide) |
-| `src/synth/fm.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `sampler.rs` | the five engines |
+| `src/synth/fm.rs`, `analog.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `sampler.rs` | the six engines |
 | `src/sample.rs` | WAV/FLAC loading, built-in sources, waveform overview and onset detection |
 | `src/dsp.rs`, `src/reverb.rs` | oscillator table, ADSR, SVF filter, Freeverb |
 | `src/app.rs`, `src/ui.rs` | TUI state, input and rendering |
