@@ -1,0 +1,65 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+Arkeology Synth is a multitimbral MIDI synth engine for the terminal (Rust, ratatui TUI, cpal audio, midir MIDI): up to 16 synth slots, each on a MIDI channel, mixed through insert FX, a reverb send and a master bus. README.md has the user-facing feature list and key bindings.
+
+## Commands
+
+Rust comes from mise (`mise.toml`); if `cargo` isn't on PATH, it's in `~/.cargo/bin`.
+
+```sh
+cargo build --release
+cargo test --release                       # full suite (~60 tests, <1 s in release)
+cargo test --release <name>                # one test or module, e.g. `physical`, `fx::tests::eq`
+cargo test <name> -- --nocapture           # see eprintln! output
+cargo clippy --all-targets                 # must stay warning-free
+cargo run --release -- --render-demo out.wav   # offline render, no audio device or TUI
+cargo run --release -- --list-devices
+SHOW_UI=1 cargo test renders_and_navigates -- --nocapture   # print TUI screens rendered by tests
+```
+
+mise tasks: `mise run run|test|demo|midi-send`. `[profile.dev]` uses opt-level 2 because unoptimised DSP can't run in real time.
+
+The TUI can't be driven interactively from a tool call. To check UI changes, use the headless `TestBackend` helpers in `app.rs` tests (`test_app`, `screen`), or run the binary under a pty with an explicit window size and `--data-dir` pointing at a scratch directory (never the user's real data dir).
+
+## Architecture
+
+**Threads and real-time rules.** Three threads talk through lock-free queues (`crossbeam_queue::ArrayQueue`):
+- The audio callback owns `engine::Engine`. It must never lock, allocate or free.
+- The MIDI thread (midir callbacks) pushes `Command::Midi` to the engine and a copy to the UI queue.
+- The UI thread owns `app::App`: the model, input handling and all persistence.
+
+Anything heap-allocated (a whole `engine::Slot`, an `fx::FxUnit` with its delay lines, an `Arc<Sample>`) is built on the UI thread and moved in with a `Command`. Whatever the engine replaces goes back through the garbage queue (`engine::Garbage`) so the UI thread drops it. Meters, voice counts and CPU load come back via atomics in `engine::Telemetry`. Keep this discipline in any new feature.
+
+**Parameters are the backbone.** Every synth exposes a static table of `params::ParamDesc` (key, range, scale, unit, group). A slot's state is a flat `Vec<f32>` laid out as `synth::COMMON` (volume, pan, send, transpose, bend range), then the synth's own `PARAMS`, then the insert-FX block `fx::PARAMS` (3 units × `fx::STRIDE`). `SynthKind::param/param_count/fx_base` encapsulate this layout. The master bus follows the same pattern with `params::master::PARAMS` (base params + FX). The same tables drive:
+- the engine: `SetParam` → slot `dirty` → `Instrument::update(&params)`, which recomputes cached coefficients
+- the generic TUI editor (groups = contiguous runs of `group`)
+- patch/session JSON, which stores values **by key** so tables can grow
+- MIDI learn and the MCP tools
+
+Adding a parameter means adding a table entry and reading it in `update`. Visibility is computed, not stored: `SynthKind::param_visible` hides parameters of inactive FX types and of other physical-synth models. The UI, MCP `get_params` and patch saving all respect it.
+
+**Synth engines** (`src/synth/`), dispatched statically through `synth::Instrument`:
+- Polyphonic engines (`fm`, `analog`, `granular`, `sampler`, `physical`) implement `synth::Voice` and reuse `synth::Poly`, which handles allocation, stealing, sustain, glide and bend.
+- Mono or one-shot engines (`acid`, `drums`) handle notes themselves and implement the private `PolyControl` trait.
+- To add an engine: a `SynthKind` variant (label, long name, `ALL` order), a params table, an `Instrument` variant wired into every match in `synth/mod.rs`, a UI colour in `ui.rs`, factory patches in `patch.rs`, and the kind name in the MCP tool schema (`mcp.rs`) and in `app/tools.rs` errors.
+- Large engine structs are boxed in `Instrument` (clippy's `large_enum_variant`).
+
+**Shared DSP** lives in `dsp.rs`: sine table, ADSR, SVF, ZDF ladder, PolyBLEP, RBJ biquads. The reverb is in `reverb.rs`, and `sample.rs` handles WAV/FLAC loading plus load-time analysis (waveform overview, onsets for slicing, YIN pitch detection). Insert effects are in `fx.rs`. Rebuilding an FX unit when its type changes happens in `App::rebuild_fx`.
+
+**UI and control surfaces.**
+- `app.rs`: `App` state, keyboard and popup handling, patches and sessions.
+- `ui.rs`: rendering, including the ordered column layout (`partition`) and the sampler's braille waveform.
+- `midi.rs`: ports, the virtual "Arkeology Synth" input, CC learn mappings (applied on the UI thread in `App::on_midi`).
+- `mcp.rs` + `app/tools.rs`: an embedded MCP server (Streamable HTTP, `127.0.0.1:7878/mcp`, Origin-checked). It forwards tool calls to the UI thread, which executes them through the same `App` methods as key presses.
+
+**Persistence.** Data lives in `dirs::data_dir()/arkeology-synth` (`--data-dir` to override): `patches/`, `sessions/`, `samples/`, `autosave.json`. The autosave is written on clean quit and restored at start (`--fresh` skips it). Factory patches are built in (`patch::factory_patches`), never written to disk. Samples are referenced by path.
+
+## Conventions and gotchas
+
+- Gain staging is calibrated by measurement. When adding sounds or engines, compare peak and RMS against existing ones (single FM note ≈ 0.2 peak) and check that the `--render-demo` mix doesn't push the master soft clipper (peaks ≲ 0.9).
+- Physical models must stay in tune. Tests use the YIN detector (`Sample::detect_pitch`) to assert pitch within a few cents. Loop filters' phase delay is compensated at the fundamental, and HF damping is capped in the treble (`WaveString::tune`).
+- The bowed-string model is regime-sensitive (Helmholtz vs multi-slip/sticking). `bow_slope` and `bowed_loss_pole` were tuned against a grid of pressure × position × velocity × note, and `bowed_strings_find_helmholtz_motion` guards the defaults. Re-run a similar grid before changing them.
+- Key repeat: terminals with the kitty keyboard protocol report `KeyEventKind::Repeat` separately. Only keys allowed by `repeatable()` in `app.rs` act on repeats.
+- Commit each finished, tested change on `main` (there is no remote).
