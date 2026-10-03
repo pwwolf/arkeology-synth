@@ -5,6 +5,7 @@ pub mod analog;
 pub mod drums;
 pub mod fm;
 pub mod granular;
+pub mod kit;
 pub mod physical;
 pub mod sampler;
 
@@ -30,18 +31,29 @@ pub enum SynthKind {
     Sampler,
     Analog,
     Physical,
+    Kit,
 }
 
 impl SynthKind {
-    pub const ALL: [SynthKind; 7] = [
+    pub const ALL: [SynthKind; 8] = [
         SynthKind::Fm,
         SynthKind::Analog,
         SynthKind::Physical,
         SynthKind::Granular,
         SynthKind::Acid,
         SynthKind::Drums,
+        SynthKind::Kit,
         SynthKind::Sampler,
     ];
+
+    /// How many sample files this synth type holds (patches store their paths).
+    pub fn sample_slots(self) -> usize {
+        match self {
+            SynthKind::Granular | SynthKind::Sampler => 1,
+            SynthKind::Kit => kit::PADS,
+            _ => 0,
+        }
+    }
 
     /// Position in `ALL`, used for sorting.
     pub fn order(self) -> usize {
@@ -54,6 +66,7 @@ impl SynthKind {
             SynthKind::Granular => "GRN",
             SynthKind::Acid => "303",
             SynthKind::Drums => "DRM",
+            SynthKind::Kit => "KIT",
             SynthKind::Sampler => "SMP",
             SynthKind::Analog => "ANA",
             SynthKind::Physical => "PHY",
@@ -66,6 +79,7 @@ impl SynthKind {
             SynthKind::Granular => "Granular",
             SynthKind::Acid => "Acid (303-style mono bass)",
             SynthKind::Drums => "Drums (808/909-style kit)",
+            SynthKind::Kit => "Drum Kit (sample pads)",
             SynthKind::Sampler => "Sampler (classic / one-shot / slice)",
             SynthKind::Analog => "Analog (poly subtractive)",
             SynthKind::Physical => "Physical (string / mallet models)",
@@ -78,6 +92,7 @@ impl SynthKind {
             SynthKind::Granular => &granular::PARAMS,
             SynthKind::Acid => &acid::PARAMS,
             SynthKind::Drums => &drums::PARAMS,
+            SynthKind::Kit => &kit::PARAMS,
             SynthKind::Sampler => &sampler::PARAMS,
             SynthKind::Analog => &analog::PARAMS,
             SynthKind::Physical => &physical::PARAMS,
@@ -366,6 +381,7 @@ pub enum Instrument {
     Granular(granular::GranularSynth),
     Acid(acid::AcidSynth),
     Drums(Box<drums::DrumsSynth>),
+    Kit(Box<kit::KitSynth>),
     Sampler(Box<sampler::SamplerSynth>),
     Analog(Box<analog::AnalogSynth>),
     Physical(Box<physical::PhysicalSynth>),
@@ -380,6 +396,7 @@ impl Instrument {
             }
             SynthKind::Acid => Instrument::Acid(acid::AcidSynth::new(sample_rate)),
             SynthKind::Drums => Instrument::Drums(Box::new(drums::DrumsSynth::new(sample_rate))),
+            SynthKind::Kit => Instrument::Kit(Box::new(kit::KitSynth::new(sample_rate))),
             SynthKind::Analog => Instrument::Analog(Box::new(analog::AnalogSynth::new(sample_rate))),
             SynthKind::Physical => Instrument::Physical(Box::new(physical::PhysicalSynth::new(sample_rate))),
             SynthKind::Sampler => {
@@ -394,6 +411,7 @@ impl Instrument {
             Instrument::Granular(s) => s.update(params),
             Instrument::Acid(s) => s.update(params),
             Instrument::Drums(s) => s.update(params),
+            Instrument::Kit(s) => s.update(params),
             Instrument::Sampler(s) => s.update(params),
             Instrument::Analog(s) => s.update(params),
             Instrument::Physical(s) => s.update(params),
@@ -406,6 +424,7 @@ impl Instrument {
             Instrument::Granular(s) => s.poly.note_on(note, velocity, &s.shared),
             Instrument::Acid(s) => s.note_on(note, velocity),
             Instrument::Drums(s) => s.note_on(note, velocity),
+            Instrument::Kit(s) => s.note_on(note, velocity),
             Instrument::Sampler(s) => s.note_on(note, velocity),
             Instrument::Analog(s) => s.poly.note_on(note, velocity, &s.shared),
             Instrument::Physical(s) => s.poly.note_on(note, velocity, &s.shared),
@@ -418,6 +437,7 @@ impl Instrument {
             Instrument::Granular(s) => f(&mut s.poly),
             Instrument::Acid(s) => f(s),
             Instrument::Drums(s) => f(s.as_mut()),
+            Instrument::Kit(s) => f(s.as_mut()),
             Instrument::Sampler(s) => f(&mut s.poly),
             Instrument::Analog(s) => f(&mut s.poly),
             Instrument::Physical(s) => f(&mut s.poly),
@@ -448,12 +468,14 @@ impl Instrument {
         self.poly_op(|p| p.active_voices())
     }
 
-    /// Swap in a new file sample; returns the previous one so the caller can
-    /// dispose of it off the audio thread.
-    pub fn set_sample(&mut self, sample: Option<Arc<Sample>>) -> Option<Arc<Sample>> {
+    /// Swap in a sample at `index` (a kit pad; 0 for single-sample synths).
+    /// Returns the previous one so the caller can free it off the audio thread.
+    pub fn set_sample(&mut self, index: usize, sample: Option<Arc<Sample>>) -> Option<Arc<Sample>> {
         match self {
-            Instrument::Granular(s) => s.set_file_sample(sample),
-            Instrument::Sampler(s) => s.set_file_sample(sample),
+            Instrument::Granular(s) if index == 0 => s.set_file_sample(sample),
+            Instrument::Sampler(s) if index == 0 => s.set_file_sample(sample),
+            Instrument::Kit(s) => s.set_pad_sample(index, sample),
+            Instrument::Granular(_) | Instrument::Sampler(_) => sample,
             Instrument::Fm(_)
             | Instrument::Acid(_)
             | Instrument::Drums(_)
@@ -468,6 +490,7 @@ impl Instrument {
             Instrument::Granular(s) => s.render(l, r),
             Instrument::Acid(s) => s.render(l, r),
             Instrument::Drums(s) => s.render(l, r),
+            Instrument::Kit(s) => s.render(l, r),
             Instrument::Sampler(s) => s.render(l, r),
             Instrument::Analog(s) => s.render(l, r),
             Instrument::Physical(s) => s.render(l, r),

@@ -224,7 +224,7 @@ fn render_demo(path: &PathBuf, builtins: &sample::Builtins) -> Result<()> {
         let p = get(name);
         let mut values = p.values();
         values[synth::VOLUME] *= 0.8;
-        let data = engine::Slot::new(p.kind, values, Some(*channel), sr, builtins, None);
+        let data = engine::Slot::new(p.kind, values, Some(*channel), sr, builtins, &[]);
         let _ = commands.push(Command::InstallSlot { slot, data });
     }
 

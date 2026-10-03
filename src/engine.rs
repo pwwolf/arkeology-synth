@@ -37,7 +37,8 @@ pub enum Command {
     SetChannel { slot: usize, channel: Option<u8> },
     SetMute { slot: usize, on: bool },
     SetSolo { slot: usize, on: bool },
-    SetSample { slot: usize, sample: Option<Arc<Sample>> },
+    /// Replace sample `index` (a kit pad; 0 for granular/sampler).
+    SetSample { slot: usize, index: usize, sample: Option<Arc<Sample>> },
     /// Swap in a freshly built insert effect (built off the audio thread).
     SetFx { slot: usize, unit: usize, fx: Box<FxUnit> },
     SetMasterFx { unit: usize, fx: Box<FxUnit> },
@@ -80,11 +81,13 @@ impl Slot {
         channel: Option<u8>,
         sample_rate: f32,
         builtins: &Builtins,
-        sample: Option<Arc<Sample>>,
+        samples: &[Option<Arc<Sample>>],
     ) -> Box<Slot> {
         let mut inst = Instrument::new(kind, sample_rate, builtins);
-        // The returned (previous) sample is None for a fresh instrument.
-        let _ = inst.set_sample(sample);
+        for (i, s) in samples.iter().enumerate().filter(|(_, s)| s.is_some()) {
+            // The returned (previous) sample is None for a fresh instrument.
+            let _ = inst.set_sample(i, s.clone());
+        }
         inst.update(&params);
         let ctrl_rate = sample_rate / MAX_BLOCK as f32;
         let fx_base = kind.fx_base();
@@ -297,9 +300,9 @@ impl Engine {
                     s.solo = on;
                 }
             }
-            Command::SetSample { slot, sample } => {
+            Command::SetSample { slot, index, sample } => {
                 let old = match self.slots.get_mut(slot).and_then(|s| s.as_mut()) {
-                    Some(s) => s.inst.set_sample(sample),
+                    Some(s) => s.inst.set_sample(index, sample),
                     None => sample,
                 };
                 if let Some(old) = old {
@@ -498,7 +501,7 @@ mod tests {
         let cmds: CommandQueue = Arc::new(ArrayQueue::new(64));
         let garbage: GarbageQueue = Arc::new(ArrayQueue::new(64));
         let mut e = Engine::new(sr, cmds.clone(), garbage, Arc::new(Telemetry::default()));
-        let slot = Slot::new(kind, kind.defaults(), Some(0), sr, &builtins, None);
+        let slot = Slot::new(kind, kind.defaults(), Some(0), sr, &builtins, &[]);
         cmds.push(Command::InstallSlot { slot: 0, data: slot }).ok();
         cmds.push(Command::Midi(MidiMsg {
             channel: 0,
@@ -563,7 +566,7 @@ mod tests {
         set(&mut values, "fx1_mix", 0.5);
         set(&mut values, "fx1_delay_time", 0.5);
         set(&mut values, "fx1_delay_feedback", 0.6);
-        let slot = Slot::new(kind, values, Some(9), sr, &builtins, None);
+        let slot = Slot::new(kind, values, Some(9), sr, &builtins, &[]);
         cmds.push(Command::InstallSlot { slot: 0, data: slot }).ok();
         cmds.push(Command::NoteOn { slot: 0, note: 37, velocity: 1.0 }).ok(); // short rimshot
         let mut out = vec![0.0; 2 * 48_000 * 2];
@@ -586,7 +589,7 @@ mod tests {
             let cmds: CommandQueue = Arc::new(ArrayQueue::new(256));
             let garbage: GarbageQueue = Arc::new(ArrayQueue::new(64));
             let mut e = Engine::new(sr, cmds.clone(), garbage, Arc::new(Telemetry::default()));
-            let slot = Slot::new(p.kind, p.values(), Some(0), sr, &builtins, None);
+            let slot = Slot::new(p.kind, p.values(), Some(0), sr, &builtins, &[]);
             cmds.push(Command::InstallSlot { slot: 0, data: slot }).ok();
             for n in [48u8, 52, 55, 60] {
                 cmds.push(Command::NoteOn { slot: 0, note: n, velocity: 0.8 }).ok();

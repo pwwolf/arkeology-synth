@@ -42,7 +42,7 @@ Adding a parameter means adding a table entry and reading it in `update`. Visibi
 
 **Synth engines** (`src/synth/`), dispatched statically through `synth::Instrument`:
 - Polyphonic engines (`fm`, `analog`, `granular`, `sampler`, `physical`) implement `synth::Voice` and reuse `synth::Poly`, which handles allocation, stealing, sustain, glide and bend.
-- Mono or one-shot engines (`acid`, `drums`) handle notes themselves and implement the private `PolyControl` trait.
+- Mono or one-shot engines (`acid`, `drums`, `kit`) handle notes themselves and implement the private `PolyControl` trait.
 - To add an engine: a `SynthKind` variant (label, long name, `ALL` order), a params table, an `Instrument` variant wired into every match in `synth/mod.rs`, a UI colour in `ui.rs`, factory patches in `patch.rs`, and the kind name in the MCP tool schema (`mcp.rs`) and in `app/tools.rs` errors.
 - Large engine structs are boxed in `Instrument` (clippy's `large_enum_variant`).
 
@@ -55,7 +55,7 @@ Adding a parameter means adding a table entry and reading it in `update`. Visibi
 - `recorder.rs`: WAV recording. The engine copies output blocks into a pre-allocated pool and a writer thread saves them.
 - `mcp.rs` + `app/tools.rs`: an embedded MCP server (Streamable HTTP, `127.0.0.1:7878/mcp`, Origin-checked). It forwards tool calls to the UI thread, which executes them through the same `App` methods as key presses.
 
-**Persistence.** Data lives in `dirs::data_dir()/arkeology-synth` (`--data-dir` to override): `patches/`, `sessions/`, `samples/`, `recordings/`, `autosave.json`. The autosave is written on clean quit and restored at start (`--fresh` skips it). Factory patches are built in (`patch::factory_patches`), never written to disk. Samples are referenced by path.
+**Persistence.** Data lives in `dirs::data_dir()/arkeology-synth` (`--data-dir` to override): `patches/`, `sessions/`, `samples/`, `recordings/`, `autosave.json`. The autosave is written on clean quit and restored at start (`--fresh` skips it). Factory patches are built in (`patch::factory_patches`), never written to disk. Samples are referenced by path. A synth type's sample slots (`SynthKind::sample_slots`: 1 for granular/sampler, 16 kit pads) live in `UiSlot::samples`, and patches store them as `sample` or `samples` (keyed `padN`).
 
 ## Conventions and gotchas
 

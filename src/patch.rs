@@ -17,13 +17,29 @@ pub struct Patch {
     pub name: String,
     pub kind: SynthKind,
     pub params: BTreeMap<String, f32>,
+    /// The sample file of a granular synth or sampler.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<PathBuf>,
+    /// Per-pad sample files of a drum kit, keyed "pad1".."pad16".
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub samples: BTreeMap<String, PathBuf>,
 }
 
 impl Patch {
-    pub fn from_values(name: &str, kind: SynthKind, values: &[f32], sample: Option<PathBuf>) -> Self {
+    /// `samples` holds one optional path per sample slot of the synth type.
+    pub fn from_values(name: &str, kind: SynthKind, values: &[f32], samples: &[Option<PathBuf>]) -> Self {
+        let (sample, pads) = if kind == SynthKind::Kit {
+            let pads = samples
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| p.clone().map(|p| (format!("pad{}", i + 1), p)))
+                .collect();
+            (None, pads)
+        } else {
+            (samples.first().cloned().flatten(), BTreeMap::new())
+        };
         Patch {
+            samples: pads,
             name: name.to_string(),
             kind,
             // Settings of inactive FX types are left out to keep files readable.
@@ -35,6 +51,15 @@ impl Patch {
                 .map(|(_, (p, v))| (p.key.to_string(), *v))
                 .collect(),
             sample,
+        }
+    }
+
+    /// One optional sample path per sample slot of the synth type.
+    pub fn sample_paths(&self) -> Vec<Option<PathBuf>> {
+        if self.kind == SynthKind::Kit {
+            (1..=self.kind.sample_slots()).map(|i| self.samples.get(&format!("pad{i}")).cloned()).collect()
+        } else {
+            (0..self.kind.sample_slots()).map(|_| self.sample.clone()).collect()
         }
     }
 
@@ -224,11 +249,11 @@ fn make(name: &str, kind: SynthKind, overrides: &[(&str, f32)]) -> Patch {
             None => panic!("factory patch '{name}' sets unknown param '{key}'"),
         }
     }
-    Patch::from_values(name, kind, &values, None)
+    Patch::from_values(name, kind, &values, &[])
 }
 
 pub fn factory_patches() -> Vec<Patch> {
-    use SynthKind::{Acid, Analog, Drums, Fm, Granular, Physical, Sampler};
+    use SynthKind::{Acid, Analog, Drums, Fm, Granular, Kit, Physical, Sampler};
     vec![
         make("FM Init", Fm, &[]),
         make(
@@ -635,6 +660,7 @@ pub fn factory_patches() -> Vec<Patch> {
             ],
         ),
         make("Drums Init", Drums, &[]),
+        make("Kit Init", Kit, &[]),
         make(
             "808 Kit",
             Drums,

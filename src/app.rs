@@ -20,7 +20,7 @@ use crate::patch::{CcMapping, Patch, PatchEntry, Session, SessionSlot, Storage, 
 use crate::sample::{self, Builtins, Sample};
 use crate::fx::{self, FxKind, FxUnit};
 use crate::recorder::Recording;
-use crate::synth::{SynthKind, granular, sampler};
+use crate::synth::{SynthKind, granular, kit, sampler};
 
 /// Which parameter set is being viewed/edited.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -37,13 +37,29 @@ pub struct UiSlot {
     pub channel: Option<u8>,
     pub mute: bool,
     pub solo: bool,
-    pub sample_path: Option<PathBuf>,
-    /// Kept so the sample is freed on this thread, never the audio thread.
-    pub sample: Option<Arc<Sample>>,
+    /// Loaded sample files, one entry per sample slot of the synth type (one
+    /// for granular/sampler, 16 pads for a kit). The Arcs are kept here so
+    /// samples are freed on this thread, never the audio thread.
+    pub samples: Vec<Option<LoadedSample>>,
     pub meter: f32,
     pub voices: u32,
     notes_seen: u32,
     pub activity: Option<Instant>,
+}
+
+pub struct LoadedSample {
+    pub path: PathBuf,
+    pub sample: Arc<Sample>,
+}
+
+impl UiSlot {
+    pub fn sample(&self, index: usize) -> Option<&LoadedSample> {
+        self.samples.get(index).and_then(Option::as_ref)
+    }
+
+    pub fn sample_paths(&self) -> Vec<Option<PathBuf>> {
+        self.samples.iter().map(|s| s.as_ref().map(|s| s.path.clone())).collect()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -325,14 +341,14 @@ impl App {
     pub fn slot_sample(&self, index: usize) -> Option<Arc<Sample>> {
         let s = self.slots.get(index)?.as_ref()?;
         let src = s.params[s.kind.index_of("source")?].round() as usize;
-        if src == 0 { s.sample.clone() } else { self.builtins.get(src - 1).cloned() }
+        if src == 0 { s.sample(0).map(|l| l.sample.clone()) } else { self.builtins.get(src - 1).cloned() }
     }
 
     /// Lowest playable note for synths that aren't laid out chromatically.
     fn fixed_keyboard_base(&self, index: usize) -> Option<i32> {
         let s = self.slots[index].as_ref()?;
         match s.kind {
-            SynthKind::Drums => Some(36),
+            SynthKind::Drums | SynthKind::Kit => Some(36),
             SynthKind::Sampler => {
                 let p = &s.params[crate::synth::COMMON.len()..];
                 (p[sampler::MODE].round() as usize == 2).then(|| p[sampler::BASE_NOTE].round() as i32)
@@ -461,20 +477,24 @@ impl App {
         name: &str,
         values: Vec<f32>,
         channel: Option<u8>,
-        sample_path: Option<PathBuf>,
+        sample_paths: Vec<Option<PathBuf>>,
         mute: bool,
         solo: bool,
     ) {
-        let mut sample = None;
-        if matches!(kind, SynthKind::Granular | SynthKind::Sampler)
-            && let Some(path) = &sample_path
-        {
-            match sample::load_file(path) {
-                Ok(s) => sample = Some(Arc::new(s)),
-                Err(e) => self.error(format!("sample: {e:#}")),
+        let mut samples: Vec<Option<LoadedSample>> = (0..kind.sample_slots()).map(|_| None).collect();
+        let mut failed = Vec::new();
+        for (i, path) in sample_paths.into_iter().enumerate().take(samples.len()) {
+            let Some(path) = path else { continue };
+            match sample::load_file(&path) {
+                Ok(s) => samples[i] = Some(LoadedSample { path, sample: Arc::new(s) }),
+                Err(e) => failed.push(format!("{e:#}")),
             }
         }
-        let data = Slot::new(kind, values.clone(), channel, self.sample_rate, &self.builtins, sample.clone())
+        if !failed.is_empty() {
+            self.error(format!("sample: {}", failed.join("; ")));
+        }
+        let arcs: Vec<Option<Arc<Sample>>> = samples.iter().map(|s| s.as_ref().map(|s| s.sample.clone())).collect();
+        let data = Slot::new(kind, values.clone(), channel, self.sample_rate, &self.builtins, &arcs)
             .with_flags(mute, solo);
         self.send(Command::InstallSlot { slot: index, data });
         let notes_seen = self.telemetry.slots[index].notes.load(Ordering::Relaxed);
@@ -485,8 +505,7 @@ impl App {
             channel,
             mute,
             solo,
-            sample_path: if sample.is_some() { sample_path } else { None },
-            sample,
+            samples,
             meter: 0.0,
             voices: 0,
             notes_seen,
@@ -500,9 +519,10 @@ impl App {
             return;
         };
         let ch10_free = !self.slots.iter().flatten().any(|s| s.channel == Some(9));
-        let channel = if kind == SynthKind::Drums && ch10_free { Some(9) } else { self.free_channel() };
+        let drums = matches!(kind, SynthKind::Drums | SynthKind::Kit);
+        let channel = if drums && ch10_free { Some(9) } else { self.free_channel() };
         let name = format!("{} {}", kind.label(), index + 1);
-        self.install(index, kind, &name, kind.defaults(), channel, None, false, false);
+        self.install(index, kind, &name, kind.defaults(), channel, Vec::new(), false, false);
         self.select(Target::Slot(index));
         self.info(format!(
             "added {} in slot {} on {}",
@@ -576,7 +596,7 @@ impl App {
 
     fn current_patch(&self, index: usize) -> Option<Patch> {
         let s = self.slots[index].as_ref()?;
-        Some(Patch::from_values(&s.name, s.kind, &s.params, s.sample_path.clone()))
+        Some(Patch::from_values(&s.name, s.kind, &s.params, &s.sample_paths()))
     }
 
     fn load_patch_into(&mut self, index: usize, patch: Patch) {
@@ -584,7 +604,7 @@ impl App {
             .as_ref()
             .map_or((self.free_channel(), false, false), |s| (s.channel, s.mute, s.solo));
         let values = patch.values();
-        self.install(index, patch.kind, &patch.name, values, channel, patch.sample.clone(), mute, solo);
+        self.install(index, patch.kind, &patch.name, values, channel, patch.sample_paths(), mute, solo);
         self.info(format!("loaded patch '{}' into slot {}", patch.name, index + 1));
     }
 
@@ -685,7 +705,7 @@ impl App {
                 &s.patch.name,
                 values,
                 channel,
-                s.patch.sample.clone(),
+                s.patch.sample_paths(),
                 s.mute,
                 s.solo,
             );
@@ -732,25 +752,44 @@ impl App {
         for (i, (name, channel)) in rack.iter().enumerate() {
             if let Some(p) = find(name) {
                 let values = p.values();
-                self.install(i, p.kind, &p.name, values, Some(*channel), None, false, false);
+                self.install(i, p.kind, &p.name, values, Some(*channel), Vec::new(), false, false);
             }
         }
         self.rack_cursor = 1;
     }
 
-    fn load_sample(&mut self, index: usize, path: &Path) {
+    /// The kit pad being edited (the one containing the parameter cursor), else pad 0.
+    pub fn current_pad(&self, index: usize) -> usize {
+        let is_kit = self.slots[index].as_ref().is_some_and(|s| s.kind == SynthKind::Kit);
+        let local = self.param_cursor.checked_sub(crate::synth::COMMON.len());
+        if is_kit && self.selected_slot() == Some(index) {
+            local.and_then(kit::pad_of).unwrap_or(0)
+        } else {
+            0
+        }
+    }
+
+    /// Load a sample file into slot `index` at sample slot `pad` (0 unless a kit).
+    pub(crate) fn load_sample(&mut self, index: usize, pad: usize, path: &Path) {
         match sample::load_file(path) {
             Ok(s) => {
                 let dur = s.duration();
                 let pitch = s.pitch;
                 let arc = Arc::new(s);
-                self.send(Command::SetSample { slot: index, sample: Some(arc.clone()) });
-                if let Some(slot) = self.slots[index].as_mut() {
-                    slot.sample = Some(arc);
-                    slot.sample_path = Some(path.to_path_buf());
+                let kind = self.slots[index].as_ref().map(|s| s.kind);
+                if kind == Some(SynthKind::Kit) {
+                    self.set_pad_sample(index, pad, path.to_path_buf(), arc);
+                    let role = kit::PAD_ROLES[pad.min(kit::PADS - 1)];
+                    self.info(format!("pad {} ({role}): {} ({dur:.2}s)", pad + 1, path.display()));
+                    return;
+                }
+                self.send(Command::SetSample { slot: index, index: 0, sample: Some(arc.clone()) });
+                if let Some(slot) = self.slots[index].as_mut()
+                    && let Some(entry) = slot.samples.first_mut()
+                {
+                    *entry = Some(LoadedSample { path: path.to_path_buf(), sample: arc });
                 }
                 // Switch the source to "File" so the new sample is heard.
-                let kind = self.slots[index].as_ref().map(|s| s.kind);
                 if let Some(src) = kind.and_then(|k| k.index_of("source")) {
                     let file = granular::SOURCES.iter().position(|s| *s == "File").unwrap_or(0);
                     self.set_param(Target::Slot(index), src, file as f32);
@@ -763,6 +802,52 @@ impl App {
             }
             Err(e) => self.error(format!("{e:#}")),
         }
+    }
+
+    fn set_pad_sample(&mut self, index: usize, pad: usize, path: PathBuf, sample: Arc<Sample>) {
+        self.send(Command::SetSample { slot: index, index: pad, sample: Some(sample.clone()) });
+        if let Some(slot) = self.slots[index].as_mut()
+            && let Some(entry) = slot.samples.get_mut(pad)
+        {
+            *entry = Some(LoadedSample { path, sample });
+        }
+    }
+
+    /// Load every audio file in `dir` into a kit, assigning pads by file name.
+    /// Returns (pad, path) for each assignment.
+    pub(crate) fn load_kit_folder(&mut self, index: usize, dir: &Path) -> Result<Vec<(usize, PathBuf)>, String> {
+        let files: Vec<PathBuf> = std::fs::read_dir(dir)
+            .map_err(|e| format!("reading {}: {e}", dir.display()))?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && sample::is_audio_file(p))
+            .collect();
+        if files.is_empty() {
+            return Err(format!("no WAV or FLAC files in {}", dir.display()));
+        }
+        let mut loaded = Vec::new();
+        let mut failed = Vec::new();
+        for (pad, path) in kit::assign_files(&files).into_iter().enumerate() {
+            let Some(path) = path else { continue };
+            match sample::load_file(&path) {
+                Ok(s) => {
+                    self.set_pad_sample(index, pad, path.clone(), Arc::new(s));
+                    loaded.push((pad, path));
+                }
+                Err(e) => failed.push(format!("{e:#}")),
+            }
+        }
+        let skipped = files.len().saturating_sub(loaded.len() + failed.len());
+        let mut msg = format!("loaded {} samples from {} into the kit", loaded.len(), dir.display());
+        if skipped > 0 {
+            msg.push_str(&format!(" ({skipped} didn't fit in {} pads)", kit::PADS));
+        }
+        if failed.is_empty() {
+            self.info(msg);
+        } else {
+            self.error(format!("{msg}; failed: {}", failed.join("; ")));
+        }
+        Ok(loaded)
     }
 
     /// Set a sampler's Root Note and Tune from a detected pitch so the sample
@@ -787,7 +872,7 @@ impl App {
         }
     }
 
-    fn open_files(&mut self, dir: PathBuf) {
+    pub(crate) fn open_files(&mut self, dir: PathBuf) {
         let mut entries = Vec::new();
         if let Some(parent) = dir.parent() {
             entries.push(FileEntry { name: "..".into(), path: parent.to_path_buf(), is_dir: true });
@@ -1128,15 +1213,17 @@ impl App {
                 self.popup = Some(Popup::Ports { items, cursor: 0 });
             }
             KeyCode::Char('f') => match slot.and_then(|i| self.slots[i].as_ref().map(|s| (i, s))) {
-                Some((_, s)) if matches!(s.kind, SynthKind::Granular | SynthKind::Sampler) => {
+                Some((i, s)) if s.kind.sample_slots() > 0 => {
+                    // Start where this pad's (or any) current sample lives.
+                    let pad = self.current_pad(i);
                     let dir = s
-                        .sample_path
-                        .as_ref()
-                        .and_then(|p| p.parent().map(Path::to_path_buf))
+                        .sample(pad)
+                        .or_else(|| s.samples.iter().flatten().next())
+                        .and_then(|l| l.path.parent().map(Path::to_path_buf))
                         .unwrap_or_else(|| self.storage.samples_dir());
                     self.open_files(dir);
                 }
-                _ => self.error("select a granular synth or sampler to load a sample"),
+                _ => self.error("select a granular synth, sampler or drum kit to load samples"),
             },
             KeyCode::Char('c') => {
                 if self.param_count(target) > 0 {
@@ -1416,7 +1503,7 @@ impl App {
                     true
                 }
             },
-            Popup::Files { entries, cursor, .. } => match list_nav(key.code, cursor, entries.len()) {
+            Popup::Files { dir, entries, cursor } => match list_nav(key.code, cursor, entries.len()) {
                 ListAction::Select | ListAction::Preview => {
                     if let Some(e) = entries.get(*cursor) {
                         let path = e.path.clone();
@@ -1425,10 +1512,25 @@ impl App {
                             return;
                         }
                         if let Some(i) = self.selected_slot() {
-                            self.load_sample(i, &path);
+                            let pad = self.current_pad(i);
+                            self.load_sample(i, pad, &path);
                         }
                     }
                     false
+                }
+                ListAction::Stay if key.code == KeyCode::Char('K') => {
+                    // Load the folder being browsed as a whole kit.
+                    let dir = dir.clone();
+                    match self.selected_slot().filter(|&i| self.slots[i].as_ref().is_some_and(|s| s.kind == SynthKind::Kit)) {
+                        Some(i) => {
+                            if let Err(e) = self.load_kit_folder(i, &dir) {
+                                self.error(e);
+                                return;
+                            }
+                            false
+                        }
+                        None => true,
+                    }
                 }
                 ListAction::Close => false,
                 ListAction::Stay => {
@@ -1699,7 +1801,7 @@ mod tests {
         }
         w.finalize().unwrap();
 
-        app.load_sample(slot, &path);
+        app.load_sample(slot, 0, &path);
         let p = |key: &str| app.param_value(Target::Slot(slot), SynthKind::Sampler.index_of(key).unwrap());
         assert_eq!(p("root"), 69.0);
         assert!((p("tune") - 25.0).abs() <= 1.0, "tune {}", p("tune"));
@@ -1912,6 +2014,80 @@ mod tests {
         assert!(r["slots"].as_array().unwrap().is_empty());
         assert!(r["previous_rack_saved_as"].as_str().unwrap().ends_with("sessions/before.json"));
         assert!(app.run_tool("new_rack", &serde_json::json!({ "template": "huge" })).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn write_wav(path: &Path, freq: f32, seconds: f32) {
+        let spec = hound::WavSpec { channels: 1, sample_rate: 44_100, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut w = hound::WavWriter::create(path, spec).unwrap();
+        for i in 0..(44_100.0 * seconds) as usize {
+            let t = i as f32 / 44_100.0;
+            let v = (std::f32::consts::TAU * freq * t).sin() * (-t * 8.0).exp();
+            w.write_sample((v * 30_000.0) as i16).unwrap();
+        }
+        w.finalize().unwrap();
+    }
+
+    #[test]
+    fn kits_load_folders_save_and_play() {
+        let dir = temp_dir("kit");
+        let mut app = test_app(&dir);
+        let folder = dir.join("samples/My Kit");
+        std::fs::create_dir_all(&folder).unwrap();
+        for (name, f) in [("BD 808.wav", 60.0), ("Snare.wav", 200.0), ("hh closed.wav", 900.0), ("Open HH.wav", 800.0), ("zap.wav", 400.0)] {
+            write_wav(&folder.join(name), f, 0.3);
+        }
+        app.add_synth(SynthKind::Kit);
+        let i = app.selected_slot().unwrap();
+        assert_eq!(app.slots[i].as_ref().unwrap().channel, Some(9), "kits default to channel 10");
+
+        // Browse to the folder and press K.
+        app.on_key(key(KeyCode::Char('f')));
+        app.open_files(folder.clone());
+        let s = screen(&mut app, 140, 40);
+        assert!(s.contains("Load into pad 1 (Kick)") && s.contains("K: load this whole folder"), "{s}");
+        app.on_key(key(KeyCode::Char('K')));
+        assert!(app.popup.is_none());
+        let slot = app.slots[i].as_ref().unwrap();
+        let name = |p: usize| slot.sample(p).map(|l| l.path.file_name().unwrap().to_string_lossy().into_owned());
+        assert_eq!(name(0).as_deref(), Some("BD 808.wav"));
+        assert_eq!(name(1).as_deref(), Some("Snare.wav"));
+        assert_eq!(name(2).as_deref(), Some("hh closed.wav"));
+        assert_eq!(name(3).as_deref(), Some("Open HH.wav"));
+        assert_eq!(name(4).as_deref(), Some("zap.wav"), "unrecognised file fills the next free pad");
+        let s = screen(&mut app, 140, 60);
+        assert!(s.contains("Pad 1 · 36 C2 · BD 808") && s.contains("Pad 10 · 49 C#3 · empty (Crash)"), "{s}");
+
+        // Patches remember every pad's sample and restore them.
+        let patch = app.current_patch(i).unwrap();
+        assert_eq!(patch.samples.len(), 5);
+        app.storage.save_patch(&Patch { name: "My Kit".into(), ..patch.clone() }).unwrap();
+        app.new_rack(false, None).unwrap();
+        app.add_synth(SynthKind::Fm);
+        let j = app.selected_slot().unwrap();
+        app.run_tool("load_patch", &serde_json::json!({ "slot": j + 1, "name": "My Kit" })).unwrap();
+        let restored = app.slots[j].as_ref().unwrap();
+        assert_eq!(restored.kind, SynthKind::Kit);
+        assert_eq!(restored.samples.iter().flatten().count(), 5);
+
+        // MCP: pads are listed, single-pad loads need a pad number.
+        let rack = app.run_tool("get_rack", &serde_json::json!({})).unwrap();
+        let pads = rack["slots"][0]["pads"].as_array().unwrap();
+        assert_eq!(pads[2]["role"], "Closed Hat");
+        assert!(pads[2]["sample"].as_str().unwrap().ends_with("hh closed.wav"));
+        let clap = folder.join("Snare.wav").to_string_lossy().into_owned();
+        assert!(app.run_tool("load_sample", &serde_json::json!({ "slot": j + 1, "path": clap })).is_err());
+        app.run_tool("load_sample", &serde_json::json!({ "slot": j + 1, "path": clap, "pad": 5 })).unwrap();
+        let r = app.run_tool("load_kit_folder", &serde_json::json!({ "slot": j + 1, "path": folder })).unwrap();
+        assert_eq!(r["loaded"].as_array().unwrap().len(), 5);
+
+        // And the kit plays through the engine.
+        let mut engine =
+            crate::engine::Engine::new(48_000.0, app.commands.clone(), app.garbage.clone(), app.telemetry.clone());
+        app.send(Command::NoteOn { slot: j, note: 36, velocity: 1.0 });
+        let mut out = vec![0.0f32; 2 * 9_600];
+        engine.process(&mut out, 2);
+        assert!(out.iter().any(|v| v.abs() > 0.05), "kick pad silent");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

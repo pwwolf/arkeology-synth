@@ -66,6 +66,18 @@ controller or a DAW/sequencer.
   sensitivity and drive, and Transpose/pitch bend retune the whole kit. In keyboard play
   mode a drum slot starts at the kick, so the home row plays the kit (`a` kick, `s` snare,
   `e` clap, `t` closed hat, `u` open hat).
+- **Kit**: a sample drum kit with 16 pads, each playing its own WAV/FLAC one-shot.
+  - Pads default to the General MIDI drum notes (kick 36, snare 38, closed hat 42, open hat
+    46, clap, rim, toms, crash, ride, pedal hat, tambourine, cowbell, shaker…). Each pad's
+    note can be changed.
+  - Every pad has tune, level, pan, decay, filter cutoff and a choke group. The hi-hats
+    share one, so a closed hat cuts off a ringing open hat.
+  - Velocity sets level (Vel Sens) and optionally brightness (Vel>Cutoff).
+  - Press `f` to load a file into the pad you're editing. In the file browser, press `K` to
+    load the whole folder as a kit: files are assigned to pads from their names ("kick",
+    "bd", "snare", "sd", "hh", "open hat", "tom low", "crash", "ride"…), and unrecognised
+    ones fill the remaining pads.
+  - Kits save as patches, which record each pad's file.
 - **Sampler**: plays a WAV or FLAC file (mono or stereo) or a built-in source, with a waveform view
   above its parameters. Three modes:
   - **Classic**: pitched across the keyboard from a Root Note, with an optional
@@ -166,7 +178,7 @@ claude mcp add --transport http arkeology http://127.0.0.1:7878/mcp
 | `add_synth`, `remove_synth`, `set_slot` | build the rack: synth type, MIDI channel, mute/solo, name |
 | `list_patches`, `load_patch`, `save_patch` | browse factory and user patches; save the current sound |
 | `list_sessions`, `load_session`, `save_session`, `new_rack` | whole-rack snapshots; start an empty or starter rack |
-| `load_sample` | load a WAV/FLAC into a granular synth or sampler (with root-note detection) |
+| `load_sample`, `load_kit_folder` | load a WAV/FLAC into a granular synth, sampler (with root-note detection) or kit pad; load a folder as a kit |
 | `play_notes`, `panic` | audition a sound through your speakers; stop everything |
 | `start_recording`, `stop_recording` | record the output to a WAV |
 
@@ -188,7 +200,7 @@ instances) or `--no-mcp` to turn it off.
 | `l` / `w` | browse/load patches (factory and yours; `tab` filters by synth, `space` auditions) / write the selected synth's patch |
 | `L` / `W` | load / write a session |
 | `N` | new rack: empty or starter (by default the current rack is saved as a session first) |
-| `f` | load a WAV or FLAC into a granular synth or sampler |
+| `f` | load a WAV or FLAC into a granular synth, sampler or kit pad (`K` in the browser loads a whole folder as a kit) |
 | `r` `m` `s` | rename, mute, solo |
 | `c` / `C` | MIDI-learn a CC for the selected parameter / clear it |
 | `p` | MIDI input ports |
@@ -243,7 +255,7 @@ tables, and those tables also drive the generic TUI editor and patch serialisati
 |------|----------|
 | `src/engine.rs` | slots, MIDI routing, mixer, telemetry |
 | `src/synth/mod.rs` | `SynthKind`, common params, the `Poly`/`Voice` voice allocator (stealing, sustain, glide) |
-| `src/synth/fm.rs`, `analog.rs`, `physical.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `sampler.rs` | the seven engines |
+| `src/synth/fm.rs`, `analog.rs`, `physical.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `kit.rs`, `sampler.rs` | the eight engines |
 | `src/sample.rs` | WAV/FLAC loading, built-in sources, waveform overview and onset detection |
 | `src/dsp.rs`, `src/reverb.rs` | oscillator table, ADSR, SVF filter, Freeverb |
 | `src/app.rs`, `src/ui.rs` | TUI state, input and rendering |

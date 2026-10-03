@@ -135,7 +135,7 @@ fn call_tool(name: &str, args: Value, jobs: &Sender<Job>) -> Result<Value, Strin
 }
 
 const INSTRUCTIONS: &str = "Controls the Arkeology Synth running in the user's terminal. \
-The rack has up to 16 slots (numbered 1-16); each holds one synth (fm, analog, physical, granular, acid, drums or sampler) \
+The rack has up to 16 slots (numbered 1-16); each holds one synth (fm, analog, physical, granular, acid, drums, kit or sampler) \
 listening on a MIDI channel (1-16 or \"omni\"). Use \"master\" as the slot for the master bus. \
 Call get_rack first, and get_params to see a slot's parameter keys, ranges, defaults, current values, \
 mapped MIDI CCs and how the instrument responds to MIDI (mod wheel, velocity, sustain, bend). \
@@ -161,10 +161,11 @@ fn tool_definitions() -> Value {
     });
     let kind = json!({
         "type": "string",
-        "enum": ["fm", "analog", "physical", "granular", "acid", "drums", "sampler"],
+        "enum": ["fm", "analog", "physical", "granular", "acid", "drums", "kit", "sampler"],
         "description": "fm: 4-op FM · analog: poly subtractive (pads, brass, leads) · \
 physical: modelled plucked strings, mallets/bells, piano and bowed strings (violin family) · granular: grain clouds · \
-acid: 303-style mono bass · drums: 808/909 kit on the GM drum map · sampler: WAV/FLAC sampler (classic/one-shot/slice)"
+acid: 303-style mono bass · drums: synthesized 808/909 kit on the GM drum map · \
+kit: sample drum kit, 16 pads with their own WAV/FLAC files on GM notes · sampler: WAV/FLAC sampler (classic/one-shot/slice)"
     });
     let read_only = json!({ "readOnlyHint": true });
     json!([
@@ -351,13 +352,28 @@ Pass save_as to keep the current rack as a session first.",
         },
         {
             "name": "load_sample",
-            "description": "Load a WAV or FLAC file into a granular or sampler slot. For samplers the pitch is \
-detected and Root Note/Tune set to match.",
+            "description": "Load a WAV or FLAC file into a granular, sampler or kit slot (kits need a pad, 1-16). \
+For samplers the pitch is detected and Root Note/Tune set to match.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "slot": slot,
-                    "path": { "type": "string", "description": "Absolute path, or relative to the samples folder; ~ is expanded" }
+                    "path": { "type": "string", "description": "Absolute path, or relative to the samples folder; ~ is expanded" },
+                    "pad": { "type": "integer", "minimum": 1, "maximum": 16, "description": "Kit pad (kit slots only)" }
+                },
+                "required": ["slot", "path"]
+            },
+        },
+        {
+            "name": "load_kit_folder",
+            "description": "Load every WAV/FLAC in a folder into a kit slot, assigning pads from file names \
+(kick, snare, hh/closed hat, open hat, clap, rim, toms, crash, ride, tambourine, cowbell, shaker); \
+unrecognised files fill the remaining pads. Returns the assignments.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "slot": slot,
+                    "path": { "type": "string", "description": "Folder path; ~ is expanded" }
                 },
                 "required": ["slot", "path"]
             },

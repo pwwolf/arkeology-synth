@@ -191,6 +191,7 @@ fn draw_rack(f: &mut Frame, app: &App, area: Rect) {
                         SynthKind::Granular => Color::Rgb(120, 220, 200),
                         SynthKind::Acid => Color::Rgb(190, 230, 90),
                         SynthKind::Drums => Color::Rgb(255, 210, 90),
+                        SynthKind::Kit => Color::Rgb(255, 180, 130),
                         SynthKind::Sampler => SAMPLER_COLOR,
                         SynthKind::Analog => Color::Rgb(255, 150, 90),
                         SynthKind::Physical => Color::Rgb(205, 170, 120),
@@ -299,9 +300,22 @@ fn group_title(app: &App, target: Target, group: &str) -> String {
     if group == "Source"
         && let Target::Slot(i) = target
         && let Some(s) = &app.slots[i]
-        && let Some(sample) = &s.sample
+        && let Some(loaded) = s.sample(0)
     {
-        return format!("Source · file: {}", sample.name);
+        return format!("Source · file: {}", loaded.sample.name);
+    }
+    // Kit pads: "Pad 3 · 42 F#2 · hat.wav" (or the pad's default role if empty).
+    if let Target::Slot(i) = target
+        && let Some(s) = &app.slots[i]
+        && s.kind == SynthKind::Kit
+        && let Some(n) = group.strip_prefix("Pad ").and_then(|n| n.parse::<usize>().ok())
+    {
+        let note = s.params[s.kind.index_of(&format!("pad{n}_note")).expect("pad note")].round() as u8;
+        let what = match s.sample(n - 1) {
+            Some(l) => l.sample.name.clone(),
+            None => format!("empty ({})", crate::synth::kit::PAD_ROLES[n - 1]),
+        };
+        return format!("Pad {n} · {note} {} · {what}", crate::midi::note_name(note));
     }
     group.to_string()
 }
@@ -832,8 +846,18 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
                     }
                 })
                 .collect();
-            let title = format!("Load sample · {}", dir.display());
-            list_popup(f, area, &title, list, *cursor, "enter: open/load · ⌫: up · esc: close");
+            let kit_slot = app.selected_slot().filter(|&i| app.slots[i].as_ref().is_some_and(|s| s.kind == SynthKind::Kit));
+            let (title, foot) = match kit_slot {
+                Some(i) => {
+                    let pad = app.current_pad(i);
+                    (
+                        format!("Load into pad {} ({}) · {}", pad + 1, crate::synth::kit::PAD_ROLES[pad], dir.display()),
+                        "enter: open/load into pad · K: load this whole folder as the kit · ⌫: up · esc".to_string(),
+                    )
+                }
+                None => (format!("Load sample · {}", dir.display()), "enter: open/load · ⌫: up · esc: close".to_string()),
+            };
+            list_popup(f, area, &title, list, *cursor, &foot);
         }
     }
 }
@@ -855,7 +879,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         h("Rack"),
         k("↑ ↓", "select master / synth slot"),
         k("← → / - +", "change the slot's MIDI channel (omni, 1-16)"),
-        k("a", "add a synth: FM, Analog, Physical, Granular, 303, Drums, Sampler"),
+        k("a", "add a synth: FM, Analog, Physical, Granular, 303, Drums, Kit, Sampler"),
         k("d / ⌫", "remove the selected synth"),
         k("r", "rename      m  mute      s  solo"),
         k("tab / enter", "edit parameters"),
@@ -870,7 +894,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         k("l / w", "load / write the selected synth's patch"),
         k("L / W", "load / write the whole rack as a session"),
         k("N", "new rack: empty or starter (saves the current one first by default)"),
-        k("f", "load a WAV or FLAC into a granular synth or sampler"),
+        k("f", "load a WAV or FLAC into a granular synth or sampler, or a kit pad (K in the browser: whole folder)"),
         h("Playing"),
         k("k", "play the selected synth from the computer keyboard"),
         k("p", "choose MIDI input ports"),

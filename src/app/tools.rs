@@ -12,7 +12,7 @@ use crate::midi::note_name;
 use crate::fx;
 use crate::params::{Kind, ParamDesc, Scale, Unit, master, parse_note_name};
 use crate::patch::{CcMapping, file_stem, read_json};
-use crate::synth::{self, SynthKind, physical};
+use crate::synth::{self, SynthKind, kit, physical};
 
 type ToolResult = Result<Value, String>;
 
@@ -25,7 +25,7 @@ fn kind_name(kind: SynthKind) -> Value {
 
 fn parse_kind(v: &Value) -> Result<SynthKind, String> {
     serde_json::from_value(v.clone()).map_err(|_| {
-        format!("unknown synth type {v}; use one of fm, analog, physical, granular, acid, drums, sampler")
+        format!("unknown synth type {v}; use one of fm, analog, physical, granular, acid, drums, kit, sampler")
     })
 }
 
@@ -152,12 +152,13 @@ fn midi_behaviour(kind: SynthKind, values: &[f32]) -> Value {
             get("accent_vel")
         ),
         SynthKind::Drums => "level, scaled by Vel Sens".to_string(),
+        SynthKind::Kit => "level (Vel Sens) and brightness (Vel>Cutoff)".to_string(),
         SynthKind::Sampler => "level (Vel>Amp) and filter cutoff (Vel>Cutoff)".to_string(),
         SynthKind::Physical if model == "Bowed" => "bow speed: louder notes with the same tone".to_string(),
         SynthKind::Physical => "level and brightness (Vel>Bright: harder strikes/plucks are brighter)".to_string(),
     };
     let sustain = match kind {
-        SynthKind::Drums => "ignored (drums are one-shots)",
+        SynthKind::Drums | SynthKind::Kit => "ignored (drums are one-shots)",
         SynthKind::Physical if model == "Piano" => "holds notes, like lifting the dampers",
         _ => "holds notes until the pedal is released",
     };
@@ -167,6 +168,12 @@ fn midi_behaviour(kind: SynthKind, values: &[f32]) -> Value {
             .to_string(),
         SynthKind::Acid => {
             "monophonic: a note started while another is held slides to it without retriggering".to_string()
+        }
+        SynthKind::Kit => {
+            let pads: Vec<String> = (0..kit::PADS)
+                .map(|p| format!("{} {}", get(&format!("pad{}_note", p + 1)).round(), kit::PAD_ROLES[p]))
+                .collect();
+            format!("each pad plays on its note: {}", pads.join(", "))
         }
         SynthKind::Sampler if get("mode").round() as usize == 2 => {
             let first = get("base_note").round() as i32;
@@ -180,7 +187,7 @@ fn midi_behaviour(kind: SynthKind, values: &[f32]) -> Value {
         _ => "chromatic".to_string(),
     };
     json!({
-        "pitch_bend": if kind == SynthKind::Drums {
+        "pitch_bend": if matches!(kind, SynthKind::Drums | SynthKind::Kit) {
             format!("retunes the whole kit by up to ±{bend} semitones")
         } else {
             format!("±{bend} semitones (Bend Range)")
@@ -252,6 +259,7 @@ impl App {
             }
             "load_session" => self.tool_load_session(args),
             "load_sample" => self.tool_load_sample(args),
+            "load_kit_folder" => self.tool_load_kit_folder(args),
             "play_notes" => self.tool_play_notes(args),
             "start_recording" => {
                 let name = args.get("name").and_then(Value::as_str);
@@ -322,7 +330,17 @@ impl App {
             "mute": s.mute,
             "solo": s.solo,
             "active_voices": s.voices,
-            "sample": s.sample_path,
+            "sample": if s.kind == SynthKind::Kit { Value::Null } else { json!(s.sample(0).map(|l| &l.path)) },
+            "pads": if s.kind == SynthKind::Kit {
+                json!((0..kit::PADS)
+                    .map(|p| {
+                        let note = s.params[s.kind.index_of(&format!("pad{}_note", p + 1)).expect("pad note")].round();
+                        json!({ "pad": p + 1, "role": kit::PAD_ROLES[p], "note": note, "sample": s.sample(p).map(|l| &l.path) })
+                    })
+                    .collect::<Vec<_>>())
+            } else {
+                Value::Null
+            },
         })
     }
 
@@ -666,19 +684,23 @@ impl App {
     fn tool_load_sample(&mut self, args: &Value) -> ToolResult {
         let i = self.slot_arg(args)?;
         let kind = self.slots[i].as_ref().expect("checked").kind;
-        if !matches!(kind, SynthKind::Granular | SynthKind::Sampler) {
-            return Err(format!("slot {} is {}; samples load into granular or sampler slots", i + 1, kind.long_name()));
+        if kind.sample_slots() == 0 {
+            return Err(format!(
+                "slot {} is {}; samples load into granular, sampler or drum kit slots",
+                i + 1,
+                kind.long_name()
+            ));
         }
-        let raw = str_arg(args, "path")?;
-        let path = match raw.strip_prefix("~/") {
-            Some(rest) => dirs::home_dir().unwrap_or_default().join(rest),
-            None => PathBuf::from(raw),
+        let pad = match (kind, args.get("pad").and_then(Value::as_u64)) {
+            (SynthKind::Kit, Some(p @ 1..=16)) => p as usize - 1,
+            (SynthKind::Kit, _) => return Err("kits need a pad (1-16); see get_rack for the pads".into()),
+            _ => 0,
         };
-        let path = if path.is_relative() { self.storage.samples_dir().join(path) } else { path };
+        let path = self.resolve_path(str_arg(args, "path")?);
         if !path.is_file() {
             return Err(format!("{} doesn't exist", path.display()));
         }
-        self.load_sample(i, &path);
+        self.load_sample(i, pad, &path);
         if let Some(s) = self.status.as_ref().filter(|s| s.error) {
             return Err(s.text.clone());
         }
@@ -687,6 +709,31 @@ impl App {
         let mut out = self.slot_json(i);
         out["result"] = json!(status);
         Ok(out)
+    }
+
+    /// Expand ~ and resolve relative paths against the samples folder.
+    fn resolve_path(&self, raw: &str) -> PathBuf {
+        let path = match raw.strip_prefix("~/") {
+            Some(rest) => dirs::home_dir().unwrap_or_default().join(rest),
+            None => PathBuf::from(raw),
+        };
+        if path.is_relative() { self.storage.samples_dir().join(path) } else { path }
+    }
+
+    fn tool_load_kit_folder(&mut self, args: &Value) -> ToolResult {
+        let i = self.slot_arg(args)?;
+        if self.slots[i].as_ref().expect("checked").kind != SynthKind::Kit {
+            return Err(format!("slot {} isn't a drum kit; add one with add_synth kind \"kit\"", i + 1));
+        }
+        let dir = self.resolve_path(str_arg(args, "path")?);
+        let loaded = self.load_kit_folder(i, &dir)?;
+        self.mcp_note(format!("loaded {} samples into slot {}'s kit", loaded.len(), i + 1));
+        Ok(json!({
+            "loaded": loaded
+                .iter()
+                .map(|(pad, path)| json!({ "pad": pad + 1, "role": kit::PAD_ROLES[*pad], "sample": path }))
+                .collect::<Vec<_>>(),
+        }))
     }
 
     fn tool_play_notes(&mut self, args: &Value) -> ToolResult {
@@ -787,7 +834,7 @@ mod tests {
         app.run_tool("panic", &json!({})).unwrap();
         assert!(app.scheduled.is_empty());
 
-        assert!(app.run_tool("load_sample", &json!({ "slot": 1, "path": "x.wav" })).unwrap_err().contains("granular or sampler"));
+        assert!(app.run_tool("load_sample", &json!({ "slot": 1, "path": "x.wav" })).unwrap_err().contains("drum kit"));
         assert!(app.run_tool("add_synth", &json!({ "kind": "theremin" })).is_err());
         assert!(app.run_tool("bogus", &json!({})).is_err());
         let _ = std::fs::remove_dir_all(&dir);
