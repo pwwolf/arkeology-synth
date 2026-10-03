@@ -57,7 +57,7 @@ const SEGMENTS: [(usize, usize); 12] =
 const DEFAULT_MIX: [f32; 12] = [0.5, 0.3, 0.3, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
 
 pub const DRIVE_MODES: [&str; 4] = ["Soft", "Hard", "Fold", "Tube"];
-pub const FILTER_TYPES: [&str; 3] = ["LowPass", "BandPass", "HighPass"];
+pub const FILTER_TYPES: [&str; 5] = ["LowPass", "BandPass", "HighPass", "LowPass 24", "HighPass 24"];
 pub const TREMOLO_SHAPES: [&str; 2] = ["Sine", "Square"];
 
 impl FxKind {
@@ -450,6 +450,10 @@ impl Drive {
 
 struct FilterFx {
     mode: FilterMode,
+    /// 24 dB/oct: a second state-variable stage in series.
+    steep: bool,
+    svf2: [Svf; 2],
+    coefs2: SvfCoefs,
     cutoff: f32,
     resonance: f32,
     rate: f32,
@@ -462,11 +466,13 @@ struct FilterFx {
 
 impl FilterFx {
     fn set(&mut self, p: &[f32], sr: f32) {
-        self.mode = match p[0].round() as usize {
+        let kind = p[0].round() as usize;
+        self.mode = match kind {
             1 => FilterMode::BandPass,
-            2 => FilterMode::HighPass,
+            2 | 4 => FilterMode::HighPass,
             _ => FilterMode::LowPass,
         };
+        self.steep = kind >= 3;
         self.cutoff = p[1];
         self.resonance = p[2];
         self.rate = p[3] / sr;
@@ -478,10 +484,21 @@ impl FilterFx {
         for i in 0..l.len() {
             if i % 8 == 0 {
                 let oct = self.depth * 3.0 * sin_cycles(self.phase);
-                self.coefs = SvfCoefs::new(self.mode, self.cutoff * oct.exp2(), self.resonance, self.sr);
+                let fc = self.cutoff * oct.exp2();
+                self.coefs = SvfCoefs::new(self.mode, fc, self.resonance, self.sr);
+                // In 24 dB mode only the second stage resonates, so the peak
+                // matches the 12 dB mode instead of doubling.
+                if self.steep {
+                    self.coefs = SvfCoefs::new(self.mode, fc, 0.0, self.sr);
+                    self.coefs2 = SvfCoefs::new(self.mode, fc, self.resonance, self.sr);
+                }
             }
             l[i] = self.svf[0].process(&self.coefs, l[i]);
             r[i] = self.svf[1].process(&self.coefs, r[i]);
+            if self.steep {
+                l[i] = self.svf2[0].process(&self.coefs2, l[i]);
+                r[i] = self.svf2[1].process(&self.coefs2, r[i]);
+            }
             self.phase = (self.phase + self.rate).fract();
         }
     }
@@ -662,6 +679,9 @@ impl FxUnit {
             FxKind::Drive => Dsp::Drive(Drive { mode: 0, pre: 1.0, out: 1.0, tone: 0.0, lp: [0.0; 2], dc: [(0.0, 0.0); 2] }),
             FxKind::Filter => Dsp::Filter(FilterFx {
                 mode: FilterMode::LowPass,
+                steep: false,
+                svf2: [Svf::default(); 2],
+                coefs2: SvfCoefs::default(),
                 cutoff: 1000.0,
                 resonance: 0.0,
                 rate: 0.0,
@@ -827,6 +847,18 @@ mod tests {
             let (l, _) = run(&mut u, sine(freq, 0.1), 48_000);
             let gain_db = 20.0 * (rms(&l[24_000..]) / (0.1 / 2f32.sqrt())).log10();
             assert!((gain_db - 12.0).abs() < 1.0, "{key}: {gain_db} dB");
+        }
+    }
+
+    #[test]
+    fn steep_high_pass_cuts_twice_as_hard() {
+        // One octave below a 200 Hz cutoff with resonance 0 (Q = 0.5 per
+        // stage): |H| = 0.25 / 1.25 -> -14 dB per stage, so -28 dB for two.
+        for (kind, expected_db) in [(2.0, -14.0), (4.0, -28.0)] {
+            let mut u = unit(FxKind::Filter, &[("filter_type", kind), ("filter_cutoff", 200.0), ("filter_resonance", 0.0)]);
+            let (l, _) = run(&mut u, sine(100.0, 0.1), 48_000);
+            let db = 20.0 * (rms(&l[24_000..]) / (0.1 / 2f32.sqrt())).log10();
+            assert!((db - expected_db).abs() < 1.0, "type {kind}: {db} dB");
         }
     }
 

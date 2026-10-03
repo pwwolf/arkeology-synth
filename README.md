@@ -104,7 +104,7 @@ controller or a DAW/sequencer.
   | Flanger | rate, depth, feedback (±) |
   | Phaser | 6-stage; rate, depth, feedback |
   | Drive | soft, hard, foldback or tube; drive, tone, output |
-  | Filter | low/band/high-pass with LFO (auto-wah) |
+  | Filter | low/band/high-pass (12 or 24 dB/oct) with LFO (auto-wah) |
   | EQ | 3-band: low shelf, sweepable mid, high shelf |
   | Compressor | threshold, ratio, attack, release, makeup |
   | Crusher | bit depth and sample-rate reduction |
@@ -121,6 +121,7 @@ controller or a DAW/sequencer.
   Bells, Glass Bell, Steel Pan, Harpsichord, FM Clav, Saw Lead, FM Flute, Ice Pad, Log Drum,
   Marimba, Organ, Brass. Granular: Frozen Choir, Vowel Morph, Glass Shimmer, Bowed Glass, Saw
   Cloud, Grain Bass, Stutter Pluck, Reverse Swell, Rain, Lo-Fi Grains, Choir Cloud, Shimmer Pad.
+  Bass: DnB Sub and Reese Mid (layer them on one channel), Reese, Neuro Growl, Wobble Bass.
   Plus Warm Pad, Poly Brass, Juno Strings, Supersaw Lead,
   Poly Stab, Soft Bass, Grand/Upright/Felt/Honky-Tonk Piano, Solo Violin, Viola, Cello, Double Bass, String Section,
   Nylon/Steel Guitar, Harp, Clav, Koto, Modelled Marimba, Vibraphone, Xylophone, Church Bell,
