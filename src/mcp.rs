@@ -319,6 +319,20 @@ User patches win over factory patches with the same name.",
             },
         },
         {
+            "name": "new_rack",
+            "description": "Replace the whole rack with an empty one or the starter rack (E.Piano, Choir Cloud, \
+Acid Classic, 808 Kit). Resets master settings and MIDI mappings; MIDI ports and any recording carry on. \
+Pass save_as to keep the current rack as a session first.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "template": { "type": "string", "enum": ["empty", "starter"], "default": "empty" },
+                    "save_as": { "type": "string", "description": "Session name to save the current rack under first" }
+                }
+            },
+            "annotations": { "destructiveHint": true },
+        },
+        {
             "name": "list_sessions",
             "description": "Saved sessions (whole-rack snapshots).",
             "inputSchema": { "type": "object", "properties": {} },

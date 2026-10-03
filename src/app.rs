@@ -68,6 +68,9 @@ pub struct FileEntry {
 pub enum Popup {
     Help,
     AddSynth { cursor: usize },
+    /// Start a new rack: `cursor` picks the template, `save` keeps the
+    /// current rack as a session first.
+    NewRack { cursor: usize, save: bool },
     ConfirmRemove { slot: usize },
     Text { title: String, hint: String, input: String, action: TextAction },
     Patches { all: Vec<PatchEntry>, filter: Option<SynthKind>, cursor: usize },
@@ -626,6 +629,39 @@ impl App {
         }
     }
 
+    /// Replace the rack with an empty one or the starter rack, optionally
+    /// saving the current rack as a session first. Synths, master settings
+    /// and MIDI mappings reset; MIDI port connections and recording carry on.
+    pub fn new_rack(&mut self, starter: bool, save_as: Option<String>) -> Result<Option<PathBuf>, String> {
+        let saved = match save_as {
+            Some(name) => Some(self.storage.save_session(&name, &self.session()).map_err(|e| format!("{e:#}"))?),
+            None => None,
+        };
+        self.all_keyboard_notes_off();
+        self.scheduled.clear();
+        self.learning = None;
+        // An empty session is exactly a blank rack with default master settings.
+        self.apply_session(Session::default());
+        if starter {
+            self.default_rack();
+        }
+        let what = if starter { "starter rack" } else { "empty rack" };
+        match &saved {
+            Some(path) => self.info(format!("new {what}; previous rack saved as {}", path.display())),
+            None => self.info(format!("new {what}")),
+        }
+        Ok(saved)
+    }
+
+    /// Default name for saving the current rack before replacing it.
+    pub fn timestamped_rack_name() -> String {
+        chrono::Local::now().format("Rack %Y-%m-%d %H-%M").to_string()
+    }
+
+    pub fn has_synths(&self) -> bool {
+        self.slots.iter().any(Option::is_some)
+    }
+
     pub fn apply_session(&mut self, session: Session) {
         self.send(Command::Panic);
         for i in 0..MAX_SLOTS {
@@ -1028,6 +1064,7 @@ impl App {
                 self.info(format!("keyboard play mode: a-' play notes, z/x octave, c/v velocity, Esc exits{how}"));
             }
             KeyCode::Char('a') => self.popup = Some(Popup::AddSynth { cursor: 0 }),
+            KeyCode::Char('N') => self.popup = Some(Popup::NewRack { cursor: 0, save: self.has_synths() }),
             KeyCode::Char('R') => self.toggle_recording(),
             KeyCode::Char('l') => {
                 if slot.is_none() {
@@ -1232,6 +1269,24 @@ impl App {
         let Some(mut popup) = self.popup.take() else { return };
         let keep = match &mut popup {
             Popup::Help => false,
+            Popup::NewRack { cursor, save } => match key.code {
+                KeyCode::Up | KeyCode::Down => {
+                    *cursor = 1 - (*cursor).min(1);
+                    true
+                }
+                KeyCode::Char('s') => {
+                    *save = !*save;
+                    true
+                }
+                KeyCode::Enter => {
+                    let save_as = save.then(App::timestamped_rack_name);
+                    if let Err(e) = self.new_rack(*cursor == 1, save_as) {
+                        self.error(e);
+                    }
+                    false
+                }
+                _ => key.code != KeyCode::Esc,
+            },
             Popup::AddSynth { cursor } => match key.code {
                 KeyCode::Up => {
                     *cursor = cursor.saturating_sub(1);
@@ -1817,6 +1872,46 @@ mod tests {
 
         running.store(false, Relaxed);
         audio.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn new_rack_resets_after_saving_the_old_one() {
+        let dir = temp_dir("new-rack");
+        let mut app = test_app(&dir);
+        app.default_rack();
+        app.set_param(Target::Master, master::VOLUME, 0.3);
+        app.set_param(Target::Master, master::FX_BASE + fx::TYPE, 1.0); // master delay
+        app.cc_map.push(CcMapping { channel: 0, cc: 74, slot: Some(0), param: "volume".into() });
+
+        // N defaults to saving first when the rack has synths.
+        app.on_key(key(KeyCode::Char('N')));
+        assert!(matches!(app.popup, Some(Popup::NewRack { cursor: 0, save: true })));
+        let s = screen(&mut app, 120, 40);
+        assert!(s.contains("Starter rack") && s.contains("save current rack"), "{s}");
+        app.on_key(key(KeyCode::Enter)); // empty rack
+        assert!(!app.has_synths() && app.cc_map.is_empty());
+        assert_eq!(app.master[master::VOLUME], master::PARAMS[master::VOLUME].default);
+        assert_eq!(app.master[master::FX_BASE + fx::TYPE], 0.0);
+        let saved = app.storage.list_sessions();
+        assert_eq!(saved.len(), 1);
+        let old: Session = read_json(&saved[0]).unwrap();
+        assert_eq!(old.slots.len(), 4);
+        assert_eq!(old.cc_map.len(), 1);
+
+        // Starter template, without saving the (empty) rack.
+        app.on_key(key(KeyCode::Char('N')));
+        assert!(matches!(app.popup, Some(Popup::NewRack { save: false, .. })), "nothing to save");
+        app.on_key(key(KeyCode::Down));
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.rack_rows().len(), 5);
+        assert_eq!(app.storage.list_sessions().len(), 1);
+
+        // MCP: save under a name, start empty.
+        let r = app.run_tool("new_rack", &serde_json::json!({ "template": "empty", "save_as": "before" })).unwrap();
+        assert!(r["slots"].as_array().unwrap().is_empty());
+        assert!(r["previous_rack_saved_as"].as_str().unwrap().ends_with("sessions/before.json"));
+        assert!(app.run_tool("new_rack", &serde_json::json!({ "template": "huge" })).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

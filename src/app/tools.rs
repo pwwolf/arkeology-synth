@@ -224,6 +224,19 @@ impl App {
             "list_patches" => self.tool_list_patches(args),
             "load_patch" => self.tool_load_patch(args),
             "save_patch" => self.tool_save_patch(args),
+            "new_rack" => {
+                let starter = match args.get("template").and_then(Value::as_str).unwrap_or("empty") {
+                    "empty" => false,
+                    "starter" => true,
+                    other => return Err(format!("template must be \"empty\" or \"starter\", got {other:?}")),
+                };
+                let save_as = args.get("save_as").and_then(Value::as_str).map(str::to_string);
+                let saved = self.new_rack(starter, save_as)?;
+                self.mcp_note(format!("new {} rack", if starter { "starter" } else { "empty" }));
+                let mut rack = self.rack_json();
+                rack["previous_rack_saved_as"] = json!(saved);
+                Ok(rack)
+            }
             "list_sessions" => Ok(json!(
                 self.storage
                     .list_sessions()

@@ -165,7 +165,7 @@ claude mcp add --transport http arkeology http://127.0.0.1:7878/mcp
 | `set_params` | set parameters on a slot or `"master"`; values can be numbers or strings like `"250ms"`, `"2.5k"`, `"40%"`, `"c4"`, `"LowPass"` |
 | `add_synth`, `remove_synth`, `set_slot` | build the rack: synth type, MIDI channel, mute/solo, name |
 | `list_patches`, `load_patch`, `save_patch` | browse factory and user patches; save the current sound |
-| `list_sessions`, `load_session`, `save_session` | whole-rack snapshots |
+| `list_sessions`, `load_session`, `save_session`, `new_rack` | whole-rack snapshots; start an empty or starter rack |
 | `load_sample` | load a WAV/FLAC into a granular synth or sampler (with root-note detection) |
 | `play_notes`, `panic` | audition a sound through your speakers; stop everything |
 | `start_recording`, `stop_recording` | record the output to a WAV |
@@ -187,6 +187,7 @@ instances) or `--no-mcp` to turn it off.
 | `a` | add a synth |
 | `l` / `w` | browse/load patches (factory and yours; `tab` filters by synth, `space` auditions) / write the selected synth's patch |
 | `L` / `W` | load / write a session |
+| `N` | new rack: empty or starter (by default the current rack is saved as a session first) |
 | `f` | load a WAV or FLAC into a granular synth or sampler |
 | `r` `m` `s` | rename, mute, solo |
 | `c` / `C` | MIDI-learn a CC for the selected parameter / clear it |

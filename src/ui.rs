@@ -668,6 +668,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             ("a", "add"),
             ("l/w", "patch"),
             ("L/W", "session"),
+            ("N", "new"),
             ("k", "play"),
             ("p", "ports"),
             ("?", "help"),
@@ -722,6 +723,18 @@ fn list_popup(f: &mut Frame, area: Rect, title: &str, items: Vec<ListItem>, curs
 fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
     match popup {
         Popup::Help => draw_help(f, app, area),
+        Popup::NewRack { cursor, save } => {
+            let items = vec![
+                ListItem::new("Empty rack"),
+                ListItem::new("Starter rack: E.Piano, Choir Cloud, Acid Classic, 808 Kit"),
+            ];
+            let foot = if *save {
+                format!("[x] save current rack as \"{}\" first · s: toggle · enter · esc", App::timestamped_rack_name())
+            } else {
+                "[ ] don't save the current rack · s: toggle · enter · esc".to_string()
+            };
+            list_popup(f, area, "New rack (replaces synths, master settings and MIDI mappings)", items, *cursor, &foot);
+        }
         Popup::AddSynth { cursor } => {
             let items = SynthKind::ALL
                 .iter()
@@ -856,6 +869,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         h("Patches & sessions"),
         k("l / w", "load / write the selected synth's patch"),
         k("L / W", "load / write the whole rack as a session"),
+        k("N", "new rack: empty or starter (saves the current one first by default)"),
         k("f", "load a WAV or FLAC into a granular synth or sampler"),
         h("Playing"),
         k("k", "play the selected synth from the computer keyboard"),
