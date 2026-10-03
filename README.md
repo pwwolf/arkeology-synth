@@ -105,8 +105,11 @@ controller or a DAW/sequencer.
 - Every slot has volume, pan, reverb send, transpose and bend range. The polyphonic synths
   also have voice count and glide.
   The master bus has a stereo reverb and a soft-clipping drive stage.
-- Built-in patches for every engine: FM Strings, E.Piano, Glass Bell, Marimba, Soft Pad,
-  Brass, Organ, Mono Lead, Choir Cloud, Shimmer Pad, Warm Pad, Poly Brass, Juno Strings, Supersaw Lead,
+- Built-in patches for every engine. FM: E.Piano, Bright EP, DX Bass, FM Strings, Tubular
+  Bells, Glass Bell, Steel Pan, Harpsichord, FM Clav, Saw Lead, FM Flute, Ice Pad, Log Drum,
+  Marimba, Organ, Brass. Granular: Frozen Choir, Vowel Morph, Glass Shimmer, Bowed Glass, Saw
+  Cloud, Grain Bass, Stutter Pluck, Reverse Swell, Rain, Lo-Fi Grains, Choir Cloud, Shimmer Pad.
+  Plus Warm Pad, Poly Brass, Juno Strings, Supersaw Lead,
   Poly Stab, Soft Bass, Grand/Upright/Felt/Honky-Tonk Piano, Solo Violin, Viola, Cello, Double Bass, String Section,
   Nylon/Steel Guitar, Harp, Clav, Koto, Modelled Marimba, Vibraphone, Xylophone, Church Bell,
   Kalimba, five acid basses, 808/909/Lo-Fi kits,

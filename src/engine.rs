@@ -573,4 +573,29 @@ mod tests {
         assert!(rms(window(1.0)) > 0.005, "no echo tail: {}", rms(window(1.0)));
         assert!(rms(window(0.2)) < 1e-4, "echo arrived early");
     }
+
+    /// Factory patches for the melodic engines must neither vanish nor slam
+    /// the master clipper when playing a chord.
+    #[test]
+    fn factory_patch_levels_are_balanced() {
+        crate::dsp::init_tables();
+        let sr = 48_000.0;
+        let builtins = sample::builtins();
+        let kinds = [SynthKind::Fm, SynthKind::Granular, SynthKind::Analog];
+        for p in crate::patch::factory_patches().into_iter().filter(|p| kinds.contains(&p.kind)) {
+            let cmds: CommandQueue = Arc::new(ArrayQueue::new(256));
+            let garbage: GarbageQueue = Arc::new(ArrayQueue::new(64));
+            let mut e = Engine::new(sr, cmds.clone(), garbage, Arc::new(Telemetry::default()));
+            let slot = Slot::new(p.kind, p.values(), Some(0), sr, &builtins, None);
+            cmds.push(Command::InstallSlot { slot: 0, data: slot }).ok();
+            for n in [48u8, 52, 55, 60] {
+                cmds.push(Command::NoteOn { slot: 0, note: n, velocity: 0.8 }).ok();
+            }
+            let mut out = vec![0.0; 2 * 72_000];
+            e.process(&mut out, 2);
+            let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            assert!(out.iter().all(|v| v.is_finite()), "{}", p.name);
+            assert!((0.12..0.85).contains(&peak), "{}: chord peak {peak}", p.name);
+        }
+    }
 }
