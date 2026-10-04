@@ -8,6 +8,7 @@ pub mod granular;
 pub mod kit;
 pub mod physical;
 pub mod sampler;
+pub mod tonewheel;
 
 use std::sync::Arc;
 
@@ -32,13 +33,15 @@ pub enum SynthKind {
     Analog,
     Physical,
     Kit,
+    Tonewheel,
 }
 
 impl SynthKind {
-    pub const ALL: [SynthKind; 8] = [
+    pub const ALL: [SynthKind; 9] = [
         SynthKind::Fm,
         SynthKind::Analog,
         SynthKind::Physical,
+        SynthKind::Tonewheel,
         SynthKind::Granular,
         SynthKind::Acid,
         SynthKind::Drums,
@@ -70,6 +73,7 @@ impl SynthKind {
             SynthKind::Sampler => "SMP",
             SynthKind::Analog => "ANA",
             SynthKind::Physical => "PHY",
+            SynthKind::Tonewheel => "ORG",
         }
     }
 
@@ -83,6 +87,7 @@ impl SynthKind {
             SynthKind::Sampler => "Sampler (classic / one-shot / slice)",
             SynthKind::Analog => "Analog (poly subtractive)",
             SynthKind::Physical => "Physical (string / mallet models)",
+            SynthKind::Tonewheel => "Tonewheel organ (drawbars + rotary)",
         }
     }
 
@@ -96,6 +101,7 @@ impl SynthKind {
             SynthKind::Sampler => &sampler::PARAMS,
             SynthKind::Analog => &analog::PARAMS,
             SynthKind::Physical => &physical::PARAMS,
+            SynthKind::Tonewheel => &tonewheel::PARAMS,
         }
     }
 
@@ -432,6 +438,7 @@ pub enum Instrument {
     Sampler(Box<sampler::SamplerSynth>),
     Analog(Box<analog::AnalogSynth>),
     Physical(Box<physical::PhysicalSynth>),
+    Tonewheel(Box<tonewheel::TonewheelSynth>),
 }
 
 impl Instrument {
@@ -450,6 +457,9 @@ impl Instrument {
             SynthKind::Physical => {
                 Instrument::Physical(Box::new(physical::PhysicalSynth::new(sample_rate)))
             }
+            SynthKind::Tonewheel => {
+                Instrument::Tonewheel(Box::new(tonewheel::TonewheelSynth::new(sample_rate)))
+            }
             SynthKind::Sampler => Instrument::Sampler(Box::new(sampler::SamplerSynth::new(
                 sample_rate,
                 builtins.clone(),
@@ -467,6 +477,7 @@ impl Instrument {
             Instrument::Sampler(s) => s.update(params),
             Instrument::Analog(s) => s.update(params),
             Instrument::Physical(s) => s.update(params),
+            Instrument::Tonewheel(s) => s.update(params),
         }
     }
 
@@ -480,6 +491,7 @@ impl Instrument {
             Instrument::Sampler(s) => s.note_on(note, velocity),
             Instrument::Analog(s) => s.poly.note_on(note, velocity, &s.shared),
             Instrument::Physical(s) => s.poly.note_on(note, velocity, &s.shared),
+            Instrument::Tonewheel(s) => s.note_on(note, velocity),
         }
     }
 
@@ -493,6 +505,7 @@ impl Instrument {
             Instrument::Sampler(s) => f(&mut s.poly),
             Instrument::Analog(s) => f(&mut s.poly),
             Instrument::Physical(s) => f(&mut s.poly),
+            Instrument::Tonewheel(s) => f(s.as_mut()),
         }
     }
 
@@ -532,7 +545,8 @@ impl Instrument {
             | Instrument::Acid(_)
             | Instrument::Drums(_)
             | Instrument::Analog(_)
-            | Instrument::Physical(_) => sample,
+            | Instrument::Physical(_)
+            | Instrument::Tonewheel(_) => sample,
         }
     }
 
@@ -546,6 +560,7 @@ impl Instrument {
             Instrument::Sampler(s) => s.render(l, r),
             Instrument::Analog(s) => s.render(l, r),
             Instrument::Physical(s) => s.render(l, r),
+            Instrument::Tonewheel(s) => s.render(l, r),
         }
     }
 }

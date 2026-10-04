@@ -25,7 +25,7 @@ fn kind_name(kind: SynthKind) -> Value {
 
 fn parse_kind(v: &Value) -> Result<SynthKind, String> {
     serde_json::from_value(v.clone()).map_err(|_| {
-        format!("unknown synth type {v}; use one of fm, analog, physical, granular, acid, drums, kit, sampler")
+        format!("unknown synth type {v}; use one of fm, analog, physical, tonewheel, granular, acid, drums, kit, sampler")
     })
 }
 
@@ -155,6 +155,9 @@ fn midi_behaviour(kind: SynthKind, values: &[f32]) -> Value {
         SynthKind::Physical if model == "Bowed" => {
             "adds bow pressure (force) for swells".to_string()
         }
+        SynthKind::Tonewheel => {
+            "rotary speaker fast while above halfway (slow below, unless Speed is Fast)".to_string()
+        }
         _ => "no effect".to_string(),
     };
     let velocity = match kind {
@@ -170,6 +173,7 @@ fn midi_behaviour(kind: SynthKind, values: &[f32]) -> Value {
         SynthKind::Sampler => "level (Vel>Amp) and filter cutoff (Vel>Cutoff)".to_string(),
         SynthKind::Physical if model == "Bowed" => "bow speed: louder notes with the same tone".to_string(),
         SynthKind::Physical => "level and brightness (Vel>Bright: harder strikes/plucks are brighter)".to_string(),
+        SynthKind::Tonewheel => "ignored, like a real organ (MIDI-learn a CC to Volume for a swell pedal)".to_string(),
     };
     let sustain = match kind {
         SynthKind::Drums | SynthKind::Kit => "ignored (drums are one-shots)",
@@ -1202,6 +1206,23 @@ mod tests {
             .clone();
         assert_eq!(fx2["applies_when"], "fx2_type is Reverb");
         assert!(full["midi"]["notes"].as_str().unwrap().contains("36 kick"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tonewheel_over_mcp() {
+        let dir = temp_dir("mcp-organ");
+        let mut app = test_app(&dir);
+        app.run_tool("add_synth", &json!({ "kind": "tonewheel" }))
+            .unwrap();
+        let d = app
+            .run_tool("describe_synth", &json!({ "kind": "tonewheel" }))
+            .unwrap()
+            .to_string();
+        assert!(
+            d.contains("db_16") && d.contains("rotary_speed") && d.contains("rotary speaker fast"),
+            "{d}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

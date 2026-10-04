@@ -241,6 +241,7 @@ fn draw_rack(f: &mut Frame, app: &App, area: Rect) {
                         SynthKind::Sampler => SAMPLER_COLOR,
                         SynthKind::Analog => Color::Rgb(255, 150, 90),
                         SynthKind::Physical => Color::Rgb(205, 170, 120),
+                        SynthKind::Tonewheel => Color::Rgb(200, 140, 255),
                     };
                     let name: String = s.name.chars().take(13).collect();
                     let mut spans = vec![

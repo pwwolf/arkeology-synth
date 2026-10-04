@@ -35,6 +35,18 @@ controller or a DAW/sequencer.
     The very top of the violin range (above ~E6) is less reliable.
   - Every element's phase delay is compensated, so strings, mallets and pianos measure
     within a few cents of pitch across the keyboard.
+- **Tonewheel organ**: a drawbar organ with a rotary speaker.
+  - Nine drawbars (16' to 1', 0–8, 3 dB per step) mix free-running sine "tonewheels".
+    Pitches above the top wheel fold back an octave, as on the real instrument.
+  - Percussion (second or third harmonic, soft/normal, fast/slow decay) is single-trigger:
+    it sounds only when no other key is held, so legato playing stays smooth.
+  - Key click, scanner vibrato and chorus (V1–V3, C1–C3) and tube-style overdrive.
+  - The rotary speaker splits at 800 Hz into a horn and a drum rotor. Each rotor has its
+    own Doppler shift, amplitude modulation and inertia, and is heard from two
+    microphones for stereo. The light horn changes speed in under a second, the heavy
+    drum takes a few. **The mod wheel switches it to fast**, or set Speed to Fast.
+  - Velocity is ignored, as on a real organ. For a swell pedal, MIDI-learn a CC to Volume.
+  - Factory patches: Jazz, Gospel, Rock, Ballad, Full and Church Organ.
 - **Granular**: a grain cloud per voice over a WAV/FLAC file or one of five built-in sources
   (Choir, Glass, Saw, Pluck, Noise). Controls for position, spray, scan speed, size,
   density, jitter, pitch spray, stereo spread, reverse probability and window shape, plus
@@ -274,7 +286,7 @@ tables, and those tables also drive the generic TUI editor and patch serialisati
 |------|----------|
 | `src/engine.rs` | slots, MIDI routing, mixer, telemetry |
 | `src/synth/mod.rs` | `SynthKind`, common params, the `Poly`/`Voice` voice allocator (stealing, sustain, glide) |
-| `src/synth/fm.rs`, `analog.rs`, `physical.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `kit.rs`, `sampler.rs` | the eight engines |
+| `src/synth/fm.rs`, `analog.rs`, `physical.rs`, `tonewheel.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `kit.rs`, `sampler.rs` | the nine engines |
 | `src/sample.rs` | WAV/FLAC loading, built-in sources, waveform overview and onset detection |
 | `src/dsp.rs`, `src/reverb.rs` | oscillator table, ADSR, SVF filter, Freeverb |
 | `src/app.rs`, `src/ui.rs` | TUI state, input and rendering |

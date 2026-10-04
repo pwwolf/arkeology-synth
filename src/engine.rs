@@ -665,7 +665,12 @@ mod tests {
         crate::dsp::init_tables();
         let sr = 48_000.0;
         let builtins = sample::builtins();
-        let kinds = [SynthKind::Fm, SynthKind::Granular, SynthKind::Analog];
+        let kinds = [
+            SynthKind::Fm,
+            SynthKind::Granular,
+            SynthKind::Analog,
+            SynthKind::Tonewheel,
+        ];
         for p in crate::patch::factory_patches()
             .into_iter()
             .filter(|p| kinds.contains(&p.kind))
