@@ -88,6 +88,14 @@ controller or a DAW/sequencer.
 
     Load them as the factory patches **808 Sampled**, **909 Sampled**, **Lo-Fi Sampled**,
     **Hybrid Kit** and **Hand Percussion**. Use `--render-kits` to re-render them.
+  - **Recorded acoustic kits** come from the
+    [Versilian Community Sample Library](https://github.com/sgossner/VCSL) (CC0, public
+    domain). Run `mise run fetch-kits` (or `--fetch-kits`) once to download about 12 MB of
+    curated one-shots from a pinned VCSL commit. You then get **VCSL Acoustic Kit**
+    (snare, hats, stick toms, cymbals, cross-stick, rimshot…) and **VCSL Percussion**
+    (congas, bongos, agogôs, claves, woodblocks, cabasa, shaker, triangle…), both on
+    General MIDI notes. VCSL is an orchestral library, so the kick is a concert bass drum,
+    shortened to sit in a kit. The patch browser tags these kits "download" until fetched.
 - **Sampler**: plays a WAV or FLAC file (mono or stereo) or a built-in source, with a waveform view
   above its parameters. Three modes:
   - **Classic**: pitched across the keyboard from a Root Note, with an optional

@@ -282,6 +282,63 @@ pub fn load_file(path: &Path) -> Result<Sample> {
 type Decoded = (Vec<f32>, usize, f32);
 
 fn decode_wav(path: &Path) -> Result<Decoded> {
+    match decode_wav_hound(path) {
+        Ok(d) => Ok(d),
+        // hound is strict about header details (e.g. 20-byte fmt chunks);
+        // fall back to a lenient chunk walker before giving up.
+        Err(strict) => decode_wav_lenient(path).map_err(|_| strict),
+    }
+}
+
+/// Minimal, tolerant RIFF/WAVE reader: integer PCM (8/16/24/32-bit), float
+/// (32/64-bit), any fmt chunk size >= 16, and WAVE_FORMAT_EXTENSIBLE.
+fn decode_wav_lenient(path: &Path) -> Result<Decoded> {
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        bail!("not a RIFF/WAVE file");
+    }
+    let u16_at = |i: usize| u16::from_le_bytes([bytes[i], bytes[i + 1]]);
+    let u32_at = |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
+    let mut fmt: Option<(u16, usize, u32, u16)> = None;
+    let mut data: Option<&[u8]> = None;
+    let mut i = 12;
+    while i + 8 <= bytes.len() {
+        let id = &bytes[i..i + 4];
+        let size = u32_at(i + 4) as usize;
+        let body = &bytes[i + 8..(i + 8 + size).min(bytes.len())];
+        if id == b"fmt " && body.len() >= 16 {
+            let mut format = u16_at(i + 8);
+            if format == 0xFFFE && body.len() >= 26 {
+                // Extensible: the real format is the start of the sub-format GUID.
+                format = u16_at(i + 8 + 24);
+            }
+            fmt = Some((format, u16_at(i + 10).max(1) as usize, u32_at(i + 12), u16_at(i + 22)));
+        } else if id == b"data" {
+            data = Some(body);
+        }
+        i += 8 + size + (size & 1);
+    }
+    let (format, channels, sample_rate, bits) = fmt.context("no fmt chunk")?;
+    let data = data.context("no data chunk")?;
+    let samples: Vec<f32> = match (format, bits) {
+        (1, 8) => data.iter().map(|&b| (b as f32 - 128.0) / 128.0).collect(),
+        (1, 16) => data.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32_768.0).collect(),
+        (1, 24) => data
+            .chunks_exact(3)
+            .map(|c| (((c[2] as i32) << 24 | (c[1] as i32) << 16 | (c[0] as i32) << 8) >> 8) as f32 / 8_388_608.0)
+            .collect(),
+        (1, 32) => data.chunks_exact(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / 2_147_483_648.0).collect(),
+        (3, 32) => data.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect(),
+        (3, 64) => data
+            .chunks_exact(8)
+            .map(|c| f64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]) as f32)
+            .collect(),
+        _ => bail!("unsupported WAV format {format} / {bits}-bit"),
+    };
+    Ok((samples, channels, sample_rate as f32))
+}
+
+fn decode_wav_hound(path: &Path) -> Result<Decoded> {
     let mut reader = hound::WavReader::open(path).with_context(|| format!("opening {}", path.display()))?;
     let spec = reader.spec();
     let interleaved: Vec<f32> = match spec.sample_format {
@@ -559,6 +616,37 @@ mod tests {
         }
         let noise = b.iter().find(|s| s.name == "Noise").unwrap();
         assert_eq!(noise.detect_pitch(), None);
+    }
+
+    /// WAVs with a 20-byte fmt chunk (valid, but rejected by hound) still load.
+    #[test]
+    fn lenient_reader_handles_odd_fmt_chunks() {
+        let path = std::env::temp_dir().join(format!("arkeology-oddfmt-{}.wav", std::process::id()));
+        let frames: Vec<i16> = (0..400).map(|i| ((i as f32 * 0.05).sin() * 20_000.0) as i16).collect();
+        let mut b = Vec::new();
+        let data_len = (frames.len() * 2) as u32;
+        b.extend(b"RIFF");
+        b.extend((4 + 8 + 20 + 8 + data_len).to_le_bytes());
+        b.extend(b"WAVEfmt ");
+        b.extend(20u32.to_le_bytes());
+        b.extend(1u16.to_le_bytes()); // PCM
+        b.extend(1u16.to_le_bytes()); // mono
+        b.extend(44_100u32.to_le_bytes());
+        b.extend((44_100u32 * 2).to_le_bytes());
+        b.extend(2u16.to_le_bytes());
+        b.extend(16u16.to_le_bytes());
+        b.extend([0u8; 4]); // cbSize + padding
+        b.extend(b"data");
+        b.extend(data_len.to_le_bytes());
+        for f in &frames {
+            b.extend(f.to_le_bytes());
+        }
+        std::fs::write(&path, &b).unwrap();
+        assert!(hound::WavReader::open(&path).is_err(), "hound accepts it now; test is moot");
+        let s = load_file(&path).unwrap();
+        assert_eq!(s.len(), 400);
+        assert_eq!(s.sample_rate, 44_100.0);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

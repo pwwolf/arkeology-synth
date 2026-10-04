@@ -2050,6 +2050,8 @@ pub fn factory_patches() -> Vec<Patch> {
     ];
     // Sample kits rendered from the engines (see kitgen).
     patches.extend(crate::kitgen::factory_kit_patches());
+    // Acoustic kits from VCSL (CC0), downloaded on request with --fetch-kits.
+    patches.extend(crate::vcsl::factory_kit_patches());
     patches
 }
 

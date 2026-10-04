@@ -480,13 +480,24 @@ impl App {
         sample_paths: Vec<Option<PathBuf>>,
         mute: bool,
         solo: bool,
-    ) {
+    ) -> bool {
         let mut samples: Vec<Option<LoadedSample>> = (0..kind.sample_slots()).map(|_| None).collect();
         let mut failed = Vec::new();
+        let mut missing_hint = None;
         for (i, path) in sample_paths.into_iter().enumerate().take(samples.len()) {
             let Some(path) = path else { continue };
             // Relative paths (factory kits) live in the samples folder.
+            let relative = path.clone();
             let path = if path.is_relative() { self.storage.samples_dir().join(path) } else { path };
+            if relative.is_relative() && !path.exists() {
+                let fix = if crate::vcsl::is_vcsl_path(&relative) {
+                    "download it with `mise run fetch-kits` (or --fetch-kits)"
+                } else {
+                    "re-render the built-in kits with --render-kits"
+                };
+                missing_hint = Some(fix);
+                continue;
+            }
             match sample::load_file(&path) {
                 Ok(s) => samples[i] = Some(LoadedSample { path, sample: Arc::new(s) }),
                 Err(e) => failed.push(format!("{e:#}")),
@@ -495,6 +506,10 @@ impl App {
         if !failed.is_empty() {
             self.error(format!("sample: {}", failed.join("; ")));
         }
+        if let Some(fix) = &missing_hint {
+            self.error(format!("this kit's samples aren't on disk yet: {fix}"));
+        }
+        let clean = failed.is_empty() && missing_hint.is_none();
         let arcs: Vec<Option<Arc<Sample>>> = samples.iter().map(|s| s.as_ref().map(|s| s.sample.clone())).collect();
         let data = Slot::new(kind, values.clone(), channel, self.sample_rate, &self.builtins, &arcs)
             .with_flags(mute, solo);
@@ -513,6 +528,7 @@ impl App {
             notes_seen,
             activity: None,
         });
+        clean
     }
 
     pub fn add_synth(&mut self, kind: SynthKind) {
@@ -524,7 +540,7 @@ impl App {
         let drums = matches!(kind, SynthKind::Drums | SynthKind::Kit);
         let channel = if drums && ch10_free { Some(9) } else { self.free_channel() };
         let name = format!("{} {}", kind.label(), index + 1);
-        self.install(index, kind, &name, kind.defaults(), channel, Vec::new(), false, false);
+        let _ = self.install(index, kind, &name, kind.defaults(), channel, Vec::new(), false, false);
         self.select(Target::Slot(index));
         self.info(format!(
             "added {} in slot {} on {}",
@@ -606,8 +622,10 @@ impl App {
             .as_ref()
             .map_or((self.free_channel(), false, false), |s| (s.channel, s.mute, s.solo));
         let values = patch.values();
-        self.install(index, patch.kind, &patch.name, values, channel, patch.sample_paths(), mute, solo);
-        self.info(format!("loaded patch '{}' into slot {}", patch.name, index + 1));
+        // Keep any sample error on screen rather than replacing it with "loaded".
+        if self.install(index, patch.kind, &patch.name, values, channel, patch.sample_paths(), mute, solo) {
+            self.info(format!("loaded patch '{}' into slot {}", patch.name, index + 1));
+        }
     }
 
     fn save_patch(&mut self, name: &str) {
@@ -701,7 +719,7 @@ impl App {
             }
             let channel = s.channel.and_then(|c| c.checked_sub(1)).filter(|c| *c < 16);
             let values = s.patch.values();
-            self.install(
+            let _ = self.install(
                 s.index,
                 s.patch.kind,
                 &s.patch.name,
@@ -754,7 +772,7 @@ impl App {
         for (i, (name, channel)) in rack.iter().enumerate() {
             if let Some(p) = find(name) {
                 let values = p.values();
-                self.install(i, p.kind, &p.name, values, Some(*channel), Vec::new(), false, false);
+                let _ = self.install(i, p.kind, &p.name, values, Some(*channel), Vec::new(), false, false);
             }
         }
         self.rack_cursor = 1;
@@ -2090,6 +2108,34 @@ mod tests {
         let mut out = vec![0.0f32; 2 * 9_600];
         engine.process(&mut out, 2);
         assert!(out.iter().any(|v| v.abs() > 0.05), "kick pad silent");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vcsl_kits_explain_missing_files_then_load() {
+        let dir = temp_dir("vcsl");
+        let mut app = test_app(&dir);
+        app.add_synth(SynthKind::Kit);
+        let i = app.selected_slot().unwrap();
+        let patch = crate::patch::factory_patches().into_iter().find(|p| p.name == "VCSL Acoustic Kit").unwrap();
+
+        // Not downloaded yet: the browser says so, and loading explains how to fix it.
+        app.on_key(key(KeyCode::Char('l')));
+        let s = screen(&mut app, 140, 60);
+        assert!(s.contains("VCSL Acoustic Kit") && s.contains("download"), "{s}");
+        app.on_key(key(KeyCode::Esc));
+        app.load_patch_into(i, patch.clone());
+        let status = app.status.as_ref().map(|s| s.text.clone()).unwrap_or_default();
+        assert!(status.contains("fetch-kits"), "{status}");
+
+        // Once the files exist (here: stand-ins), every pad loads from the relative paths.
+        for path in patch.sample_paths().into_iter().flatten() {
+            let full = app.storage.samples_dir().join(path);
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            write_wav(&full, 220.0, 0.1);
+        }
+        app.load_patch_into(i, patch);
+        assert_eq!(app.slots[i].as_ref().unwrap().samples.iter().flatten().count(), 16);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

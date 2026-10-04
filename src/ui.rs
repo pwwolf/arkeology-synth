@@ -796,7 +796,17 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
             let list = crate::app::patch_view(all, *filter)
                 .into_iter()
                 .map(|e| {
-                    let (tag, tag_color) = if e.is_factory() { ("factory", FG_DIM) } else { ("yours", OK) };
+                    let needs_download = e.is_factory()
+                        && e.patch.sample_paths().iter().flatten().any(|p| {
+                            crate::vcsl::is_vcsl_path(p) && !app.storage.samples_dir().join(p).exists()
+                        });
+                    let (tag, tag_color) = if needs_download {
+                        ("download", WARN)
+                    } else if e.is_factory() {
+                        ("factory", FG_DIM)
+                    } else {
+                        ("yours", OK)
+                    };
                     ListItem::new(Line::from(vec![
                         Span::styled(format!("{:<4}", e.patch.kind.label()), Style::default().fg(FG_DIM)),
                         Span::raw(format!("{:<38}", truncate(&e.patch.name, 38))),

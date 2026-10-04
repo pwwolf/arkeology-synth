@@ -17,3 +17,7 @@ run = "cargo run --release -- --render-demo demo.wav"
 description = "Send a test phrase to the running synth's virtual MIDI port"
 run = "cargo run --release --example midi_send --"
 
+
+[tasks.fetch-kits]
+description = "Download the acoustic VCSL drum and percussion kits (CC0, ~10 MB)"
+run = "cargo run --release -- --fetch-kits"

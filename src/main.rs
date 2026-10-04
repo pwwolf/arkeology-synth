@@ -12,6 +12,7 @@ mod recorder;
 mod reverb;
 mod sample;
 mod synth;
+mod vcsl;
 mod ui;
 
 use std::io::stdout;
@@ -65,6 +66,9 @@ struct Args {
     /// Don't create the "Arkeology Synth" virtual MIDI input.
     #[arg(long)]
     no_virtual: bool,
+    /// Download the acoustic VCSL kits (CC0, ~10 MB) into samples/kits/ and exit.
+    #[arg(long)]
+    fetch_kits: bool,
     /// Re-render the built-in sample kits (samples/kits/) and exit.
     #[arg(long)]
     render_kits: bool,
@@ -96,6 +100,16 @@ fn main() -> Result<()> {
     }
 
     let storage = Storage::new(args.data_dir.clone().unwrap_or_else(Storage::default_root))?;
+    if args.fetch_kits {
+        println!("Downloading acoustic kits from the Versilian Community Sample Library (CC0)…");
+        let (fetched, present) = vcsl::fetch(&storage.samples_dir(), |f| println!("  {f}"))?;
+        println!(
+            "done: {fetched} downloaded, {present} already present, in {}",
+            kitgen::kits_dir(&storage.samples_dir()).display()
+        );
+        println!("Load them with the \"VCSL Acoustic Kit\" and \"VCSL Percussion\" patches.");
+        return Ok(());
+    }
     if args.render_kits {
         let n = kitgen::ensure(&storage.samples_dir(), &builtins, true)?;
         println!("rendered {n} one-shots into {}", kitgen::kits_dir(&storage.samples_dir()).display());
