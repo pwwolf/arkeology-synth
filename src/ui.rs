@@ -289,6 +289,15 @@ fn draw_rack(f: &mut Frame, app: &App, area: Rect) {
                             Style::default().fg(BAR_EMPTY)
                         },
                     ));
+                    // Program change: quiet when received, flagged when locked out.
+                    spans.push(Span::styled(
+                        "P",
+                        if s.rx_program {
+                            Style::default().fg(BAR_EMPTY)
+                        } else {
+                            Style::default().fg(WARN).crossed_out()
+                        },
+                    ));
                     Line::from(spans)
                 }
             };
@@ -1181,6 +1190,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         ),
         k("d / ⌫", "remove the selected synth"),
         k("r", "rename      m  mute      s  solo"),
+        k("P", "receive / ignore MIDI program change (lock the sound)"),
         k("tab / enter", "edit parameters"),
         h("Parameters"),
         k("↑ ↓  pgup/dn", "select parameter / jump between groups"),

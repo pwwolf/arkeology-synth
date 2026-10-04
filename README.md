@@ -166,6 +166,10 @@ controller or a DAW/sequencer.
   through kits. The patch browser shows the numbers (1–128). Factory patches are
   numbered first, so their numbers never change; your saved patches follow,
   alphabetically, so saving a new one can renumber your others.
+  Press `P` on a slot to make it ignore program changes ("Rx Program Change" off), so a
+  sequencer can't replace a sound you set up by hand. The setting is saved with the
+  session. If a program change does replace a sound you'd edited but not saved, the
+  status line says so.
 - MIDI learn: map any CC to any parameter. Continuous parameters glide to each new
   value over about 20 ms (log-scaled ones like cutoff glide evenly in pitch), so knob
   sweeps from 7-bit CCs, key presses and MCP don't zipper. Switches, choices and
@@ -214,7 +218,7 @@ claude mcp add --transport http arkeology http://127.0.0.1:7878/mcp
 | `describe_synth` | any synth type's full control reference without adding it, noting which controls apply only to certain physical models or FX types |
 | `map_cc`, `list_midi_mappings`, `clear_midi_mapping` | manage which controller knobs (channel + CC) drive which parameters, like MIDI learn |
 | `set_params` | set parameters on a slot or `"master"`; values can be numbers or strings like `"250ms"`, `"2.5k"`, `"40%"`, `"c4"`, `"LowPass"` |
-| `add_synth`, `remove_synth`, `set_slot` | build the rack: synth type, MIDI channel, mute/solo, name |
+| `add_synth`, `remove_synth`, `set_slot` | build the rack: synth type, MIDI channel, mute/solo, program-change lock, name |
 | `list_patches`, `load_patch`, `save_patch` | browse factory and user patches; save the current sound |
 | `list_sessions`, `load_session`, `save_session`, `new_rack` | whole-rack snapshots; start an empty or starter rack |
 | `load_sample`, `load_kit_folder` | load a WAV/FLAC into a granular synth, sampler (with root-note detection) or kit pad; load a folder as a kit |
@@ -241,6 +245,7 @@ instances) or `--no-mcp` to turn it off.
 | `N` | new rack: empty or starter (by default the current rack is saved as a session first) |
 | `f` | load a WAV or FLAC into a granular synth, sampler or kit pad (`K` in the browser loads a whole folder as a kit) |
 | `r` `m` `s` | rename, mute, solo |
+| `P` | receive or ignore MIDI program change on this slot (a struck-out P means locked) |
 | `c` / `C` | MIDI-learn a CC for the selected parameter / clear it |
 | `p` | MIDI input ports |
 | `k` | keyboard play mode (`a w s e d f t g y h u j k …` notes, `z/x` octave, `c/v` velocity, `esc` exits) |

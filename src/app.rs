@@ -39,6 +39,11 @@ pub struct UiSlot {
     pub channel: Option<u8>,
     pub mute: bool,
     pub solo: bool,
+    /// Load patches on MIDI program change ("Rx Program Change"). Off
+    /// protects a hand-set sound from sequencers.
+    pub rx_program: bool,
+    /// The sound was changed since its patch was loaded or saved.
+    pub edited: bool,
     /// Loaded sample files, one entry per sample slot of the synth type (one
     /// for granular/sampler, 16 pads for a kit). The Arcs are kept here so
     /// samples are freed on this thread, never the audio thread.
@@ -466,6 +471,7 @@ impl App {
             Target::Slot(s) => {
                 if let Some(slot) = self.slots[s].as_mut() {
                     slot.params[i] = value;
+                    slot.edited |= value != old;
                     self.send(Command::SetParam {
                         slot: s,
                         index: i,
@@ -624,6 +630,8 @@ impl App {
         .with_flags(mute, solo);
         self.send(Command::InstallSlot { slot: index, data });
         let notes_seen = self.telemetry.slots[index].notes.load(Ordering::Relaxed);
+        // A slot keeps its program-change setting when its sound is replaced.
+        let rx_program = self.slots[index].as_ref().is_none_or(|s| s.rx_program);
         self.slots[index] = Some(UiSlot {
             kind,
             name: name.to_string(),
@@ -631,6 +639,8 @@ impl App {
             channel,
             mute,
             solo,
+            rx_program,
+            edited: false,
             samples,
             meter: 0.0,
             voices: 0,
@@ -711,6 +721,21 @@ impl App {
         }
     }
 
+    fn toggle_rx_program(&mut self, index: usize) {
+        if let Some(s) = self.slots[index].as_mut() {
+            s.rx_program = !s.rx_program;
+            let msg = if s.rx_program {
+                format!("slot {}: loads patches on MIDI program change", index + 1)
+            } else {
+                format!(
+                    "slot {}: ignores MIDI program change (sound locked)",
+                    index + 1
+                )
+            };
+            self.info(msg);
+        }
+    }
+
     fn toggle_solo(&mut self, index: usize) {
         if let Some(s) = self.slots[index].as_mut() {
             s.solo = !s.solo;
@@ -753,7 +778,8 @@ impl App {
         ))
     }
 
-    fn load_patch_into(&mut self, index: usize, patch: Patch) {
+    /// Returns false if some of the patch's samples couldn't be loaded.
+    fn load_patch_into(&mut self, index: usize, patch: Patch) -> bool {
         let (channel, mute, solo) = self.slots[index]
             .as_ref()
             .map_or((self.free_channel(), false, false), |s| {
@@ -776,36 +802,67 @@ impl App {
                 patch.name,
                 index + 1
             ));
+            true
+        } else {
+            false
         }
     }
 
     /// Program change: every slot listening on `channel` loads the patch with
     /// that program number for its own synth type (see `patch::program_numbers`).
     fn program_change(&mut self, channel: u8, program: u8) {
-        let targets: Vec<(usize, SynthKind)> = self
-            .slots
-            .iter()
-            .enumerate()
-            .filter_map(|(i, s)| s.as_ref().map(|s| (i, s)))
-            .filter(|(_, s)| s.channel.is_none_or(|c| c == channel))
-            .map(|(i, s)| (i, s.kind))
+        let listening: Vec<usize> = (0..self.slots.len())
+            .filter(|&i| {
+                self.slots[i]
+                    .as_ref()
+                    .is_some_and(|s| s.channel.is_none_or(|c| c == channel))
+            })
             .collect();
-        if targets.is_empty() {
+        if listening.is_empty() {
             return;
         }
+        let what = format!("program {} (ch {})", program as usize + 1, channel + 1);
         let all = self.storage.list_patches();
-        for (i, kind) in targets {
+        let (mut loaded, mut locked, mut overwritten) = (Vec::new(), Vec::new(), Vec::new());
+        for i in listening {
+            let s = self.slots[i].as_ref().expect("listening slot");
+            if !s.rx_program {
+                locked.push(format!("{}", i + 1));
+                continue;
+            }
+            let (kind, edited, old_name) = (s.kind, s.edited, s.name.clone());
             match crate::patch::patch_for_program(&all, kind, program) {
-                Some(e) => self.load_patch_into(i, e.patch.clone()),
+                Some(e) => {
+                    let name = e.patch.name.clone();
+                    if !self.load_patch_into(i, e.patch.clone()) {
+                        return; // keep the sample error on screen
+                    }
+                    if edited {
+                        overwritten.push(format!("slot {} ('{old_name}')", i + 1));
+                    }
+                    loaded.push(format!("slot {} → {name}", i + 1));
+                }
                 None => {
                     let count = all.iter().filter(|e| e.patch.kind == kind).count();
                     self.error(format!(
-                        "program {} (ch {}): {} has only {count} patches",
-                        program as usize + 1,
-                        channel + 1,
+                        "{what}: {} has only {count} patches",
                         kind.long_name()
                     ));
+                    return;
                 }
+            }
+        }
+        let locked = (!locked.is_empty()).then(|| format!("slot {} locked (P)", locked.join(", ")));
+        if !overwritten.is_empty() {
+            // Say plainly why a hand-edited sound just changed.
+            self.error(format!(
+                "{what} replaced unsaved edits on {}; press P on a slot to ignore program changes",
+                overwritten.join(", ")
+            ));
+        } else {
+            let parts: Vec<String> = loaded.into_iter().chain(locked).collect();
+            if !parts.is_empty() {
+                self.info(format!("{what}: {}", parts.join("; ")));
             }
         }
     }
@@ -821,7 +878,12 @@ impl App {
             return;
         };
         match self.storage.save_patch(&patch) {
-            Ok(path) => self.info(format!("saved patch to {}", path.display())),
+            Ok(path) => {
+                if let Some(s) = self.slots[index].as_mut() {
+                    s.edited = false;
+                }
+                self.info(format!("saved patch to {}", path.display()))
+            }
             Err(e) => self.error(format!("{e:#}")),
         }
     }
@@ -846,6 +908,7 @@ impl App {
                         channel: s.channel.map(|c| c + 1),
                         mute: s.mute,
                         solo: s.solo,
+                        rx_program: s.rx_program,
                         patch: self.current_patch(i)?,
                     })
                 })
@@ -932,6 +995,9 @@ impl App {
                 s.mute,
                 s.solo,
             );
+            if let Some(slot) = self.slots[s.index].as_mut() {
+                slot.rx_program = s.rx_program;
+            }
         }
         self.cc_map = session.cc_map;
         for port in &session.midi_ports {
@@ -1034,6 +1100,7 @@ impl App {
                 if let Some(slot) = self.slots[index].as_mut()
                     && let Some(entry) = slot.samples.first_mut()
                 {
+                    slot.edited = true;
                     *entry = Some(LoadedSample {
                         path: path.to_path_buf(),
                         sample: arc,
@@ -1066,6 +1133,7 @@ impl App {
         if let Some(slot) = self.slots[index].as_mut()
             && let Some(entry) = slot.samples.get_mut(pad)
         {
+            slot.edited = true;
             *entry = Some(LoadedSample { path, sample });
         }
     }
@@ -1563,6 +1631,11 @@ impl App {
             KeyCode::Char('s') => {
                 if let Some(i) = slot {
                     self.toggle_solo(i)
+                }
+            }
+            KeyCode::Char('P') => {
+                if let Some(i) = slot {
+                    self.toggle_rx_program(i)
                 }
             }
             KeyCode::Char('p') => {
@@ -2313,6 +2386,82 @@ mod tests {
         app.on_key(repeat(KeyCode::Down));
         app.on_key(repeat(KeyCode::Down));
         assert_eq!(app.rack_cursor, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Rx Program Change: a locked slot ignores program changes, and a
+    /// program change that replaces hand edits says so.
+    #[test]
+    fn program_change_respects_locks_and_reports_lost_edits() {
+        use crate::midi::{MidiKind, MidiMsg};
+        let dir = temp_dir("rx-program");
+        let mut app = test_app(&dir);
+        app.default_rack(); // slot 1: E.Piano on ch 1
+        let program = |app: &mut App, p: u8| {
+            app.on_midi(MidiMsg {
+                channel: 0,
+                kind: MidiKind::Program(p),
+            });
+            app.status
+                .as_ref()
+                .map(|s| s.text.clone())
+                .unwrap_or_default()
+        };
+        let name = |app: &App| app.slots[0].as_ref().unwrap().name.clone();
+
+        // Locked with P: ignored, and the status says why.
+        app.rack_cursor = 1;
+        app.on_key(key(KeyCode::Char('P')));
+        let status = program(&mut app, 0);
+        assert_eq!(name(&app), "E.Piano");
+        assert!(status.contains("slot 1 locked"), "{status}");
+        let s = screen(&mut app, 140, 40);
+        assert!(s.contains(" MSP"), "rack shows the P flag: {s}");
+
+        // The lock survives a session round trip; older sessions default to receiving.
+        let session = app.session();
+        assert!(!session.slots[0].rx_program);
+        let mut json = serde_json::to_value(&session).unwrap();
+        json["slots"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("rx_program");
+        let old: crate::patch::Session = serde_json::from_value(json).unwrap();
+        assert!(old.slots[0].rx_program);
+        app.apply_session(session);
+        assert!(!app.slots[0].as_ref().unwrap().rx_program);
+
+        // Unlocked: loads. A clean slot gets a plain note...
+        app.on_key(key(KeyCode::Char('P')));
+        let status = program(&mut app, 1);
+        assert_ne!(name(&app), "E.Piano");
+        assert!(
+            status.contains("slot 1 →") && !status.contains("unsaved"),
+            "{status}"
+        );
+        assert!(
+            app.slots[0].as_ref().unwrap().rx_program,
+            "kept across loads"
+        );
+
+        // ...but replacing hand edits is flagged.
+        let vol = 0;
+        app.set_param(Target::Slot(0), vol, 0.3);
+        assert!(app.slots[0].as_ref().unwrap().edited);
+        let status = program(&mut app, 2);
+        assert!(
+            status.contains("replaced unsaved edits on slot 1"),
+            "{status}"
+        );
+        assert!(
+            !app.slots[0].as_ref().unwrap().edited,
+            "fresh patch is clean"
+        );
+
+        // Saving counts as clean too.
+        app.set_param(Target::Slot(0), vol, 0.4);
+        app.save_patch("Mine");
+        assert!(!app.slots[0].as_ref().unwrap().edited);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

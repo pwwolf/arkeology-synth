@@ -150,7 +150,14 @@ pub struct SessionSlot {
     pub mute: bool,
     #[serde(default)]
     pub solo: bool,
+    /// Load patches on MIDI program change.
+    #[serde(default = "yes")]
+    pub rx_program: bool,
     pub patch: Patch,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

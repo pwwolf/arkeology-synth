@@ -314,7 +314,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "set_slot",
-            "description": "Change a slot's MIDI channel, mute, solo or name.",
+            "description": "Change a slot's MIDI channel, mute, solo, program-change reception or name.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -322,6 +322,7 @@ fn tool_definitions() -> Value {
                     "channel": channel,
                     "mute": { "type": "boolean" },
                     "solo": { "type": "boolean", "description": "While any slot is soloed, all others are silent" },
+                    "program_change": { "type": "boolean", "description": "Load patches on MIDI program change (default true). False locks the slot's sound against sequencers" },
                     "name": { "type": "string" }
                 },
                 "required": ["slot"]

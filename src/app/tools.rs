@@ -384,6 +384,8 @@ impl App {
             "channel": s.channel.map_or(json!("omni"), |c| json!(c + 1)),
             "mute": s.mute,
             "solo": s.solo,
+            "program_change": s.rx_program,
+            "edited": s.edited,
             "active_voices": s.voices,
             "sample": if s.kind == SynthKind::Kit { Value::Null } else { json!(s.sample(0).map(|l| &l.path)) },
             "pads": if s.kind == SynthKind::Kit {
@@ -709,12 +711,21 @@ impl App {
                 changed.push(format!("{key} {}", if on { "on" } else { "off" }));
             }
         }
+        if let Some(on) = args.get("program_change").and_then(Value::as_bool) {
+            self.slots[i].as_mut().expect("checked").rx_program = on;
+            changed.push(format!(
+                "program change {}",
+                if on { "received" } else { "ignored" }
+            ));
+        }
         if let Some(name) = args.get("name").and_then(Value::as_str) {
             self.slots[i].as_mut().expect("checked").name = name.to_string();
             changed.push(format!("name '{name}'"));
         }
         if changed.is_empty() {
-            return Err("nothing to change; pass channel, mute, solo or name".into());
+            return Err(
+                "nothing to change; pass channel, mute, solo, program_change or name".into(),
+            );
         }
         self.mcp_note(format!("slot {}: {}", i + 1, changed.join(", ")));
         Ok(self.slot_json(i))
