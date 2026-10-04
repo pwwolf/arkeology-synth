@@ -107,12 +107,26 @@ pub struct Keyboard {
     pub velocity: u8,
     /// Terminal reports key releases (kitty keyboard protocol).
     pub has_release: bool,
-    held: HashMap<char, (usize, u8, Instant)>,
+    held: HashMap<char, HeldKey>,
+}
+
+struct HeldKey {
+    slot: usize,
+    note: u8,
+    /// Last press or repeat.
+    at: Instant,
+    /// A key-up that hasn't been acted on yet (see RELEASE_GRACE).
+    released: Option<Instant>,
 }
 
 /// Legacy terminals don't report key-up, so notes are released after this
-/// long without a key repeat.
-const LEGACY_NOTE_HOLD: Duration = Duration::from_millis(600);
+/// long without a key repeat. Longer than X11's default 660 ms repeat delay.
+const LEGACY_NOTE_HOLD: Duration = Duration::from_millis(750);
+
+/// X11 auto-repeat (and terminals that pass it through) turns a held key into
+/// release+press pairs. A key-up only ends the note if no press of the same
+/// key follows within this long.
+const RELEASE_GRACE: Duration = Duration::from_millis(30);
 
 pub struct App {
     pub sample_rate: f32,
@@ -554,7 +568,7 @@ impl App {
         self.send(Command::RemoveSlot { slot: index });
         self.slots[index] = None;
         self.cc_map.retain(|m| m.slot != Some(index));
-        self.keyboard.held.retain(|_, (s, _, _)| *s != index);
+        self.keyboard.held.retain(|_, k| k.slot != index);
         let rows = self.rack_rows().len();
         self.rack_cursor = self.rack_cursor.min(rows - 1);
         self.param_cursor = 0;
@@ -972,21 +986,7 @@ impl App {
         self.master_meter = (l, r);
         self.cpu = f32::from_bits(self.telemetry.cpu.load(Ordering::Relaxed));
 
-        if !self.keyboard.has_release {
-            let now = Instant::now();
-            let expired: Vec<char> = self
-                .keyboard
-                .held
-                .iter()
-                .filter(|(_, (_, _, at))| now.duration_since(*at) > LEGACY_NOTE_HOLD)
-                .map(|(c, _)| *c)
-                .collect();
-            for c in expired {
-                if let Some((slot, note, _)) = self.keyboard.held.remove(&c) {
-                    self.send(Command::NoteOff { slot, note });
-                }
-            }
-        }
+        self.release_keyboard_notes(Instant::now());
 
         if let Some(s) = &self.status
             && s.at.elapsed() > Duration::from_secs(if s.error { 10 } else { 5 })
@@ -1043,9 +1043,9 @@ impl App {
 
         if key.kind == KeyEventKind::Release {
             if let KeyCode::Char(c) = key.code
-                && let Some((slot, note, _)) = self.keyboard.held.remove(&c.to_ascii_lowercase())
+                && let Some(k) = self.keyboard.held.get_mut(&c.to_ascii_lowercase())
             {
-                self.send(Command::NoteOff { slot, note });
+                k.released.get_or_insert(Instant::now());
             }
             return;
         }
@@ -1104,12 +1104,13 @@ impl App {
                 return true;
             }
             let now = Instant::now();
-            if let Some(entry) = self.keyboard.held.get_mut(&c) {
-                // Key repeat: just keep the note alive.
-                entry.2 = now;
+            if let Some(k) = self.keyboard.held.get_mut(&c) {
+                // Key repeat (including X11's release+press pairs): keep the note alive.
+                k.at = now;
+                k.released = None;
                 return true;
             }
-            self.keyboard.held.insert(c, (slot, note, now));
+            self.keyboard.held.insert(c, HeldKey { slot, note, at: now, released: None });
             let velocity = self.keyboard.velocity as f32 / 127.0;
             self.send(Command::NoteOn { slot, note, velocity });
             return true;
@@ -1142,9 +1143,30 @@ impl App {
     }
 
     fn all_keyboard_notes_off(&mut self) {
-        let held: Vec<_> = self.keyboard.held.drain().map(|(_, v)| v).collect();
-        for (slot, note, _) in held {
-            self.send(Command::NoteOff { slot, note });
+        let held: Vec<_> = self.keyboard.held.drain().map(|(_, k)| k).collect();
+        for k in held {
+            self.send(Command::NoteOff { slot: k.slot, note: k.note });
+        }
+    }
+
+    /// End notes whose key-up has outlasted the grace period, or (in terminals
+    /// without key-up events) whose key stopped repeating.
+    fn release_keyboard_notes(&mut self, now: Instant) {
+        let legacy = !self.keyboard.has_release;
+        let done: Vec<char> = self
+            .keyboard
+            .held
+            .iter()
+            .filter(|(_, k)| match k.released {
+                Some(at) => now.duration_since(at) >= RELEASE_GRACE,
+                None => legacy && now.duration_since(k.at) > LEGACY_NOTE_HOLD,
+            })
+            .map(|(c, _)| *c)
+            .collect();
+        for c in done {
+            if let Some(k) = self.keyboard.held.remove(&c) {
+                self.send(Command::NoteOff { slot: k.slot, note: k.note });
+            }
         }
     }
 
@@ -1871,6 +1893,42 @@ mod tests {
         app.on_key(repeat(KeyCode::Down));
         app.on_key(repeat(KeyCode::Down));
         assert_eq!(app.rack_cursor, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// X11 auto-repeat sends release+press pairs for a held key: that must
+    /// hold the note, while a real key-up still ends it.
+    #[test]
+    fn held_key_survives_autorepeat_release_pairs() {
+        let dir = temp_dir("autorepeat");
+        let mut app = test_app(&dir);
+        app.default_rack();
+        app.keyboard.has_release = true;
+        app.on_key(key(KeyCode::Char('k')));
+        while app.commands.pop().is_some() {}
+        let notes = |app: &mut App| {
+            let (mut on, mut off) = (0, 0);
+            while let Some(cmd) = app.commands.pop() {
+                on += matches!(cmd, Command::NoteOn { .. }) as usize;
+                off += matches!(cmd, Command::NoteOff { .. }) as usize;
+            }
+            (on, off)
+        };
+        let release = KeyEvent { kind: KeyEventKind::Release, ..key(KeyCode::Char('a')) };
+
+        app.on_key(key(KeyCode::Char('a')));
+        for _ in 0..20 {
+            app.on_key(release);
+            app.on_key(key(KeyCode::Char('a')));
+            app.release_keyboard_notes(Instant::now());
+        }
+        assert_eq!(notes(&mut app), (1, 0), "auto-repeat must not retrigger");
+
+        app.on_key(release);
+        app.release_keyboard_notes(Instant::now());
+        assert_eq!(notes(&mut app), (0, 0), "still within the grace period");
+        app.release_keyboard_notes(Instant::now() + RELEASE_GRACE);
+        assert_eq!(notes(&mut app), (0, 1), "a real key-up ends the note");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
