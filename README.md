@@ -161,6 +161,11 @@ controller or a DAW/sequencer.
   save your own version.
 - You can save and load patches (one synth) and sessions (the whole rack, plus MIDI
   mappings and ports). The rack is autosaved on quit and restored on the next start.
+- Program change: each synth listening on that channel loads the patch with that number
+  *for its own synth type*, so an organ slot steps through organ patches and a kit slot
+  through kits. The patch browser shows the numbers (1–128). Factory patches are
+  numbered first, so their numbers never change; your saved patches follow,
+  alphabetically, so saving a new one can renumber your others.
 - MIDI learn: map any CC to any parameter. Continuous parameters glide to each new
   value over about 20 ms (log-scaled ones like cutoff glide evenly in pitch), so knob
   sweeps from 7-bit CCs, key presses and MCP don't zipper. Switches, choices and

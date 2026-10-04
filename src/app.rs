@@ -779,6 +779,37 @@ impl App {
         }
     }
 
+    /// Program change: every slot listening on `channel` loads the patch with
+    /// that program number for its own synth type (see `patch::program_numbers`).
+    fn program_change(&mut self, channel: u8, program: u8) {
+        let targets: Vec<(usize, SynthKind)> = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.as_ref().map(|s| (i, s)))
+            .filter(|(_, s)| s.channel.is_none_or(|c| c == channel))
+            .map(|(i, s)| (i, s.kind))
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        let all = self.storage.list_patches();
+        for (i, kind) in targets {
+            match crate::patch::patch_for_program(&all, kind, program) {
+                Some(e) => self.load_patch_into(i, e.patch.clone()),
+                None => {
+                    let count = all.iter().filter(|e| e.patch.kind == kind).count();
+                    self.error(format!(
+                        "program {} (ch {}): {} has only {count} patches",
+                        program as usize + 1,
+                        channel + 1,
+                        kind.long_name()
+                    ));
+                }
+            }
+        }
+    }
+
     fn save_patch(&mut self, name: &str) {
         let Some(index) = self.selected_slot() else {
             return;
@@ -1214,6 +1245,10 @@ impl App {
     fn on_midi(&mut self, msg: MidiMsg) {
         self.midi_log.push_front(msg.to_string());
         self.midi_log.truncate(64);
+        if let MidiKind::Program(program) = msg.kind {
+            self.program_change(msg.channel, program);
+            return;
+        }
         let MidiKind::Cc { cc, value } = msg.kind else {
             return;
         };
@@ -2278,6 +2313,76 @@ mod tests {
         app.on_key(repeat(KeyCode::Down));
         app.on_key(repeat(KeyCode::Down));
         assert_eq!(app.rack_cursor, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn program_change_loads_numbered_patches_per_synth_type() {
+        use crate::midi::{MidiKind, MidiMsg};
+        let dir = temp_dir("program");
+        let mut app = test_app(&dir);
+        app.default_rack(); // slot 1: FM on ch 1, slot 2: granular on ch 2
+        let fm: Vec<String> = crate::patch::factory_patches()
+            .into_iter()
+            .filter(|p| p.kind == SynthKind::Fm)
+            .map(|p| p.name)
+            .collect();
+        let mut sorted = fm.clone();
+        sorted.sort_by_key(|n| n.to_lowercase());
+        let program = |app: &mut App, channel: u8, p: u8| {
+            app.on_midi(MidiMsg {
+                channel,
+                kind: MidiKind::Program(p),
+            })
+        };
+
+        program(&mut app, 0, 2);
+        assert_eq!(app.slots[0].as_ref().unwrap().name, sorted[2]);
+        assert_eq!(
+            app.slots[1].as_ref().unwrap().name,
+            "Choir Cloud",
+            "other channels are untouched"
+        );
+        assert_eq!(
+            app.slots[0].as_ref().unwrap().channel,
+            Some(0),
+            "keeps its channel"
+        );
+
+        // A saved user patch goes after the factory ones: factory numbers don't move.
+        let mut mine = crate::patch::factory_patches()
+            .into_iter()
+            .find(|p| p.name == sorted[0])
+            .unwrap();
+        mine.name = "AAA Mine".into();
+        app.storage.save_patch(&mine).unwrap();
+        program(&mut app, 0, 2);
+        assert_eq!(app.slots[0].as_ref().unwrap().name, sorted[2]);
+        program(&mut app, 0, fm.len() as u8);
+        assert_eq!(app.slots[0].as_ref().unwrap().name, "AAA Mine");
+
+        // Out of range: explained, nothing changes.
+        program(&mut app, 0, 127);
+        assert_eq!(app.slots[0].as_ref().unwrap().name, "AAA Mine");
+        let status = app
+            .status
+            .as_ref()
+            .map(|s| s.text.clone())
+            .unwrap_or_default();
+        assert!(
+            status.contains("program 128") && status.contains("has only"),
+            "{status}"
+        );
+
+        // The browser shows the numbers.
+        app.rack_cursor = 1;
+        app.on_key(key(KeyCode::Char('l')));
+        let s = screen(&mut app, 140, 60);
+        let row = s
+            .lines()
+            .find(|l| l.contains(&sorted[2]))
+            .unwrap_or_default();
+        assert!(row.contains("  3 FM"), "{row}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

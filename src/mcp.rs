@@ -329,7 +329,10 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "list_patches",
-            "description": "Factory and user patches, optionally only for one synth type.",
+            "description": "Factory and user patches, optionally only for one synth type. `program` is the \
+    patch's number (1-128) for MIDI program change: a program change on a channel loads that number \
+    for each listening synth's own type (send program value = number - 1). Factory patches come first, \
+    so their numbers are stable.",
             "inputSchema": { "type": "object", "properties": { "kind": kind } },
             "annotations": read_only,
         },

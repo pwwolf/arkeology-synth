@@ -743,16 +743,17 @@ impl App {
 
     fn tool_list_patches(&self, args: &Value) -> ToolResult {
         let kind = args.get("kind").map(parse_kind).transpose()?;
-        let list: Vec<Value> = self
-            .storage
-            .list_patches()
+        let all = self.storage.list_patches();
+        let list: Vec<Value> = all
             .iter()
-            .filter(|e| kind.is_none_or(|k| e.patch.kind == k))
-            .map(|e| {
+            .zip(crate::patch::program_numbers(&all))
+            .filter(|(e, _)| kind.is_none_or(|k| e.patch.kind == k))
+            .map(|(e, program)| {
                 json!({
                     "name": e.patch.name,
                     "kind": kind_name(e.patch.kind),
                     "source": if e.is_factory() { "factory" } else { "user" },
+                    "program": program.map(|p| p as usize + 1),
                 })
             })
             .collect();

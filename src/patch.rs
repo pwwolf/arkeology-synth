@@ -95,6 +95,42 @@ impl PatchEntry {
     }
 }
 
+/// MIDI program numbers (0-based, as sent on the wire) for each entry of
+/// `all`, counted per synth type: factory patches first, so their numbers
+/// never change when you save patches, then the user's, each alphabetically.
+/// Entries past 128 in a type get `None`.
+pub fn program_numbers(all: &[PatchEntry]) -> Vec<Option<u8>> {
+    let mut order: Vec<usize> = (0..all.len()).collect();
+    order.sort_by_key(|&i| {
+        let e = &all[i];
+        (
+            e.patch.kind.order(),
+            !e.is_factory(),
+            e.patch.name.to_lowercase(),
+        )
+    });
+    let mut out = vec![None; all.len()];
+    let mut kind = None;
+    let mut n = 0usize;
+    for i in order {
+        if kind != Some(all[i].patch.kind) {
+            kind = Some(all[i].patch.kind);
+            n = 0;
+        }
+        out[i] = u8::try_from(n).ok().filter(|p| *p < 128);
+        n += 1;
+    }
+    out
+}
+
+/// The patch a program change selects for a synth of type `kind`.
+pub fn patch_for_program(all: &[PatchEntry], kind: SynthKind, program: u8) -> Option<&PatchEntry> {
+    all.iter()
+        .zip(program_numbers(all))
+        .find(|(e, p)| e.patch.kind == kind && *p == Some(program))
+        .map(|(e, _)| e)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CcMapping {
     /// 0-based MIDI channel.

@@ -1032,9 +1032,12 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
             filter,
             cursor,
         } => {
-            let list = crate::app::patch_view(all, *filter)
-                .into_iter()
-                .map(|e| {
+            let programs = crate::patch::program_numbers(all);
+            let list = all
+                .iter()
+                .zip(programs)
+                .filter(|(e, _)| filter.is_none_or(|k| e.patch.kind == k))
+                .map(|(e, program)| {
                     let needs_download = e.is_factory()
                         && e.patch.sample_paths().iter().flatten().any(|p| {
                             crate::vcsl::is_vcsl_path(p)
@@ -1047,7 +1050,10 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
                     } else {
                         ("yours", OK)
                     };
+                    let program =
+                        program.map_or("    ".to_string(), |p| format!("{:>3} ", p as usize + 1));
                     ListItem::new(Line::from(vec![
+                        Span::styled(program, Style::default().fg(ACCENT)),
                         Span::styled(
                             format!("{:<4}", e.patch.kind.label()),
                             Style::default().fg(FG_DIM),
@@ -1067,7 +1073,7 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
                 &title,
                 list,
                 *cursor,
-                "enter: load · space: audition · tab: synth type · esc",
+                "enter: load · space: audition · tab: synth type · number: MIDI program · esc",
             );
         }
         Popup::Sessions { items, cursor } => {
