@@ -3,6 +3,7 @@ mod audio;
 mod dsp;
 mod engine;
 mod fx;
+mod kitgen;
 mod mcp;
 mod midi;
 mod params;
@@ -64,6 +65,9 @@ struct Args {
     /// Don't create the "Arkeology Synth" virtual MIDI input.
     #[arg(long)]
     no_virtual: bool,
+    /// Re-render the built-in sample kits (samples/kits/) and exit.
+    #[arg(long)]
+    render_kits: bool,
     /// Render a short demo to a WAV file without opening audio or the TUI.
     #[arg(long, value_name = "WAV")]
     render_demo: Option<PathBuf>,
@@ -92,6 +96,17 @@ fn main() -> Result<()> {
     }
 
     let storage = Storage::new(args.data_dir.clone().unwrap_or_else(Storage::default_root))?;
+    if args.render_kits {
+        let n = kitgen::ensure(&storage.samples_dir(), &builtins, true)?;
+        println!("rendered {n} one-shots into {}", kitgen::kits_dir(&storage.samples_dir()).display());
+        return Ok(());
+    }
+    // First launch (or new recipes): render the built-in sample kits.
+    let kits_note = match kitgen::ensure(&storage.samples_dir(), &builtins, false) {
+        Ok(0) => None,
+        Ok(n) => Some(Ok(format!("rendered {n} drum one-shots into {}", kitgen::kits_dir(&storage.samples_dir()).display()))),
+        Err(e) => Some(Err(format!("rendering built-in kits: {e:#}"))),
+    };
 
     let commands: CommandQueue = Arc::new(ArrayQueue::new(4096));
     let garbage: GarbageQueue = Arc::new(ArrayQueue::new(256));
@@ -172,6 +187,11 @@ fn main() -> Result<()> {
             }
             Err(e) => startup_notes.push(format!("{e:#} (another instance running? try --mcp-port)")),
         }
+    }
+    match kits_note {
+        Some(Ok(msg)) => app.info(msg),
+        Some(Err(e)) => startup_notes.push(e),
+        None => {}
     }
     if let Some(n) = startup_notes.pop() {
         app.error(n);

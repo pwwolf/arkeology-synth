@@ -254,7 +254,7 @@ fn make(name: &str, kind: SynthKind, overrides: &[(&str, f32)]) -> Patch {
 
 pub fn factory_patches() -> Vec<Patch> {
     use SynthKind::{Acid, Analog, Drums, Fm, Granular, Kit, Physical, Sampler};
-    vec![
+    let mut patches = vec![
         make("FM Init", Fm, &[]),
         make(
             "E.Piano",
@@ -2047,7 +2047,10 @@ pub fn factory_patches() -> Vec<Patch> {
                 ("fx2_comp_makeup", 3.0),
             ],
         ),
-    ]
+    ];
+    // Sample kits rendered from the engines (see kitgen).
+    patches.extend(crate::kitgen::factory_kit_patches());
+    patches
 }
 
 /// Lookup helper for master params by key (used by CC mappings).

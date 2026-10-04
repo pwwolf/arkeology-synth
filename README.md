@@ -78,6 +78,16 @@ controller or a DAW/sequencer.
     "bd", "snare", "sd", "hh", "open hat", "tom low", "crash", "ride"…), and unrecognised
     ones fill the remaining pads.
   - Kits save as patches, which record each pad's file.
+  - **Built-in kits** are rendered from the synth's own engines into `samples/kits/` on first
+    launch, so they're free of licensing concerns and take no space in the repo:
+    - **808**, **909** and **Lo-Fi**, from the drum machine.
+    - **Hybrid**: machine drums layered with physically modelled membranes and bars, then
+      compressed, driven and given a short room.
+    - **Hand Percussion**: congas, bongos, djembe, woodblock, clave, agogô, triangle,
+      tambourine, shaker, cowbell and log drum, on the General MIDI percussion notes.
+
+    Load them as the factory patches **808 Sampled**, **909 Sampled**, **Lo-Fi Sampled**,
+    **Hybrid Kit** and **Hand Percussion**. Use `--render-kits` to re-render them.
 - **Sampler**: plays a WAV or FLAC file (mono or stereo) or a built-in source, with a waveform view
   above its parameters. Three modes:
   - **Classic**: pitched across the keyboard from a Root Note, with an optional

@@ -485,6 +485,8 @@ impl App {
         let mut failed = Vec::new();
         for (i, path) in sample_paths.into_iter().enumerate().take(samples.len()) {
             let Some(path) = path else { continue };
+            // Relative paths (factory kits) live in the samples folder.
+            let path = if path.is_relative() { self.storage.samples_dir().join(path) } else { path };
             match sample::load_file(&path) {
                 Ok(s) => samples[i] = Some(LoadedSample { path, sample: Arc::new(s) }),
                 Err(e) => failed.push(format!("{e:#}")),
