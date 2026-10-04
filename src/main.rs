@@ -197,6 +197,9 @@ fn main() -> Result<()> {
         Some(p) => match read_json::<Session>(&p) {
             Ok(s) => {
                 app.apply_session(s);
+                if args.session.is_some() {
+                    app.session_name = p.file_stem().map(|s| s.to_string_lossy().into_owned());
+                }
                 app.info(format!("restored {}", p.display()));
             }
             Err(e) => {

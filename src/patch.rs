@@ -162,6 +162,10 @@ fn yes() -> bool {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Session {
+    /// The session file this rack was last loaded from or saved as, so the
+    /// autosave remembers where `W` should save by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(default)]
     pub master: BTreeMap<String, f32>,
     #[serde(default)]

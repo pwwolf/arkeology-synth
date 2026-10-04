@@ -168,6 +168,8 @@ pub struct App {
     pub sample_rate: f32,
     pub device_name: String,
     pub storage: Storage,
+    /// The session last loaded or saved (`W` offers it as the default name).
+    pub session_name: Option<String>,
     builtins: Builtins,
     commands: CommandQueue,
     garbage: GarbageQueue,
@@ -221,6 +223,7 @@ impl App {
             sample_rate: init.sample_rate,
             device_name: init.device_name,
             storage: init.storage,
+            session_name: None,
             builtins: init.builtins,
             commands: init.commands,
             garbage: init.garbage,
@@ -890,6 +893,7 @@ impl App {
 
     pub fn session(&self) -> Session {
         Session {
+            name: self.session_name.clone(),
             master: master::PARAMS
                 .iter()
                 .zip(&self.master)
@@ -969,6 +973,7 @@ impl App {
     }
 
     pub fn apply_session(&mut self, session: Session) {
+        self.session_name = session.name.clone();
         self.send(Command::Panic);
         for i in 0..MAX_SLOTS {
             if self.slots[i].is_some() {
@@ -1010,10 +1015,14 @@ impl App {
     }
 
     fn save_session(&mut self, name: &str) {
+        let previous = self.session_name.replace(name.to_string());
         let session = self.session();
         match self.storage.save_session(name, &session) {
             Ok(path) => self.info(format!("saved session to {}", path.display())),
-            Err(e) => self.error(format!("{e:#}")),
+            Err(e) => {
+                self.session_name = previous;
+                self.error(format!("{e:#}"))
+            }
         }
     }
 
@@ -1021,6 +1030,7 @@ impl App {
         match read_json::<Session>(path) {
             Ok(s) => {
                 self.apply_session(s);
+                self.session_name = path.file_stem().map(|s| s.to_string_lossy().into_owned());
                 self.info(format!("loaded session {}", path.display()));
             }
             Err(e) => self.error(format!("{e:#}")),
@@ -1602,10 +1612,17 @@ impl App {
                 }
             }
             KeyCode::Char('W') => {
+                // Default to the session this rack came from: W, Enter saves over it.
+                let current = self.session_name.clone();
                 self.popup = Some(Popup::Text {
                     title: "Save session".into(),
-                    hint: format!("saved to {}", self.storage.sessions_dir().display()),
-                    input: String::new(),
+                    hint: match &current {
+                        Some(name) => {
+                            format!("enter saves over '{name}' · type a new name for a copy")
+                        }
+                        None => format!("saved to {}", self.storage.sessions_dir().display()),
+                    },
+                    input: current.unwrap_or_default(),
                     action: TextAction::SaveSession,
                 })
             }
@@ -2386,6 +2403,51 @@ mod tests {
         app.on_key(repeat(KeyCode::Down));
         app.on_key(repeat(KeyCode::Down));
         assert_eq!(app.rack_cursor, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// W offers the session the rack came from, even after a restart, so
+    /// W + Enter saves back to it.
+    #[test]
+    fn save_session_defaults_to_the_current_session() {
+        let dir = temp_dir("session-name");
+        let mut app = test_app(&dir);
+        app.default_rack();
+        let w_prompt = |app: &mut App| {
+            app.on_key(key(KeyCode::Char('W')));
+            let Some(Popup::Text { input, .. }) = &app.popup else {
+                panic!("no save prompt")
+            };
+            input.clone()
+        };
+        let volume = |app: &App| app.slots[0].as_ref().unwrap().params[0];
+
+        assert_eq!(w_prompt(&mut app), "", "an unnamed rack has no default");
+        for c in "song".chars() {
+            app.on_key(key(KeyCode::Char(c)));
+        }
+        app.on_key(key(KeyCode::Enter));
+
+        // Edit, quit (autosave), restart from the autosave.
+        app.set_param(Target::Slot(0), 0, 0.33);
+        app.autosave();
+        let mut app = test_app(&dir);
+        // As main.rs restores it at startup.
+        let saved: Session = crate::patch::read_json(&app.storage.autosave_path()).unwrap();
+        app.apply_session(saved);
+        assert_eq!(volume(&app), 0.33);
+
+        // W + Enter writes the edit into "song"; loading it keeps the edit.
+        assert_eq!(w_prompt(&mut app), "song");
+        app.on_key(key(KeyCode::Enter));
+        app.set_param(Target::Slot(0), 0, 0.9);
+        app.load_session_file(&dir.join("sessions/song.json"));
+        assert_eq!(volume(&app), 0.33);
+        assert_eq!(app.session_name.as_deref(), Some("song"));
+
+        // A new rack starts unnamed.
+        app.new_rack(false, None).unwrap();
+        assert_eq!(w_prompt(&mut app), "");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

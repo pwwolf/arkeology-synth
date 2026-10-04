@@ -241,7 +241,7 @@ instances) or `--no-mcp` to turn it off.
 | `⌫` | params: reset to default · rack: remove synth |
 | `a` | add a synth |
 | `l` / `w` | browse/load patches (factory and yours; `tab` filters by synth, `space` auditions) / write the selected synth's patch |
-| `L` / `W` | load / write a session |
+| `L` / `W` | load / write a session (`W` offers the session you last loaded or saved, so `W` Enter saves over it) |
 | `N` | new rack: empty or starter (by default the current rack is saved as a session first) |
 | `f` | load a WAV or FLAC into a granular synth, sampler or kit pad (`K` in the browser loads a whole folder as a kit) |
 | `r` `m` `s` | rename, mute, solo |
