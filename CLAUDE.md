@@ -34,7 +34,7 @@ The TUI can't be driven interactively from a tool call. To check UI changes, use
 Anything heap-allocated (a whole `engine::Slot`, an `fx::FxUnit` with its delay lines, an `Arc<Sample>`) is built on the UI thread and moved in with a `Command`. Whatever the engine replaces goes back through the garbage queue (`engine::Garbage`) so the UI thread drops it. Meters, voice counts and CPU load come back via atomics in `engine::Telemetry`. Keep this discipline in any new feature.
 
 **Parameters are the backbone.** Every synth exposes a static table of `params::ParamDesc` (key, range, scale, unit, group). A slot's state is a flat `Vec<f32>` laid out as `synth::COMMON` (volume, pan, send, transpose, bend range), then the synth's own `PARAMS`, then the insert-FX block `fx::PARAMS` (3 units × `fx::STRIDE`). `SynthKind::param/param_count/fx_base` encapsulate this layout. The master bus follows the same pattern with `params::master::PARAMS` (base params + FX). The same tables drive:
-- the engine: `SetParam` → slot `dirty` → `Instrument::update(&params)`, which recomputes cached coefficients
+- the engine: `SetParam` → `engine::ParamGlide` (continuous params glide over ~20 ms, in log space for `Scale::Exp`; others jump) → slot `dirty` → `Instrument::update(&params)` once per block while gliding, which recomputes cached coefficients. `update` must therefore stay cheap and side-effect free (it runs per block during a glide). The master bus glides the same way
 - the generic TUI editor (groups = contiguous runs of `group`)
 - patch/session JSON, which stores values **by key** so tables can grow
 - MIDI learn and the MCP tools

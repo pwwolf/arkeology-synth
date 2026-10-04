@@ -14,7 +14,7 @@ use crossbeam_queue::ArrayQueue;
 use crate::dsp::{Smooth, pan_gains};
 use crate::fx::{self, FX_UNITS, FxUnit};
 use crate::midi::{MidiKind, MidiMsg};
-use crate::params::master;
+use crate::params::{Kind, ParamDesc, Scale, master};
 use crate::recorder::RecordTap;
 use crate::reverb::Reverb;
 use crate::sample::{Builtins, Sample};
@@ -25,6 +25,8 @@ pub const MAX_SLOTS: usize = 16;
 /// Gain staging: volume parameters map through a square law times these.
 const SLOT_GAIN: f32 = 1.5;
 const MASTER_GAIN: f32 = 1.5;
+/// Time constant for continuous parameter changes (see `ParamGlide`).
+const GLIDE_TIME: f32 = 0.02;
 
 pub enum Command {
     Midi(MidiMsg),
@@ -99,8 +101,100 @@ pub enum Garbage {
 pub type CommandQueue = Arc<ArrayQueue<Command>>;
 pub type GarbageQueue = Arc<ArrayQueue<Garbage>>;
 
+/// Glides continuous parameters towards new values, so stepped control
+/// changes (7-bit MIDI CCs, key presses, MCP) don't zipper. Switches,
+/// choices and integers jump. Built on the UI thread; `set` and `step` never
+/// allocate (`moving` has room for every parameter).
+pub struct ParamGlide {
+    targets: Vec<f32>,
+    modes: Vec<GlideMode>,
+    moving: Vec<usize>,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum GlideMode {
+    Jump,
+    /// Snap when within this distance of the target.
+    Linear(f32),
+    /// Logarithmic parameters (cutoffs, times) glide by ratio.
+    Exp,
+}
+
+impl ParamGlide {
+    pub fn new<'a>(descs: impl Iterator<Item = &'a ParamDesc>, values: &[f32]) -> Self {
+        let modes: Vec<GlideMode> = descs
+            .map(|d| match (d.kind, d.scale) {
+                (Kind::Float, Scale::Exp) if d.min > 0.0 => GlideMode::Exp,
+                (Kind::Float, _) => GlideMode::Linear((d.max - d.min) * 1e-4),
+                _ => GlideMode::Jump,
+            })
+            .collect();
+        ParamGlide {
+            targets: values.to_vec(),
+            moving: Vec::with_capacity(modes.len()),
+            modes,
+        }
+    }
+
+    /// Set a new target. Returns true if `values` changed right away (a jump).
+    pub fn set(&mut self, values: &mut [f32], i: usize, v: f32) -> bool {
+        let (Some(t), Some(mode)) = (self.targets.get_mut(i), self.modes.get(i)) else {
+            return false;
+        };
+        *t = v;
+        if *mode == GlideMode::Jump {
+            values[i] = v;
+            self.moving.retain(|&m| m != i);
+            true
+        } else {
+            if !self.moving.contains(&i) {
+                self.moving.push(i);
+            }
+            false
+        }
+    }
+
+    /// Move gliding values `k` (0..=1) of the way to their targets. Returns
+    /// true if anything changed.
+    pub fn step(&mut self, values: &mut [f32], k: f32) -> bool {
+        if self.moving.is_empty() {
+            return false;
+        }
+        let (targets, modes) = (&self.targets, &self.modes);
+        self.moving.retain(|&i| {
+            let (v, t) = (&mut values[i], targets[i]);
+            match modes[i] {
+                GlideMode::Exp if *v > 0.0 && t > 0.0 => {
+                    let ratio = t / *v;
+                    if (ratio - 1.0).abs() < 1e-4 {
+                        *v = t;
+                        return false;
+                    }
+                    *v *= ratio.powf(k);
+                    true
+                }
+                GlideMode::Linear(eps) if (t - *v).abs() > eps => {
+                    *v += (t - *v) * k;
+                    true
+                }
+                _ => {
+                    *v = t;
+                    false
+                }
+            }
+        });
+        true
+    }
+}
+
+/// Fraction of the remaining distance a glide covers in `frames`.
+fn glide_step(frames: usize, sample_rate: f32) -> f32 {
+    1.0 - (-(frames as f32) / (GLIDE_TIME * sample_rate)).exp()
+}
+
 pub struct Slot {
     params: Vec<f32>,
+    glide: ParamGlide,
     dirty: bool,
     channel: Option<u8>,
     mute: bool,
@@ -136,6 +230,7 @@ impl Slot {
         Box::new(Slot {
             fx_base,
             fx,
+            glide: ParamGlide::new(kind.params(), &params),
             dirty: false,
             channel,
             mute: false,
@@ -193,6 +288,8 @@ pub struct Engine {
     telemetry: Arc<Telemetry>,
     master: [f32; master::PARAMS.len()],
     master_fx: [Box<FxUnit>; FX_UNITS],
+    master_glide: ParamGlide,
+    /// Master FX or reverb settings changed.
     master_dirty: bool,
     recorder: Option<Box<RecordTap>>,
     master_gain: Smooth,
@@ -234,6 +331,7 @@ impl Engine {
             send_r: [0.0; MAX_BLOCK],
             cpu_avg: 0.0,
             master_fx: std::array::from_fn(|_| FxUnit::off(sample_rate)),
+            master_glide: ParamGlide::new(master::PARAMS.iter(), &master_vals),
             master_dirty: false,
             recorder: None,
         };
@@ -296,20 +394,17 @@ impl Engine {
             }
             Command::SetParam { slot, index, value } => {
                 if let Some(s) = self.slots.get_mut(slot).and_then(|s| s.as_mut())
-                    && let Some(p) = s.params.get_mut(index)
+                    && index < s.params.len()
+                    && s.glide.set(&mut s.params, index, value)
                 {
-                    *p = value;
                     s.dirty = true;
                 }
             }
             Command::SetMaster { index, value } => {
-                if let Some(p) = self.master.get_mut(index) {
-                    *p = value;
-                    if index >= master::FX_BASE {
-                        self.master_dirty = true;
-                    } else {
-                        self.apply_reverb_params();
-                    }
+                if index < self.master.len()
+                    && self.master_glide.set(&mut self.master, index, value)
+                {
+                    self.master_dirty = true;
                 }
             }
             Command::SetFx { slot, unit, fx } => {
@@ -447,9 +542,13 @@ impl Engine {
         self.send_l[..n].fill(0.0);
         self.send_r[..n].fill(0.0);
         let any_solo = self.slots.iter().flatten().any(|s| s.solo);
+        let k = glide_step(n, self.sample_rate);
 
         for (idx, slot) in self.slots.iter_mut().enumerate() {
             let Some(s) = slot.as_mut() else { continue };
+            if s.glide.step(&mut s.params, k) {
+                s.dirty = true;
+            }
             if s.dirty {
                 s.inst.update(&s.params);
                 for (u, unit) in s.fx.iter_mut().enumerate() {
@@ -496,10 +595,14 @@ impl Engine {
         }
         // Master insert effects, after the reverb return and before the
         // master volume and clipper.
+        if self.master_glide.step(&mut self.master, k) {
+            self.master_dirty = true;
+        }
         if self.master_dirty {
             for (u, unit) in self.master_fx.iter_mut().enumerate() {
                 unit.update(fx::unit_values(&self.master, master::FX_BASE, u));
             }
+            self.apply_reverb_params();
             self.master_dirty = false;
         }
         for unit in &mut self.master_fx {
@@ -656,6 +759,92 @@ mod tests {
             rms(window(1.0))
         );
         assert!(rms(window(0.2)) < 1e-4, "echo arrived early");
+    }
+
+    #[test]
+    fn continuous_params_glide_and_switches_jump() {
+        let kind = SynthKind::Analog;
+        let mut values = kind.defaults();
+        let mut g = ParamGlide::new(kind.params(), &values);
+        let cutoff = kind.index_of("cutoff").unwrap();
+        let level = kind.index_of("resonance").unwrap();
+        assert!(kind.param(level).default > 0.0);
+        let unison = kind.index_of("unison").unwrap();
+        let capacity = g.moving.capacity();
+        assert_eq!(g.modes[cutoff], GlideMode::Exp);
+
+        values[cutoff] = 200.0;
+        g.targets[cutoff] = 200.0;
+        assert!(!g.set(&mut values, cutoff, 3_200.0), "cutoff should glide");
+        assert!(!g.set(&mut values, level, 0.0), "levels should glide");
+        assert!(g.set(&mut values, unison, 5.0), "integers jump");
+        assert_eq!(values[unison], 5.0);
+
+        // Log-scale glides pass the geometric midpoint (800 Hz), not the linear one.
+        let k = glide_step(MAX_BLOCK, 48_000.0);
+        let mut crossed = false;
+        while g.step(&mut values, k) {
+            if !crossed && values[cutoff] >= 800.0 {
+                crossed = true;
+                assert!(
+                    values[level] < kind.param(level).default * 0.6,
+                    "both glide together"
+                );
+            }
+        }
+        assert_eq!(
+            (values[cutoff], values[level]),
+            (3_200.0, 0.0),
+            "arrives exactly"
+        );
+        assert!(crossed);
+        assert_eq!(g.moving.capacity(), capacity, "no allocation");
+    }
+
+    /// A CC sweep through the engine: the cutoff lags the stepped target
+    /// briefly, settles within ~0.2 s, and the master drive glides too.
+    #[test]
+    fn engine_glides_set_param() {
+        let sr = 48_000.0;
+        let cmds: CommandQueue = Arc::new(ArrayQueue::new(256));
+        let mut e = Engine::new(
+            sr,
+            cmds.clone(),
+            Arc::new(ArrayQueue::new(64)),
+            Arc::new(Telemetry::default()),
+        );
+        let kind = SynthKind::Analog;
+        let slot = Slot::new(kind, kind.defaults(), Some(0), sr, &sample::builtins(), &[]);
+        cmds.push(Command::InstallSlot {
+            slot: 0,
+            data: slot,
+        })
+        .ok();
+        let cutoff = kind.index_of("cutoff").unwrap();
+        let mut out = vec![0.0; 2 * MAX_BLOCK];
+        e.process(&mut out, 2);
+        let start = e.slots[0].as_ref().unwrap().params[cutoff];
+
+        cmds.push(Command::SetParam {
+            slot: 0,
+            index: cutoff,
+            value: start * 4.0,
+        })
+        .ok();
+        cmds.push(Command::SetMaster {
+            index: master::DRIVE,
+            value: 1.0,
+        })
+        .ok();
+        e.process(&mut out, 2);
+        let now = e.slots[0].as_ref().unwrap().params[cutoff];
+        assert!(now > start && now < start * 1.5, "one block in: {now}");
+        assert!(e.master[master::DRIVE] > 0.0 && e.master[master::DRIVE] < 0.2);
+
+        let mut out = vec![0.0; 2 * 9_600];
+        e.process(&mut out, 2);
+        assert_eq!(e.slots[0].as_ref().unwrap().params[cutoff], start * 4.0);
+        assert_eq!(e.master[master::DRIVE], 1.0);
     }
 
     /// Factory patches for the melodic engines must neither vanish nor slam
