@@ -27,7 +27,12 @@ pub struct Patch {
 
 impl Patch {
     /// `samples` holds one optional path per sample slot of the synth type.
-    pub fn from_values(name: &str, kind: SynthKind, values: &[f32], samples: &[Option<PathBuf>]) -> Self {
+    pub fn from_values(
+        name: &str,
+        kind: SynthKind,
+        values: &[f32],
+        samples: &[Option<PathBuf>],
+    ) -> Self {
         let (sample, pads) = if kind == SynthKind::Kit {
             let pads = samples
                 .iter()
@@ -57,9 +62,13 @@ impl Patch {
     /// One optional sample path per sample slot of the synth type.
     pub fn sample_paths(&self) -> Vec<Option<PathBuf>> {
         if self.kind == SynthKind::Kit {
-            (1..=self.kind.sample_slots()).map(|i| self.samples.get(&format!("pad{i}")).cloned()).collect()
+            (1..=self.kind.sample_slots())
+                .map(|i| self.samples.get(&format!("pad{i}")).cloned())
+                .collect()
         } else {
-            (0..self.kind.sample_slots()).map(|_| self.sample.clone()).collect()
+            (0..self.kind.sample_slots())
+                .map(|_| self.sample.clone())
+                .collect()
         }
     }
 
@@ -141,7 +150,12 @@ pub struct Storage {
 impl Storage {
     pub fn new(root: PathBuf) -> Result<Self> {
         let s = Storage { root };
-        for dir in [s.patches_dir(), s.sessions_dir(), s.samples_dir(), s.recordings_dir()] {
+        for dir in [
+            s.patches_dir(),
+            s.sessions_dir(),
+            s.samples_dir(),
+            s.recordings_dir(),
+        ] {
             fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         }
         Ok(s)
@@ -175,13 +189,17 @@ impl Storage {
     }
 
     pub fn save_patch(&self, patch: &Patch) -> Result<PathBuf> {
-        let path = self.patches_dir().join(format!("{}.json", file_stem(&patch.name)));
+        let path = self
+            .patches_dir()
+            .join(format!("{}.json", file_stem(&patch.name)));
         write_json(&path, patch)?;
         Ok(path)
     }
 
     pub fn save_session(&self, name: &str, session: &Session) -> Result<PathBuf> {
-        let path = self.sessions_dir().join(format!("{}.json", file_stem(name)));
+        let path = self
+            .sessions_dir()
+            .join(format!("{}.json", file_stem(name)));
         write_json(&path, session)?;
         Ok(path)
     }
@@ -190,11 +208,23 @@ impl Storage {
     /// kind with the user's patches first. Unreadable files are skipped.
     pub fn list_patches(&self) -> Vec<PatchEntry> {
         let user = json_files(&self.patches_dir()).into_iter().filter_map(|p| {
-            read_json::<Patch>(&p).ok().map(|patch| PatchEntry { patch, user_path: Some(p) })
+            read_json::<Patch>(&p).ok().map(|patch| PatchEntry {
+                patch,
+                user_path: Some(p),
+            })
         });
-        let factory = factory_patches().into_iter().map(|patch| PatchEntry { patch, user_path: None });
+        let factory = factory_patches().into_iter().map(|patch| PatchEntry {
+            patch,
+            user_path: None,
+        });
         let mut out: Vec<PatchEntry> = user.chain(factory).collect();
-        out.sort_by_key(|e| (e.patch.kind.order(), e.is_factory(), e.patch.name.to_lowercase()));
+        out.sort_by_key(|e| {
+            (
+                e.patch.kind.order(),
+                e.is_factory(),
+                e.patch.name.to_lowercase(),
+            )
+        });
         out
     }
 
@@ -231,7 +261,13 @@ pub fn file_stem(name: &str) -> String {
     let s: String = name
         .trim()
         .chars()
-        .map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_' | ' ' | '.') { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '-' | '_' | ' ' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let s = s.trim_matches('.').trim().to_string();
     if s.is_empty() { "untitled".into() } else { s }
@@ -630,7 +666,13 @@ pub fn factory_patches() -> Vec<Patch> {
         make(
             "Acid Square",
             Acid,
-            &[("wave", 1.0), ("cutoff", 250.0), ("resonance", 0.6), ("env_mod", 0.5), ("decay", 0.6)],
+            &[
+                ("wave", 1.0),
+                ("cutoff", 250.0),
+                ("resonance", 0.6),
+                ("env_mod", 0.5),
+                ("decay", 0.6),
+            ],
         ),
         make(
             "Acid Sub Bass",

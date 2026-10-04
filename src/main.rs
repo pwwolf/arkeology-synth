@@ -12,8 +12,8 @@ mod recorder;
 mod reverb;
 mod sample;
 mod synth;
-mod vcsl;
 mod ui;
+mod vcsl;
 
 use std::io::stdout;
 use std::path::PathBuf;
@@ -24,7 +24,8 @@ use anyhow::Result;
 use clap::Parser;
 use crossbeam_queue::ArrayQueue;
 use ratatui::crossterm::event::{
-    self, Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    self, Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use ratatui::crossterm::{execute, terminal};
 
@@ -34,7 +35,10 @@ use crate::midi::{MidiManager, MidiMsg, Sink};
 use crate::patch::{Session, Storage, read_json};
 
 #[derive(Parser, Debug)]
-#[command(version, about = "Arkeology: a multitimbral FM + granular synth for the terminal, played over MIDI")]
+#[command(
+    version,
+    about = "Arkeology: a multitimbral FM + granular synth for the terminal, played over MIDI"
+)]
 struct Args {
     /// Audio output device (substring match; see --list-devices).
     #[arg(long)]
@@ -112,13 +116,19 @@ fn main() -> Result<()> {
     }
     if args.render_kits {
         let n = kitgen::ensure(&storage.samples_dir(), &builtins, true)?;
-        println!("rendered {n} one-shots into {}", kitgen::kits_dir(&storage.samples_dir()).display());
+        println!(
+            "rendered {n} one-shots into {}",
+            kitgen::kits_dir(&storage.samples_dir()).display()
+        );
         return Ok(());
     }
     // First launch (or new recipes): render the built-in sample kits.
     let kits_note = match kitgen::ensure(&storage.samples_dir(), &builtins, false) {
         Ok(0) => None,
-        Ok(n) => Some(Ok(format!("rendered {n} drum one-shots into {}", kitgen::kits_dir(&storage.samples_dir()).display()))),
+        Ok(n) => Some(Ok(format!(
+            "rendered {n} drum one-shots into {}",
+            kitgen::kits_dir(&storage.samples_dir()).display()
+        ))),
         Err(e) => Some(Err(format!("rendering built-in kits: {e:#}"))),
     };
 
@@ -130,12 +140,18 @@ fn main() -> Result<()> {
 
     let audio = {
         let (c, g, t) = (commands.clone(), garbage.clone(), telemetry.clone());
-        audio::start(args.device.as_deref(), args.buffer, errors.clone(), move |sr| {
-            Engine::new(sr, c, g, t)
-        })?
+        audio::start(
+            args.device.as_deref(),
+            args.buffer,
+            errors.clone(),
+            move |sr| Engine::new(sr, c, g, t),
+        )?
     };
 
-    let mut midi = MidiManager::new(Sink { engine: commands.clone(), ui: midi_ui.clone() });
+    let mut midi = MidiManager::new(Sink {
+        engine: commands.clone(),
+        ui: midi_ui.clone(),
+    });
     let mut startup_notes = Vec::new();
     if !args.no_virtual
         && let Err(e) = midi.open_virtual()
@@ -153,7 +169,8 @@ fn main() -> Result<()> {
         let _ = execute!(
             stdout(),
             PushKeyboardEnhancementFlags(
-                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
             )
         );
     }
@@ -199,7 +216,9 @@ fn main() -> Result<()> {
                 app.mcp = Some(rx);
                 app.mcp_addr = Some(addr);
             }
-            Err(e) => startup_notes.push(format!("{e:#} (another instance running? try --mcp-port)")),
+            Err(e) => {
+                startup_notes.push(format!("{e:#} (another instance running? try --mcp-port)"))
+            }
         }
     }
     match kits_note {
@@ -250,10 +269,27 @@ fn render_demo(path: &PathBuf, builtins: &sample::Builtins) -> Result<()> {
     let sr = 48_000.0;
     let commands: CommandQueue = Arc::new(ArrayQueue::new(4096));
     let garbage: GarbageQueue = Arc::new(ArrayQueue::new(256));
-    let mut engine = Engine::new(sr, commands.clone(), garbage, Arc::new(Telemetry::default()));
+    let mut engine = Engine::new(
+        sr,
+        commands.clone(),
+        garbage,
+        Arc::new(Telemetry::default()),
+    );
     let patches = patch::factory_patches();
-    let get = |n: &str| patches.iter().find(|p| p.name == n).expect("factory patch").clone();
-    let rack = [("E.Piano", 0u8), ("Choir Cloud", 1), ("Solid Bass", 2), ("Acid Squelch", 3), ("909 Kit", 9)];
+    let get = |n: &str| {
+        patches
+            .iter()
+            .find(|p| p.name == n)
+            .expect("factory patch")
+            .clone()
+    };
+    let rack = [
+        ("E.Piano", 0u8),
+        ("Choir Cloud", 1),
+        ("Solid Bass", 2),
+        ("Acid Squelch", 3),
+        ("909 Kit", 9),
+    ];
     for (slot, (name, channel)) in rack.iter().enumerate() {
         let p = get(name);
         let mut values = p.values();
@@ -282,10 +318,22 @@ fn render_demo(path: &PathBuf, builtins: &sample::Builtins) -> Result<()> {
     // A 16th-note acid line on channel 4: velocity >= 100 accents, and
     // notes held into the next step slide.
     let line: [(u8, u8, bool); 16] = [
-        (36, 110, false), (36, 80, false), (48, 80, true), (36, 80, false),
-        (39, 110, false), (36, 80, false), (46, 80, true), (48, 110, false),
-        (36, 80, false), (36, 110, false), (43, 80, true), (41, 80, false),
-        (39, 80, false), (36, 110, false), (48, 80, true), (36, 80, false),
+        (36, 110, false),
+        (36, 80, false),
+        (48, 80, true),
+        (36, 80, false),
+        (39, 110, false),
+        (36, 80, false),
+        (46, 80, true),
+        (48, 110, false),
+        (36, 80, false),
+        (36, 110, false),
+        (43, 80, true),
+        (41, 80, false),
+        (39, 80, false),
+        (36, 110, false),
+        (48, 80, true),
+        (36, 80, false),
     ];
     for rep in 0..4 {
         for (step, &(note, vel, slide)) in line.iter().enumerate() {
@@ -362,6 +410,11 @@ fn render_demo(path: &PathBuf, builtins: &sample::Builtins) -> Result<()> {
         w.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
     }
     w.finalize()?;
-    println!("wrote {} ({:.1}s, peak {:.2})", path.display(), total as f32 / sr, peak);
+    println!(
+        "wrote {} ({:.1}s, peak {:.2})",
+        path.display(),
+        total as f32 / sr,
+        peak
+    );
     Ok(())
 }

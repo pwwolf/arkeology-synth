@@ -68,10 +68,44 @@ pub const D_LEVEL: usize = 3;
 macro_rules! drum_params {
     ($key:literal, $group:literal, $tone:literal, $dmin:expr, $dmax:expr, $ddef:expr, $tdef:expr, $ldef:expr) => {
         [
-            P::float(concat!($key, "_tune"), "Tune", $group, -12.0, 12.0, 0.0, Unit::Semitones).step(0.5),
-            P::float(concat!($key, "_decay"), "Decay", $group, $dmin, $dmax, $ddef, Unit::Seconds).exp(),
-            P::float(concat!($key, "_tone"), $tone, $group, 0.0, 1.0, $tdef, Unit::Percent),
-            P::float(concat!($key, "_level"), "Level", $group, 0.0, 1.0, $ldef, Unit::Percent),
+            P::float(
+                concat!($key, "_tune"),
+                "Tune",
+                $group,
+                -12.0,
+                12.0,
+                0.0,
+                Unit::Semitones,
+            )
+            .step(0.5),
+            P::float(
+                concat!($key, "_decay"),
+                "Decay",
+                $group,
+                $dmin,
+                $dmax,
+                $ddef,
+                Unit::Seconds,
+            )
+            .exp(),
+            P::float(
+                concat!($key, "_tone"),
+                $tone,
+                $group,
+                0.0,
+                1.0,
+                $tdef,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!($key, "_level"),
+                "Level",
+                $group,
+                0.0,
+                1.0,
+                $ldef,
+                Unit::Percent,
+            ),
         ]
     };
 }
@@ -84,16 +118,79 @@ const fn build_params() -> [P; DRUM_BASE + N * DRUM_STRIDE] {
     // Group titles carry the MIDI note (and its name) that plays the drum.
     let drums = [
         drum_params!("kick", "Kick · 36 C2", "Punch", 0.05, 2.0, 0.5, 0.5, 0.85),
-        drum_params!("snare", "Snare · 38 D2", "Snappy", 0.03, 1.0, 0.18, 0.6, 0.75),
+        drum_params!(
+            "snare",
+            "Snare · 38 D2",
+            "Snappy",
+            0.03,
+            1.0,
+            0.18,
+            0.6,
+            0.75
+        ),
         drum_params!("rim", "Rim · 37 C#2", "Tone", 0.01, 0.3, 0.04, 0.5, 0.6),
         drum_params!("clap", "Clap · 39 D#2", "Spread", 0.05, 1.5, 0.25, 0.5, 0.7),
-        drum_params!("chat", "Closed Hat · 42 F#2", "Tone", 0.01, 0.5, 0.05, 0.5, 0.55),
-        drum_params!("ohat", "Open Hat · 46 A#2", "Tone", 0.05, 2.0, 0.4, 0.5, 0.5),
-        drum_params!("ltom", "Low Tom · 41 F2", "Punch", 0.05, 2.0, 0.45, 0.4, 0.7),
+        drum_params!(
+            "chat",
+            "Closed Hat · 42 F#2",
+            "Tone",
+            0.01,
+            0.5,
+            0.05,
+            0.5,
+            0.55
+        ),
+        drum_params!(
+            "ohat",
+            "Open Hat · 46 A#2",
+            "Tone",
+            0.05,
+            2.0,
+            0.4,
+            0.5,
+            0.5
+        ),
+        drum_params!(
+            "ltom",
+            "Low Tom · 41 F2",
+            "Punch",
+            0.05,
+            2.0,
+            0.45,
+            0.4,
+            0.7
+        ),
         drum_params!("mtom", "Mid Tom · 45 A2", "Punch", 0.05, 2.0, 0.4, 0.4, 0.7),
-        drum_params!("htom", "High Tom · 48 C3", "Punch", 0.05, 2.0, 0.35, 0.4, 0.7),
-        drum_params!("cowbell", "Cowbell · 56 G#3", "Tone", 0.05, 1.5, 0.3, 0.5, 0.5),
-        drum_params!("cymbal", "Cymbal · 49 C#3", "Tone", 0.2, 5.0, 1.6, 0.5, 0.45),
+        drum_params!(
+            "htom",
+            "High Tom · 48 C3",
+            "Punch",
+            0.05,
+            2.0,
+            0.35,
+            0.4,
+            0.7
+        ),
+        drum_params!(
+            "cowbell",
+            "Cowbell · 56 G#3",
+            "Tone",
+            0.05,
+            1.5,
+            0.3,
+            0.5,
+            0.5
+        ),
+        drum_params!(
+            "cymbal",
+            "Cymbal · 49 C#3",
+            "Tone",
+            0.2,
+            5.0,
+            1.6,
+            0.5,
+            0.45
+        ),
     ];
     let mut out = [head[0]; DRUM_BASE + N * DRUM_STRIDE];
     out[1] = head[1];
@@ -269,7 +366,11 @@ impl DrumsSynth {
             Drum::ClosedHat | Drum::OpenHat | Drum::Cymbal => {
                 v.freq = ratio;
                 v.phase = std::array::from_fn(|_| self.rng.unipolar());
-                let (center, low) = if drum == Drum::Cymbal { (5500.0, 3000.0) } else { (9000.0, 5500.0) };
+                let (center, low) = if drum == Drum::Cymbal {
+                    (5500.0, 3000.0)
+                } else {
+                    (9000.0, 5500.0)
+                };
                 v.c1 = bp(center * ratio, 0.35);
                 v.c2 = hp((low + 4000.0 * k.tone) * ratio, 0.1);
             }
@@ -324,7 +425,14 @@ impl DrumsSynth {
     }
 }
 
-fn render_voice(drum: Drum, v: &mut DrumVoice, out: &mut [f32], inv_sr: f32, choke_coef: f32, rng: &mut Rng) {
+fn render_voice(
+    drum: Drum,
+    v: &mut DrumVoice,
+    out: &mut [f32],
+    inv_sr: f32,
+    choke_coef: f32,
+    rng: &mut Rng,
+) {
     for o in out.iter_mut() {
         let y = match drum {
             Drum::Kick => {

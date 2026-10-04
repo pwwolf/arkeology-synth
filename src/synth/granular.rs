@@ -44,26 +44,128 @@ pub static PARAMS: [P; 23] = [
     VOICES_PARAM,
     GLIDE_PARAM,
     P::choice("source", "Source", "Source", &SOURCES, 1),
-    P::float("position", "Position", "Source", 0.0, 1.0, 0.3, Unit::Percent),
+    P::float(
+        "position",
+        "Position",
+        "Source",
+        0.0,
+        1.0,
+        0.3,
+        Unit::Percent,
+    ),
     P::float("spray", "Spray", "Source", 0.0, 1.0, 0.1, Unit::Percent),
     P::float("speed", "Scan Speed", "Source", -2.0, 2.0, 0.0, Unit::Ratio).step(0.05),
-    P::float("size", "Grain Size", "Grains", 0.005, 2.0, 0.12, Unit::Seconds).exp(),
+    P::float(
+        "size",
+        "Grain Size",
+        "Grains",
+        0.005,
+        2.0,
+        0.12,
+        Unit::Seconds,
+    )
+    .exp(),
     P::float("density", "Density", "Grains", 1.0, 200.0, 25.0, Unit::Hz).exp(),
     P::float("jitter", "Jitter", "Grains", 0.0, 1.0, 0.3, Unit::Percent),
-    P::float("pitch_spray", "Pitch Spray", "Grains", 0.0, 12.0, 0.0, Unit::Semitones).step(0.1),
-    P::float("fine", "Fine Tune", "Grains", -100.0, 100.0, 0.0, Unit::Cents).step(1.0),
-    P::float("spread", "Stereo Spread", "Grains", 0.0, 1.0, 0.6, Unit::Percent),
-    P::float("reverse", "Reverse Prob", "Grains", 0.0, 1.0, 0.0, Unit::Percent),
+    P::float(
+        "pitch_spray",
+        "Pitch Spray",
+        "Grains",
+        0.0,
+        12.0,
+        0.0,
+        Unit::Semitones,
+    )
+    .step(0.1),
+    P::float(
+        "fine",
+        "Fine Tune",
+        "Grains",
+        -100.0,
+        100.0,
+        0.0,
+        Unit::Cents,
+    )
+    .step(1.0),
+    P::float(
+        "spread",
+        "Stereo Spread",
+        "Grains",
+        0.0,
+        1.0,
+        0.6,
+        Unit::Percent,
+    ),
+    P::float(
+        "reverse",
+        "Reverse Prob",
+        "Grains",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
     P::choice("shape", "Window", "Grains", &SHAPES, 0),
     P::toggle("keytrack", "Key Track", "Grains", true),
-    P::float("attack", "Attack", "Amp Env", 0.001, 10.0, 0.3, Unit::Seconds).exp(),
+    P::float(
+        "attack",
+        "Attack",
+        "Amp Env",
+        0.001,
+        10.0,
+        0.3,
+        Unit::Seconds,
+    )
+    .exp(),
     P::float("decay", "Decay", "Amp Env", 0.005, 20.0, 1.0, Unit::Seconds).exp(),
-    P::float("sustain", "Sustain", "Amp Env", 0.0, 1.0, 0.8, Unit::Percent),
-    P::float("release", "Release", "Amp Env", 0.005, 20.0, 1.5, Unit::Seconds).exp(),
+    P::float(
+        "sustain",
+        "Sustain",
+        "Amp Env",
+        0.0,
+        1.0,
+        0.8,
+        Unit::Percent,
+    ),
+    P::float(
+        "release",
+        "Release",
+        "Amp Env",
+        0.005,
+        20.0,
+        1.5,
+        Unit::Seconds,
+    )
+    .exp(),
     P::choice("filter_type", "Type", "Filter", &FILTERS, 0),
-    P::float("cutoff", "Cutoff", "Filter", 20.0, 20_000.0, 12_000.0, Unit::Hz).exp(),
-    P::float("resonance", "Resonance", "Filter", 0.0, 1.0, 0.1, Unit::Percent),
-    P::float("wheel_spray", "Wheel>Spray", "Filter", 0.0, 1.0, 0.5, Unit::Percent),
+    P::float(
+        "cutoff",
+        "Cutoff",
+        "Filter",
+        20.0,
+        20_000.0,
+        12_000.0,
+        Unit::Hz,
+    )
+    .exp(),
+    P::float(
+        "resonance",
+        "Resonance",
+        "Filter",
+        0.0,
+        1.0,
+        0.1,
+        Unit::Percent,
+    ),
+    P::float(
+        "wheel_spray",
+        "Wheel>Spray",
+        "Filter",
+        0.0,
+        1.0,
+        0.5,
+        Unit::Percent,
+    ),
 ];
 
 const MAX_GRAINS: usize = 64;
@@ -240,7 +342,11 @@ impl Voice for GranularVoice {
         };
 
         self.pitch = glide(self.pitch, self.note as f32, ctl.glide_coef, n);
-        let semis = if s.keytrack { self.pitch - 60.0 + ctl.pitch } else { ctl.pitch };
+        let semis = if s.keytrack {
+            self.pitch - 60.0 + ctl.pitch
+        } else {
+            ctl.pitch
+        };
         let ratio = semitones_to_ratio(semis) * s.fine_ratio * (src.sample_rate / s.sample_rate);
 
         let advance = s.speed * n as f32 * src.sample_rate / s.sample_rate / src.len() as f32;
@@ -369,7 +475,8 @@ impl GranularSynth {
             2 => FilterMode::HighPass,
             _ => FilterMode::LowPass,
         };
-        s.filter_bypass = mode == FilterMode::LowPass && p[CUTOFF] >= 19_000.0 && p[RESONANCE] < 0.05;
+        s.filter_bypass =
+            mode == FilterMode::LowPass && p[CUTOFF] >= 19_000.0 && p[RESONANCE] < 0.05;
         s.filter = SvfCoefs::new(mode, p[CUTOFF], p[RESONANCE], sr);
         s.wheel_spray = p[WHEEL_SPRAY];
         let overlap = p[SIZE] * p[DENSITY];

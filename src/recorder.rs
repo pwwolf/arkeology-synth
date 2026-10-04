@@ -45,7 +45,9 @@ impl RecordTap {
     pub fn write(&self, l: &[f32], r: &[f32]) {
         let n = l.len().min(MAX_BLOCK);
         let Some(mut block) = self.free.pop() else {
-            self.shared.dropped_frames.fetch_add(n as u64, Ordering::Relaxed);
+            self.shared
+                .dropped_frames
+                .fetch_add(n as u64, Ordering::Relaxed);
             return;
         };
         for i in 0..n {
@@ -83,40 +85,61 @@ impl Recording {
             bits_per_sample: 32,
             sample_format: hound::SampleFormat::Float,
         };
-        let mut wav = hound::WavWriter::create(&path, spec).with_context(|| format!("creating {}", path.display()))?;
+        let mut wav = hound::WavWriter::create(&path, spec)
+            .with_context(|| format!("creating {}", path.display()))?;
         let free = Arc::new(ArrayQueue::new(POOL_BLOCKS));
         let full = Arc::new(ArrayQueue::new(POOL_BLOCKS));
         for _ in 0..POOL_BLOCKS {
-            let _ = free.push(Box::new(RecBlock { len: 0, data: [0.0; MAX_BLOCK * 2] }));
+            let _ = free.push(Box::new(RecBlock {
+                len: 0,
+                data: [0.0; MAX_BLOCK * 2],
+            }));
         }
         let shared = Arc::new(RecShared::default());
-        let tap = Box::new(RecordTap { free: free.clone(), full: full.clone(), shared: shared.clone() });
+        let tap = Box::new(RecordTap {
+            free: free.clone(),
+            full: full.clone(),
+            shared: shared.clone(),
+        });
         let thread_shared = shared.clone();
-        let writer = std::thread::Builder::new().name("recorder".into()).spawn(move || -> Result<()> {
-            loop {
-                // Read `done` before draining so a block pushed just before
-                // the engine finished is never missed.
-                let done = thread_shared.done.load(Ordering::Acquire);
-                let mut wrote = false;
-                while let Some(block) = full.pop() {
-                    for &s in &block.data[..block.len * 2] {
-                        wav.write_sample(s)?;
+        let writer =
+            std::thread::Builder::new()
+                .name("recorder".into())
+                .spawn(move || -> Result<()> {
+                    loop {
+                        // Read `done` before draining so a block pushed just before
+                        // the engine finished is never missed.
+                        let done = thread_shared.done.load(Ordering::Acquire);
+                        let mut wrote = false;
+                        while let Some(block) = full.pop() {
+                            for &s in &block.data[..block.len * 2] {
+                                wav.write_sample(s)?;
+                            }
+                            thread_shared
+                                .frames
+                                .fetch_add(block.len as u64, Ordering::Relaxed);
+                            let _ = free.push(block);
+                            wrote = true;
+                        }
+                        if done {
+                            break;
+                        }
+                        if !wrote {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
                     }
-                    thread_shared.frames.fetch_add(block.len as u64, Ordering::Relaxed);
-                    let _ = free.push(block);
-                    wrote = true;
-                }
-                if done {
-                    break;
-                }
-                if !wrote {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-            }
-            wav.finalize()?;
-            Ok(())
-        })?;
-        Ok((Recording { path, sample_rate, shared, writer: Some(writer) }, tap))
+                    wav.finalize()?;
+                    Ok(())
+                })?;
+        Ok((
+            Recording {
+                path,
+                sample_rate,
+                shared,
+                writer: Some(writer),
+            },
+            tap,
+        ))
     }
 
     pub fn seconds(&self) -> f64 {
@@ -135,7 +158,8 @@ impl Recording {
     /// Wait for the file to be finalized.
     pub fn join(mut self) -> Result<PathBuf> {
         if let Some(w) = self.writer.take() {
-            w.join().map_err(|_| anyhow!("recorder thread panicked"))??;
+            w.join()
+                .map_err(|_| anyhow!("recorder thread panicked"))??;
         }
         Ok(self.path)
     }
@@ -151,7 +175,9 @@ mod tests {
         let (rec, tap) = Recording::start(path.clone(), 48_000.0).unwrap();
         let mut expected = Vec::new();
         for b in 0..100 {
-            let l: Vec<f32> = (0..64).map(|i| ((b * 64 + i) as f32 * 0.001).sin()).collect();
+            let l: Vec<f32> = (0..64)
+                .map(|i| ((b * 64 + i) as f32 * 0.001).sin())
+                .collect();
             let r: Vec<f32> = l.iter().map(|v| -v).collect();
             tap.write(&l, &r);
             for (a, c) in l.iter().zip(&r) {

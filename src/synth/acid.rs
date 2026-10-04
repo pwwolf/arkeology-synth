@@ -28,16 +28,82 @@ pub const SLIDE: usize = 10;
 
 pub static PARAMS: [P; 11] = [
     P::choice("wave", "Waveform", "Oscillator", &WAVES, 0),
-    P::float("tune", "Tune", "Oscillator", -100.0, 100.0, 0.0, Unit::Cents).step(1.0),
-    P::float("drive", "Drive", "Oscillator", 0.0, 1.0, 0.25, Unit::Percent),
+    P::float(
+        "tune",
+        "Tune",
+        "Oscillator",
+        -100.0,
+        100.0,
+        0.0,
+        Unit::Cents,
+    )
+    .step(1.0),
+    P::float(
+        "drive",
+        "Drive",
+        "Oscillator",
+        0.0,
+        1.0,
+        0.25,
+        Unit::Percent,
+    ),
     P::float("cutoff", "Cutoff", "Filter", 30.0, 8_000.0, 350.0, Unit::Hz).exp(),
-    P::float("resonance", "Resonance", "Filter", 0.0, 1.0, 0.7, Unit::Percent),
-    P::float("env_mod", "Env Mod", "Filter", 0.0, 1.0, 0.55, Unit::Percent),
+    P::float(
+        "resonance",
+        "Resonance",
+        "Filter",
+        0.0,
+        1.0,
+        0.7,
+        Unit::Percent,
+    ),
+    P::float(
+        "env_mod",
+        "Env Mod",
+        "Filter",
+        0.0,
+        1.0,
+        0.55,
+        Unit::Percent,
+    ),
     P::float("decay", "Decay", "Filter", 0.05, 3.0, 0.45, Unit::Seconds).exp(),
-    P::float("wheel_cutoff", "Wheel>Cutoff", "Filter", 0.0, 1.0, 0.5, Unit::Percent),
-    P::float("accent", "Accent", "Accent & Slide", 0.0, 1.0, 0.6, Unit::Percent),
-    P::int("accent_vel", "Accent Vel >=", "Accent & Slide", 1, 127, 100, Unit::None),
-    P::float("slide", "Slide Time", "Accent & Slide", 0.005, 0.5, 0.06, Unit::Seconds).exp(),
+    P::float(
+        "wheel_cutoff",
+        "Wheel>Cutoff",
+        "Filter",
+        0.0,
+        1.0,
+        0.5,
+        Unit::Percent,
+    ),
+    P::float(
+        "accent",
+        "Accent",
+        "Accent & Slide",
+        0.0,
+        1.0,
+        0.6,
+        Unit::Percent,
+    ),
+    P::int(
+        "accent_vel",
+        "Accent Vel >=",
+        "Accent & Slide",
+        1,
+        127,
+        100,
+        Unit::None,
+    ),
+    P::float(
+        "slide",
+        "Slide Time",
+        "Accent & Slide",
+        0.005,
+        0.5,
+        0.06,
+        Unit::Seconds,
+    )
+    .exp(),
 ];
 
 /// Filter envelope decay used for accented notes, as on the 303.
@@ -189,7 +255,11 @@ impl AcidSynth {
         let sr = self.sample_rate;
         let target = self.note as f32;
         let offset = self.transpose + self.bend * self.bend_range + self.tune;
-        let env_coef = if self.accent { self.accent_decay_coef } else { self.decay_coef };
+        let env_coef = if self.accent {
+            self.accent_decay_coef
+        } else {
+            self.decay_coef
+        };
         let sweep_coef = 1.0 - (-1.0 / (0.06 * sr)).exp();
         let gain_coef = 1.0 - (-1.0 / (0.004 * sr)).exp();
         let accent_level = if self.accent { self.accent_amt } else { 0.0 };
@@ -217,7 +287,8 @@ impl AcidSynth {
             self.accent_sweep += (self.filter_env * accent_level - self.accent_sweep) * sweep_coef;
             self.accent_gain += (1.0 + accent_level - self.accent_gain) * gain_coef;
 
-            let octaves = self.env_mod * 4.5 * self.filter_env + self.accent_sweep * 3.0 + wheel_oct;
+            let octaves =
+                self.env_mod * 4.5 * self.filter_env + self.accent_sweep * 3.0 + wheel_oct;
             let fc = (self.cutoff * octaves.exp2()).min(sr * 0.45);
             let g = (std::f32::consts::PI * fc / sr).tan();
             let y = self.ladder.process(osc * 0.8, g, self.k) * comp;

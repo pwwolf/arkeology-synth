@@ -88,7 +88,15 @@ impl ParamDesc {
         default: i32,
         unit: Unit,
     ) -> Self {
-        let mut p = Self::float(key, name, group, min as f32, max as f32, default as f32, unit);
+        let mut p = Self::float(
+            key,
+            name,
+            group,
+            min as f32,
+            max as f32,
+            default as f32,
+            unit,
+        );
         p.kind = Kind::Int;
         p
     }
@@ -113,8 +121,21 @@ impl ParamDesc {
         p
     }
 
-    pub const fn toggle(key: &'static str, name: &'static str, group: &'static str, on: bool) -> Self {
-        let mut p = Self::float(key, name, group, 0.0, 1.0, if on { 1.0 } else { 0.0 }, Unit::None);
+    pub const fn toggle(
+        key: &'static str,
+        name: &'static str,
+        group: &'static str,
+        on: bool,
+    ) -> Self {
+        let mut p = Self::float(
+            key,
+            name,
+            group,
+            0.0,
+            1.0,
+            if on { 1.0 } else { 0.0 },
+            Unit::None,
+        );
         p.kind = Kind::Toggle;
         p
     }
@@ -177,7 +198,11 @@ impl ParamDesc {
             };
             // Snap to the step grid when using normal/coarse steps.
             let next = v + dir * step;
-            let snapped = if size == StepSize::Fine { next } else { (next / step).round() * step };
+            let snapped = if size == StepSize::Fine {
+                next
+            } else {
+                (next / step).round() * step
+            };
             return self.clamp(snapped);
         }
         let step = match size {
@@ -230,7 +255,10 @@ impl ParamDesc {
         let t = text.trim().to_ascii_lowercase();
         match self.kind {
             Kind::Enum(opts) => {
-                if let Some(i) = opts.iter().position(|o| o.to_ascii_lowercase().starts_with(&t)) {
+                if let Some(i) = opts
+                    .iter()
+                    .position(|o| o.to_ascii_lowercase().starts_with(&t))
+                {
                     return Some(i as f32);
                 }
             }
@@ -312,10 +340,42 @@ pub mod master {
 
     const BASE: [P; FX_BASE] = [
         P::float("volume", "Volume", "Master", 0.0, 1.0, 0.8, Unit::Percent),
-        P::float("reverb_size", "Size", "Reverb Send", 0.0, 1.0, 0.75, Unit::Percent),
-        P::float("reverb_damp", "Damping", "Reverb Send", 0.0, 1.0, 0.4, Unit::Percent),
-        P::float("reverb_width", "Width", "Reverb Send", 0.0, 1.0, 1.0, Unit::Percent),
-        P::float("reverb_return", "Return", "Reverb Send", 0.0, 1.0, 0.5, Unit::Percent),
+        P::float(
+            "reverb_size",
+            "Size",
+            "Reverb Send",
+            0.0,
+            1.0,
+            0.75,
+            Unit::Percent,
+        ),
+        P::float(
+            "reverb_damp",
+            "Damping",
+            "Reverb Send",
+            0.0,
+            1.0,
+            0.4,
+            Unit::Percent,
+        ),
+        P::float(
+            "reverb_width",
+            "Width",
+            "Reverb Send",
+            0.0,
+            1.0,
+            1.0,
+            Unit::Percent,
+        ),
+        P::float(
+            "reverb_return",
+            "Return",
+            "Reverb Send",
+            0.0,
+            1.0,
+            0.5,
+            Unit::Percent,
+        ),
         P::float("drive", "Drive", "Master", 0.0, 1.0, 0.0, Unit::Percent),
     ];
 
@@ -325,7 +385,11 @@ pub mod master {
         let mut out = [BASE[0]; LEN];
         let mut i = 0;
         while i < LEN {
-            out[i] = if i < FX_BASE { BASE[i] } else { crate::fx::TABLE[i - FX_BASE] };
+            out[i] = if i < FX_BASE {
+                BASE[i]
+            } else {
+                crate::fx::TABLE[i - FX_BASE]
+            };
             i += 1;
         }
         out

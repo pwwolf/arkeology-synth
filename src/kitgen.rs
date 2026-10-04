@@ -42,7 +42,13 @@ struct Layer {
 }
 
 fn layer(base: Base, overrides: &[(&'static str, f32)], note: u8, gain: f32) -> Layer {
-    Layer { base, overrides: overrides.to_vec(), note, velocity: 0.9, gain }
+    Layer {
+        base,
+        overrides: overrides.to_vec(),
+        note,
+        velocity: 0.9,
+        gain,
+    }
 }
 
 struct Hit {
@@ -68,7 +74,12 @@ const MEMBRANE: Base = Base::Kind(SynthKind::Physical);
 /// The classic drum-machine hits, rendered from a Drums patch.
 fn machine_hits(base: &'static str) -> Vec<Hit> {
     let d = Base::Patch(base);
-    let hit = |file, seconds, note| Hit { file, seconds, layers: vec![layer(d, &[], note, 1.0)], fx: Vec::new() };
+    let hit = |file, seconds, note| Hit {
+        file,
+        seconds,
+        layers: vec![layer(d, &[], note, 1.0)],
+        fx: Vec::new(),
+    };
     vec![
         hit("Kick.wav", 1.5, 36),
         hit("Snare.wav", 0.6, 38),
@@ -84,7 +95,16 @@ fn machine_hits(base: &'static str) -> Vec<Hit> {
         Hit {
             file: "Ride.wav",
             seconds: 2.5,
-            layers: vec![layer(d, &[("cymbal_tune", 4.0), ("cymbal_decay", 1.0), ("cymbal_tone", 0.9)], 49, 1.0)],
+            layers: vec![layer(
+                d,
+                &[
+                    ("cymbal_tune", 4.0),
+                    ("cymbal_decay", 1.0),
+                    ("cymbal_tone", 0.9),
+                ],
+                49,
+                1.0,
+            )],
             fx: Vec::new(),
         },
     ]
@@ -109,12 +129,22 @@ fn machine_pads() -> Vec<PadSpec> {
     ]
 }
 
-const MEMBRANE_SET: &[(&str, f32)] = &[("model", 1.0), ("material", 5.0), ("body", 0.0), ("reverb_send", 0.0)];
+const MEMBRANE_SET: &[(&str, f32)] = &[
+    ("model", 1.0),
+    ("material", 5.0),
+    ("body", 0.0),
+    ("reverb_send", 0.0),
+];
 
 fn recipes() -> Vec<KitRecipe> {
     let k909 = Base::Patch("909 Kit");
-    let room: &'static [(&str, f32)] =
-        &[("fx1_type", 2.0), ("fx1_mix", 0.18), ("fx1_reverb_size", 0.3), ("fx1_reverb_damp", 0.6), ("fx1_reverb_predelay", 0.01)];
+    let room: &'static [(&str, f32)] = &[
+        ("fx1_type", 2.0),
+        ("fx1_mix", 0.18),
+        ("fx1_reverb_size", 0.3),
+        ("fx1_reverb_damp", 0.6),
+        ("fx1_reverb_predelay", 0.01),
+    ];
     let punch: &'static [(&str, f32)] = &[
         ("fx1_type", 9.0),
         ("fx1_mix", 1.0),
@@ -132,22 +162,58 @@ fn recipes() -> Vec<KitRecipe> {
     let shaker = || Hit {
         file: "Shaker.wav",
         seconds: 0.3,
-        layers: vec![layer(k909, &[("chat_decay", 0.12), ("chat_tone", 1.0)], 42, 1.0)],
-        fx: vec![("fx1_type", 7.0), ("fx1_mix", 1.0), ("fx1_filter_type", 4.0), ("fx1_filter_cutoff", 4000.0)],
+        layers: vec![layer(
+            k909,
+            &[("chat_decay", 0.12), ("chat_tone", 1.0)],
+            42,
+            1.0,
+        )],
+        fx: vec![
+            ("fx1_type", 7.0),
+            ("fx1_mix", 1.0),
+            ("fx1_filter_type", 4.0),
+            ("fx1_filter_cutoff", 4000.0),
+        ],
     };
     let tambourine = || Hit {
         file: "Tambourine.wav",
         seconds: 0.5,
         layers: vec![
             layer(k909, &[("chat_tune", 5.0), ("chat_decay", 0.25)], 42, 1.0),
-            layer(MEMBRANE, &[("model", 1.0), ("material", 1.0), ("decay", 0.2), ("hardness", 0.9), ("body", 0.0)], 96, 0.4),
+            layer(
+                MEMBRANE,
+                &[
+                    ("model", 1.0),
+                    ("material", 1.0),
+                    ("decay", 0.2),
+                    ("hardness", 0.9),
+                    ("body", 0.0),
+                ],
+                96,
+                0.4,
+            ),
         ],
         fx: Vec::new(),
     };
     vec![
-        KitRecipe { name: "808", patch_name: "808 Sampled", hits: machine_hits("808 Kit"), pads: machine_pads() },
-        KitRecipe { name: "909", patch_name: "909 Sampled", hits: machine_hits("909 Kit"), pads: machine_pads() },
-        KitRecipe { name: "Lo-Fi", patch_name: "Lo-Fi Sampled", hits: machine_hits("Lo-Fi Kit"), pads: machine_pads() },
+        KitRecipe {
+            name: "808",
+            patch_name: "808 Sampled",
+            hits: machine_hits("808 Kit"),
+            pads: machine_pads(),
+        },
+        KitRecipe {
+            name: "909",
+            patch_name: "909 Sampled",
+            hits: machine_hits("909 Kit"),
+            pads: machine_pads(),
+        },
+        KitRecipe {
+            name: "Lo-Fi",
+            patch_name: "Lo-Fi Sampled",
+            hits: machine_hits("Lo-Fi Kit"),
+            pads: machine_pads(),
+        },
         KitRecipe {
             name: "Hybrid",
             patch_name: "Hybrid Kit",
@@ -157,7 +223,18 @@ fn recipes() -> Vec<KitRecipe> {
                     seconds: 1.2,
                     layers: vec![
                         layer(k909, &[], 36, 1.0),
-                        layer(MEMBRANE, &[("model", 1.0), ("material", 5.0), ("decay", 0.5), ("hardness", 0.7), ("body", 0.0)], 28, 0.8),
+                        layer(
+                            MEMBRANE,
+                            &[
+                                ("model", 1.0),
+                                ("material", 5.0),
+                                ("decay", 0.5),
+                                ("hardness", 0.7),
+                                ("body", 0.0),
+                            ],
+                            28,
+                            0.8,
+                        ),
                     ],
                     fx: punch.to_vec(),
                 },
@@ -166,41 +243,124 @@ fn recipes() -> Vec<KitRecipe> {
                     seconds: 1.0,
                     layers: vec![
                         layer(k909, &[("snare_tone", 0.8), ("snare_tune", 2.0)], 38, 1.0),
-                        layer(MEMBRANE, &[("model", 1.0), ("material", 5.0), ("decay", 0.25), ("hardness", 0.8), ("body", 0.0)], 50, 0.6),
+                        layer(
+                            MEMBRANE,
+                            &[
+                                ("model", 1.0),
+                                ("material", 5.0),
+                                ("decay", 0.25),
+                                ("hardness", 0.8),
+                                ("body", 0.0),
+                            ],
+                            50,
+                            0.6,
+                        ),
                     ],
                     fx: room.to_vec(),
                 },
-                Hit { file: "Clap.wav", seconds: 1.2, layers: vec![layer(k909, &[], 39, 1.0)], fx: room.to_vec() },
+                Hit {
+                    file: "Clap.wav",
+                    seconds: 1.2,
+                    layers: vec![layer(k909, &[], 39, 1.0)],
+                    fx: room.to_vec(),
+                },
                 Hit {
                     file: "HH Closed.wav",
                     seconds: 0.4,
                     layers: vec![layer(k909, &[("chat_tone", 0.7)], 42, 1.0)],
-                    fx: vec![("fx1_type", 6.0), ("fx1_mix", 1.0), ("fx1_drive_amount", 0.2), ("fx1_drive_output", -3.0)],
+                    fx: vec![
+                        ("fx1_type", 6.0),
+                        ("fx1_mix", 1.0),
+                        ("fx1_drive_amount", 0.2),
+                        ("fx1_drive_output", -3.0),
+                    ],
                 },
-                Hit { file: "HH Open.wav", seconds: 1.2, layers: vec![layer(k909, &[("ohat_tone", 0.7), ("ohat_decay", 0.5)], 46, 1.0)], fx: Vec::new() },
+                Hit {
+                    file: "HH Open.wav",
+                    seconds: 1.2,
+                    layers: vec![layer(
+                        k909,
+                        &[("ohat_tone", 0.7), ("ohat_decay", 0.5)],
+                        46,
+                        1.0,
+                    )],
+                    fx: Vec::new(),
+                },
                 Hit {
                     file: "Rim.wav",
                     seconds: 0.4,
                     layers: vec![
-                        layer(MEMBRANE, &[("model", 1.0), ("material", 0.0), ("decay", 0.15), ("hardness", 0.9), ("body", 0.0)], 81, 1.0),
+                        layer(
+                            MEMBRANE,
+                            &[
+                                ("model", 1.0),
+                                ("material", 0.0),
+                                ("decay", 0.15),
+                                ("hardness", 0.9),
+                                ("body", 0.0),
+                            ],
+                            81,
+                            1.0,
+                        ),
                         layer(k909, &[], 37, 0.5),
                     ],
                     fx: Vec::new(),
                 },
-                Hit { file: "Tom Low.wav", seconds: 1.5, layers: tom_layers(40, 41), fx: room.to_vec() },
-                Hit { file: "Tom Mid.wav", seconds: 1.5, layers: tom_layers(45, 45), fx: room.to_vec() },
-                Hit { file: "Tom High.wav", seconds: 1.5, layers: tom_layers(50, 48), fx: room.to_vec() },
-                Hit { file: "Crash.wav", seconds: 3.0, layers: vec![layer(k909, &[("cymbal_decay", 2.5)], 49, 1.0)], fx: room.to_vec() },
+                Hit {
+                    file: "Tom Low.wav",
+                    seconds: 1.5,
+                    layers: tom_layers(40, 41),
+                    fx: room.to_vec(),
+                },
+                Hit {
+                    file: "Tom Mid.wav",
+                    seconds: 1.5,
+                    layers: tom_layers(45, 45),
+                    fx: room.to_vec(),
+                },
+                Hit {
+                    file: "Tom High.wav",
+                    seconds: 1.5,
+                    layers: tom_layers(50, 48),
+                    fx: room.to_vec(),
+                },
+                Hit {
+                    file: "Crash.wav",
+                    seconds: 3.0,
+                    layers: vec![layer(k909, &[("cymbal_decay", 2.5)], 49, 1.0)],
+                    fx: room.to_vec(),
+                },
                 Hit {
                     file: "Ride.wav",
                     seconds: 2.5,
                     layers: vec![
-                        layer(MEMBRANE, &[("model", 1.0), ("material", 1.0), ("decay", 2.0), ("hardness", 0.9), ("body", 0.0)], 84, 1.0),
-                        layer(k909, &[("cymbal_tune", 4.0), ("cymbal_decay", 1.0)], 49, 0.5),
+                        layer(
+                            MEMBRANE,
+                            &[
+                                ("model", 1.0),
+                                ("material", 1.0),
+                                ("decay", 2.0),
+                                ("hardness", 0.9),
+                                ("body", 0.0),
+                            ],
+                            84,
+                            1.0,
+                        ),
+                        layer(
+                            k909,
+                            &[("cymbal_tune", 4.0), ("cymbal_decay", 1.0)],
+                            49,
+                            0.5,
+                        ),
                     ],
                     fx: Vec::new(),
                 },
-                Hit { file: "Cowbell.wav", seconds: 1.0, layers: vec![layer(k909, &[], 56, 1.0)], fx: Vec::new() },
+                Hit {
+                    file: "Cowbell.wav",
+                    seconds: 1.0,
+                    layers: vec![layer(k909, &[], 56, 1.0)],
+                    fx: Vec::new(),
+                },
                 shaker(),
                 tambourine(),
             ],
@@ -225,8 +385,18 @@ fn recipes() -> Vec<KitRecipe> {
                 bar_hit("Triangle.wav", 1.0, 100, 3.0),
                 bar_hit("Agogo High.wav", 1.0, 79, 0.8),
                 bar_hit("Agogo Low.wav", 1.0, 74, 0.8),
-                Hit { file: "Log Drum.wav", seconds: 0.8, layers: vec![layer(Base::Patch("Log Drum"), &[], 48, 1.0)], fx: Vec::new() },
-                Hit { file: "Cowbell.wav", seconds: 1.0, layers: vec![layer(k909, &[], 56, 1.0)], fx: Vec::new() },
+                Hit {
+                    file: "Log Drum.wav",
+                    seconds: 0.8,
+                    layers: vec![layer(Base::Patch("Log Drum"), &[], 48, 1.0)],
+                    fx: Vec::new(),
+                },
+                Hit {
+                    file: "Cowbell.wav",
+                    seconds: 1.0,
+                    layers: vec![layer(k909, &[], 56, 1.0)],
+                    fx: Vec::new(),
+                },
                 shaker(),
                 tambourine(),
             ],
@@ -255,7 +425,18 @@ fn recipes() -> Vec<KitRecipe> {
 
 fn tom_layers(membrane_note: u8, drum_note: u8) -> Vec<Layer> {
     vec![
-        layer(MEMBRANE, &[("model", 1.0), ("material", 5.0), ("decay", 0.6), ("hardness", 0.6), ("body", 0.0)], membrane_note, 1.0),
+        layer(
+            MEMBRANE,
+            &[
+                ("model", 1.0),
+                ("material", 5.0),
+                ("decay", 0.6),
+                ("hardness", 0.6),
+                ("body", 0.0),
+            ],
+            membrane_note,
+            1.0,
+        ),
         layer(Base::Patch("909 Kit"), &[], drum_note, 0.5),
     ]
 }
@@ -263,30 +444,53 @@ fn tom_layers(membrane_note: u8, drum_note: u8) -> Vec<Layer> {
 fn membrane_hit(file: &'static str, note: u8, decay: f32, hardness: f32) -> Hit {
     let mut o = MEMBRANE_SET.to_vec();
     o.extend([("decay", decay), ("hardness", hardness), ("position", 0.3)]);
-    Hit { file, seconds: 1.2, layers: vec![layer(MEMBRANE, &o, note, 1.0)], fx: Vec::new() }
+    Hit {
+        file,
+        seconds: 1.2,
+        layers: vec![layer(MEMBRANE, &o, note, 1.0)],
+        fx: Vec::new(),
+    }
 }
 
 fn bar_hit(file: &'static str, material: f32, note: u8, decay: f32) -> Hit {
-    let o = [("model", 1.0), ("body", 0.0), ("reverb_send", 0.0), ("hardness", 0.95), ("material", material), ("decay", decay)];
-    Hit { file, seconds: (decay * 1.5).clamp(0.4, 4.0), layers: vec![layer(MEMBRANE, &o, note, 1.0)], fx: Vec::new() }
+    let o = [
+        ("model", 1.0),
+        ("body", 0.0),
+        ("reverb_send", 0.0),
+        ("hardness", 0.95),
+        ("material", material),
+        ("decay", decay),
+    ];
+    Hit {
+        file,
+        seconds: (decay * 1.5).clamp(0.4, 4.0),
+        layers: vec![layer(MEMBRANE, &o, note, 1.0)],
+        fx: Vec::new(),
+    }
 }
 
 fn render_layer(l: &Layer, frames: usize, builtins: &Builtins) -> Result<(Vec<f32>, Vec<f32>)> {
     let (kind, mut values) = match l.base {
         Base::Patch(name) => {
-            let p = factory_patches().into_iter().find(|p| p.name == name).with_context(|| format!("no patch {name}"))?;
+            let p = factory_patches()
+                .into_iter()
+                .find(|p| p.name == name)
+                .with_context(|| format!("no patch {name}"))?;
             (p.kind, p.values())
         }
         Base::Kind(k) => (k, k.defaults()),
     };
     for (key, v) in &l.overrides {
-        let i = kind.index_of(key).with_context(|| format!("{kind:?} has no parameter {key}"))?;
+        let i = kind
+            .index_of(key)
+            .with_context(|| format!("{kind:?} has no parameter {key}"))?;
         values[i] = kind.param(i).clamp(*v);
     }
     let mut inst = Instrument::new(kind, SR, builtins);
     inst.update(&values);
-    let mut chain: Vec<Box<FxUnit>> =
-        (0..FX_UNITS).map(|u| FxUnit::from_values(fx::unit_values(&values, kind.fx_base(), u), SR)).collect();
+    let mut chain: Vec<Box<FxUnit>> = (0..FX_UNITS)
+        .map(|u| FxUnit::from_values(fx::unit_values(&values, kind.fx_base(), u), SR))
+        .collect();
     let vol = values[crate::synth::VOLUME];
     let gain = vol * vol * l.gain;
     inst.note_on(l.note, l.velocity);
@@ -320,10 +524,15 @@ fn render_hit(hit: &Hit, builtins: &Builtins) -> Result<(Vec<f32>, Vec<f32>)> {
     if !hit.fx.is_empty() {
         let mut values: Vec<f32> = fx::TABLE.iter().map(|d| d.default).collect();
         for (key, v) in &hit.fx {
-            let i = fx::TABLE.iter().position(|d| d.key == *key).with_context(|| format!("no FX parameter {key}"))?;
+            let i = fx::TABLE
+                .iter()
+                .position(|d| d.key == *key)
+                .with_context(|| format!("no FX parameter {key}"))?;
             values[i] = fx::TABLE[i].clamp(*v);
         }
-        let mut chain: Vec<Box<FxUnit>> = (0..FX_UNITS).map(|u| FxUnit::from_values(fx::unit_values(&values, 0, u), SR)).collect();
+        let mut chain: Vec<Box<FxUnit>> = (0..FX_UNITS)
+            .map(|u| FxUnit::from_values(fx::unit_values(&values, 0, u), SR))
+            .collect();
         for start in (0..frames).step_by(MAX_BLOCK) {
             let end = (start + MAX_BLOCK).min(frames);
             for unit in &mut chain {
@@ -336,13 +545,21 @@ fn render_hit(hit: &Hit, builtins: &Builtins) -> Result<(Vec<f32>, Vec<f32>)> {
     anyhow::ensure!(peak > 1e-6, "{} rendered silent", hit.file);
     let g = TARGET_PEAK / peak;
     let threshold = 0.001 * TARGET_PEAK;
-    let last = l.iter().zip(&r).rposition(|(a, b)| a.abs() * g > threshold || b.abs() * g > threshold).unwrap_or(0);
+    let last = l
+        .iter()
+        .zip(&r)
+        .rposition(|(a, b)| a.abs() * g > threshold || b.abs() * g > threshold)
+        .unwrap_or(0);
     let end = (last + (0.01 * SR) as usize).min(frames);
     let fade = ((0.005 * SR) as usize).min(end);
     l.truncate(end);
     r.truncate(end);
     for (i, (a, b)) in l.iter_mut().zip(r.iter_mut()).enumerate() {
-        let f = if i + fade >= end { (end - i) as f32 / fade as f32 } else { 1.0 };
+        let f = if i + fade >= end {
+            (end - i) as f32 / fade as f32
+        } else {
+            1.0
+        };
         *a *= g * f;
         *b *= g * f;
     }
@@ -350,8 +567,14 @@ fn render_hit(hit: &Hit, builtins: &Builtins) -> Result<(Vec<f32>, Vec<f32>)> {
 }
 
 fn write_wav(path: &Path, l: &[f32], r: &[f32]) -> Result<()> {
-    let spec = hound::WavSpec { channels: 2, sample_rate: SR as u32, bits_per_sample: 24, sample_format: hound::SampleFormat::Int };
-    let mut w = hound::WavWriter::create(path, spec).with_context(|| format!("writing {}", path.display()))?;
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: SR as u32,
+        bits_per_sample: 24,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut w = hound::WavWriter::create(path, spec)
+        .with_context(|| format!("writing {}", path.display()))?;
     let scale = 8_388_607.0;
     for (a, b) in l.iter().zip(r) {
         w.write_sample((a.clamp(-1.0, 1.0) * scale) as i32)?;
@@ -370,7 +593,9 @@ pub fn kits_dir(samples_dir: &Path) -> PathBuf {
 pub fn ensure(samples_dir: &Path, builtins: &Builtins, force: bool) -> Result<usize> {
     let root = kits_dir(samples_dir);
     let marker = root.join(MARKER);
-    let current = std::fs::read_to_string(&marker).ok().and_then(|s| s.trim().parse::<u32>().ok());
+    let current = std::fs::read_to_string(&marker)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok());
     if !force && current == Some(KIT_VERSION) {
         return Ok(0);
     }
@@ -379,7 +604,8 @@ pub fn ensure(samples_dir: &Path, builtins: &Builtins, force: bool) -> Result<us
         let dir = root.join(kit.name);
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         for hit in &kit.hits {
-            let (l, r) = render_hit(hit, builtins).with_context(|| format!("{} / {}", kit.name, hit.file))?;
+            let (l, r) = render_hit(hit, builtins)
+                .with_context(|| format!("{} / {}", kit.name, hit.file))?;
             write_wav(&dir.join(hit.file), &l, &r)?;
             written += 1;
         }
@@ -431,15 +657,25 @@ mod tests {
         let t = std::time::Instant::now();
         let written = ensure(&dir, &builtins, false).unwrap();
         assert!(written >= 50, "{written} files");
-        assert!(t.elapsed().as_secs_f32() < 20.0, "rendering took {:?}", t.elapsed());
+        assert!(
+            t.elapsed().as_secs_f32() < 20.0,
+            "rendering took {:?}",
+            t.elapsed()
+        );
         // Second call is a no-op at the same version.
         assert_eq!(ensure(&dir, &builtins, false).unwrap(), 0);
 
         for patch in factory_kit_patches() {
             for path in patch.sample_paths().into_iter().flatten() {
                 let full = dir.join(&path);
-                let s = crate::sample::load_file(&full).unwrap_or_else(|e| panic!("{}: {e}", full.display()));
-                assert!(s.duration() > 0.02 && s.duration() < 4.0, "{}: {}s", full.display(), s.duration());
+                let s = crate::sample::load_file(&full)
+                    .unwrap_or_else(|e| panic!("{}: {e}", full.display()));
+                assert!(
+                    s.duration() > 0.02 && s.duration() < 4.0,
+                    "{}: {}s",
+                    full.display(),
+                    s.duration()
+                );
             }
         }
         // Kicks start with energy and decay; hats are short.

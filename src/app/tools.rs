@@ -8,8 +8,8 @@ use serde_json::{Map, Value, json};
 
 use super::{App, Target, channel_label};
 use crate::engine::{Command, MAX_SLOTS};
-use crate::midi::note_name;
 use crate::fx;
+use crate::midi::note_name;
 use crate::params::{Kind, ParamDesc, Scale, Unit, master, parse_note_name};
 use crate::patch::{CcMapping, file_stem, read_json};
 use crate::synth::{self, SynthKind, kit, physical};
@@ -133,14 +133,28 @@ fn applies_when(kind: SynthKind, i: usize) -> Option<String> {
 fn midi_behaviour(kind: SynthKind, values: &[f32]) -> Value {
     let get = |key: &str| kind.index_of(key).map_or(0.0, |i| values[i]);
     let bend = values[synth::BEND_RANGE].round();
-    let model = physical::MODELS.get(get("model").round() as usize).copied().unwrap_or("String");
+    let model = physical::MODELS
+        .get(get("model").round() as usize)
+        .copied()
+        .unwrap_or("String");
     let mod_wheel = match kind {
         SynthKind::Fm | SynthKind::Analog => {
-            format!("adds vibrato, up to Wheel>Vibrato ({:.0} cents)", get("wheel_vib"))
+            format!(
+                "adds vibrato, up to Wheel>Vibrato ({:.0} cents)",
+                get("wheel_vib")
+            )
         }
-        SynthKind::Granular => format!("adds grain spray, up to Wheel>Spray ({:.0}%)", get("wheel_spray") * 100.0),
-        SynthKind::Acid => format!("opens the filter, up to {:.1} octaves (Wheel>Cutoff)", get("wheel_cutoff") * 3.0),
-        SynthKind::Physical if model == "Bowed" => "adds bow pressure (force) for swells".to_string(),
+        SynthKind::Granular => format!(
+            "adds grain spray, up to Wheel>Spray ({:.0}%)",
+            get("wheel_spray") * 100.0
+        ),
+        SynthKind::Acid => format!(
+            "opens the filter, up to {:.1} octaves (Wheel>Cutoff)",
+            get("wheel_cutoff") * 3.0
+        ),
+        SynthKind::Physical if model == "Bowed" => {
+            "adds bow pressure (force) for swells".to_string()
+        }
         _ => "no effect".to_string(),
     };
     let velocity = match kind {
@@ -163,21 +177,33 @@ fn midi_behaviour(kind: SynthKind, values: &[f32]) -> Value {
         _ => "holds notes until the pedal is released",
     };
     let notes = match kind {
-        SynthKind::Drums => "General MIDI drum map: 35/36 kick, 37 rim, 38/40 snare, 39 clap, 42/44 closed hat, \
+        SynthKind::Drums => {
+            "General MIDI drum map: 35/36 kick, 37 rim, 38/40 snare, 39 clap, 42/44 closed hat, \
 46 open hat, 41/43 low tom, 45/47 mid tom, 48/50 high tom, 56 cowbell, 49/51/52/55/57/59 cymbal"
-            .to_string(),
+                .to_string()
+        }
         SynthKind::Acid => {
-            "monophonic: a note started while another is held slides to it without retriggering".to_string()
+            "monophonic: a note started while another is held slides to it without retriggering"
+                .to_string()
         }
         SynthKind::Kit => {
             let pads: Vec<String> = (0..kit::PADS)
-                .map(|p| format!("{} {}", get(&format!("pad{}_note", p + 1)).round(), kit::PAD_ROLES[p]))
+                .map(|p| {
+                    format!(
+                        "{} {}",
+                        get(&format!("pad{}_note", p + 1)).round(),
+                        kit::PAD_ROLES[p]
+                    )
+                })
                 .collect();
             format!("each pad plays on its note: {}", pads.join(", "))
         }
         SynthKind::Sampler if get("mode").round() as usize == 2 => {
             let first = get("base_note").round() as i32;
-            format!("Slice mode: one slice per note starting at {first} ({})", note_name(first.clamp(0, 127) as u8))
+            format!(
+                "Slice mode: one slice per note starting at {first} ({})",
+                note_name(first.clamp(0, 127) as u8)
+            )
         }
         SynthKind::Sampler => format!(
             "chromatic around Root Note {} ({})",
@@ -206,7 +232,9 @@ fn round4(v: f32) -> f64 {
 }
 
 fn str_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
-    args.get(key).and_then(Value::as_str).ok_or_else(|| format!("missing '{key}'"))
+    args.get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("missing '{key}'"))
 }
 
 impl App {
@@ -232,14 +260,28 @@ impl App {
             "load_patch" => self.tool_load_patch(args),
             "save_patch" => self.tool_save_patch(args),
             "new_rack" => {
-                let starter = match args.get("template").and_then(Value::as_str).unwrap_or("empty") {
+                let starter = match args
+                    .get("template")
+                    .and_then(Value::as_str)
+                    .unwrap_or("empty")
+                {
                     "empty" => false,
                     "starter" => true,
-                    other => return Err(format!("template must be \"empty\" or \"starter\", got {other:?}")),
+                    other => {
+                        return Err(format!(
+                            "template must be \"empty\" or \"starter\", got {other:?}"
+                        ));
+                    }
                 };
-                let save_as = args.get("save_as").and_then(Value::as_str).map(str::to_string);
+                let save_as = args
+                    .get("save_as")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
                 let saved = self.new_rack(starter, save_as)?;
-                self.mcp_note(format!("new {} rack", if starter { "starter" } else { "empty" }));
+                self.mcp_note(format!(
+                    "new {} rack",
+                    if starter { "starter" } else { "empty" }
+                ));
                 let mut rack = self.rack_json();
                 rack["previous_rack_saved_as"] = json!(saved);
                 Ok(rack)
@@ -253,7 +295,10 @@ impl App {
             )),
             "save_session" => {
                 let name = str_arg(args, "name")?.to_string();
-                let path = self.storage.save_session(&name, &self.session()).map_err(|e| format!("{e:#}"))?;
+                let path = self
+                    .storage
+                    .save_session(&name, &self.session())
+                    .map_err(|e| format!("{e:#}"))?;
                 self.mcp_note(format!("saved session '{name}'"));
                 Ok(json!({ "saved": path }))
             }
@@ -277,7 +322,8 @@ impl App {
                     std::thread::sleep(Duration::from_millis(5));
                 }
                 let rec = self.finishing.iter().find(|r| r.path == path);
-                let (seconds, dropped) = rec.map_or((0.0, 0.0), |r| (r.seconds(), r.dropped_seconds()));
+                let (seconds, dropped) =
+                    rec.map_or((0.0, 0.0), |r| (r.seconds(), r.dropped_seconds()));
                 let finalized = rec.is_some_and(|r| r.is_finished());
                 self.poll_recordings();
                 Ok(json!({
@@ -308,7 +354,10 @@ impl App {
         let n = v.as_u64().filter(|n| (1..=MAX_SLOTS as u64).contains(n));
         let i = n.ok_or_else(|| format!("slot must be 1-{MAX_SLOTS}, got {v}"))? as usize - 1;
         if self.slots[i].is_none() {
-            return Err(format!("slot {} is empty; get_rack lists the occupied slots", i + 1));
+            return Err(format!(
+                "slot {} is empty; get_rack lists the occupied slots",
+                i + 1
+            ));
         }
         Ok(i)
     }
@@ -321,7 +370,9 @@ impl App {
     }
 
     fn slot_json(&self, i: usize) -> Value {
-        let Some(s) = self.slots[i].as_ref() else { return Value::Null };
+        let Some(s) = self.slots[i].as_ref() else {
+            return Value::Null;
+        };
         json!({
             "slot": i + 1,
             "kind": kind_name(s.kind),
@@ -396,7 +447,10 @@ impl App {
 
     fn tool_set_params(&mut self, args: &Value) -> ToolResult {
         let t = self.target_arg(args)?;
-        let values = args.get("values").and_then(Value::as_object).ok_or("missing 'values' object")?;
+        let values = args
+            .get("values")
+            .and_then(Value::as_object)
+            .ok_or("missing 'values' object")?;
         let mut applied = Map::new();
         let mut errors = Map::new();
         for (key, v) in values {
@@ -423,7 +477,10 @@ impl App {
             Target::Master => "master".to_string(),
             Target::Slot(i) => format!("slot {}", i + 1),
         };
-        self.mcp_note(format!("set {} on {what}", applied.keys().cloned().collect::<Vec<_>>().join(", ")));
+        self.mcp_note(format!(
+            "set {} on {what}",
+            applied.keys().cloned().collect::<Vec<_>>().join(", ")
+        ));
         let mut out = json!({ "applied": applied });
         if !errors.is_empty() {
             out["errors"] = Value::Object(errors);
@@ -447,15 +504,28 @@ impl App {
             self.load_patch_into(i, patch);
         }
         let s = self.slots[i].as_ref().expect("just added");
-        let note = format!("added {} '{}' in slot {} on {}", kind.long_name(), s.name, i + 1, channel_label(s.channel));
+        let note = format!(
+            "added {} '{}' in slot {} on {}",
+            kind.long_name(),
+            s.name,
+            i + 1,
+            channel_label(s.channel)
+        );
         self.mcp_note(note);
         Ok(self.slot_json(i))
     }
 
     fn tool_describe_synth(&self, args: &Value) -> ToolResult {
         let kind = parse_kind(args.get("kind").ok_or("missing 'kind'")?)?;
-        let include_fx = args.get("include_fx").and_then(Value::as_bool).unwrap_or(false);
-        let end = if include_fx { kind.param_count() } else { kind.fx_base() };
+        let include_fx = args
+            .get("include_fx")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let end = if include_fx {
+            kind.param_count()
+        } else {
+            kind.fx_base()
+        };
         let params: Vec<Value> = (0..end)
             .map(|i| {
                 let mut p = describe_param(kind.param(i));
@@ -495,9 +565,19 @@ impl App {
     fn mapping_json(&self, m: &CcMapping) -> Value {
         let (slot, target) = match m.slot {
             None => (json!("master"), Some(Target::Master)),
-            Some(s) => (json!(s + 1), self.slots.get(s).and_then(|x| x.as_ref()).map(|_| Target::Slot(s))),
+            Some(s) => (
+                json!(s + 1),
+                self.slots
+                    .get(s)
+                    .and_then(|x| x.as_ref())
+                    .map(|_| Target::Slot(s)),
+            ),
         };
-        let index = target.and_then(|t| (0..self.param_count(t)).find(|&i| self.param_key(t, i) == m.param).map(|i| (t, i)));
+        let index = target.and_then(|t| {
+            (0..self.param_count(t))
+                .find(|&i| self.param_key(t, i) == m.param)
+                .map(|i| (t, i))
+        });
         let mut v = json!({ "channel": m.channel + 1, "cc": m.cc, "slot": slot, "param": m.param });
         match index {
             Some((t, i)) => {
@@ -511,7 +591,12 @@ impl App {
     }
 
     fn mappings_json(&self) -> Value {
-        json!(self.cc_map.iter().map(|m| self.mapping_json(m)).collect::<Vec<_>>())
+        json!(
+            self.cc_map
+                .iter()
+                .map(|m| self.mapping_json(m))
+                .collect::<Vec<_>>()
+        )
     }
 
     fn tool_map_cc(&mut self, args: &Value) -> ToolResult {
@@ -521,7 +606,11 @@ impl App {
         };
         let cc = match args.get("cc").and_then(Value::as_u64) {
             Some(c @ 0..=119) => c as u8,
-            Some(c @ 120..=127) => return Err(format!("CC{c} is a channel mode message and can't be mapped")),
+            Some(c @ 120..=127) => {
+                return Err(format!(
+                    "CC{c} is a channel mode message and can't be mapped"
+                ));
+            }
             _ => return Err("cc must be 0-119".into()),
         };
         let t = self.target_arg(args)?;
@@ -535,7 +624,12 @@ impl App {
         };
         // One CC per parameter (as with MIDI learn); one CC may drive several.
         self.cc_map.retain(|m| !(m.slot == slot && m.param == key));
-        let mapping = CcMapping { channel, cc, slot, param: key.to_string() };
+        let mapping = CcMapping {
+            channel,
+            cc,
+            slot,
+            param: key.to_string(),
+        };
         let mut out = self.mapping_json(&mapping);
         self.cc_map.push(mapping);
         let mut notes = Vec::new();
@@ -545,7 +639,8 @@ impl App {
             _ => {}
         }
         if !self.param_visible(t, i) {
-            notes.push("this parameter is inactive right now (its FX type or model isn't selected)");
+            notes
+                .push("this parameter is inactive right now (its FX type or model isn't selected)");
         }
         if !notes.is_empty() {
             out["notes"] = json!(notes);
@@ -563,8 +658,12 @@ impl App {
                 Target::Slot(s) => Some(s),
             };
             self.cc_map.retain(|m| !(m.slot == slot && m.param == key));
-        } else if let (Some(ch), Some(cc)) = (args.get("channel").and_then(Value::as_u64), args.get("cc").and_then(Value::as_u64)) {
-            self.cc_map.retain(|m| !(m.channel as u64 + 1 == ch && m.cc as u64 == cc));
+        } else if let (Some(ch), Some(cc)) = (
+            args.get("channel").and_then(Value::as_u64),
+            args.get("cc").and_then(Value::as_u64),
+        ) {
+            self.cc_map
+                .retain(|m| !(m.channel as u64 + 1 == ch && m.cc as u64 == cc));
         } else {
             return Err("pass slot + param, or channel + cc".into());
         }
@@ -578,7 +677,10 @@ impl App {
     pub(super) fn set_channel(&mut self, index: usize, channel: Option<u8>) {
         if let Some(s) = self.slots[index].as_mut() {
             s.channel = channel;
-            self.send(Command::SetChannel { slot: index, channel });
+            self.send(Command::SetChannel {
+                slot: index,
+                channel,
+            });
         }
     }
 
@@ -614,11 +716,17 @@ impl App {
         Ok(self.slot_json(i))
     }
 
-    fn find_patch(&self, name: &str, kind: Option<SynthKind>) -> Result<crate::patch::Patch, String> {
+    fn find_patch(
+        &self,
+        name: &str,
+        kind: Option<SynthKind>,
+    ) -> Result<crate::patch::Patch, String> {
         let all = self.storage.list_patches();
         let matches: Vec<_> = all
             .iter()
-            .filter(|e| e.patch.name.eq_ignore_ascii_case(name) && kind.is_none_or(|k| e.patch.kind == k))
+            .filter(|e| {
+                e.patch.name.eq_ignore_ascii_case(name) && kind.is_none_or(|k| e.patch.kind == k)
+            })
             .collect();
         // User patches win over factory ones with the same name.
         matches
@@ -662,7 +770,10 @@ impl App {
             self.slots[i].as_mut().expect("checked").name = name.to_string();
         }
         let patch = self.current_patch(i).ok_or("slot is empty")?;
-        let path = self.storage.save_patch(&patch).map_err(|e| format!("{e:#}"))?;
+        let path = self
+            .storage
+            .save_patch(&patch)
+            .map_err(|e| format!("{e:#}"))?;
         self.mcp_note(format!("saved patch '{}'", patch.name));
         Ok(json!({ "saved": path, "name": patch.name }))
     }
@@ -673,8 +784,13 @@ impl App {
             .storage
             .list_sessions()
             .into_iter()
-            .find(|p| p.file_stem().is_some_and(|s| s.to_string_lossy().eq_ignore_ascii_case(&file_stem(name))))
-            .ok_or_else(|| format!("no session named '{name}'; list_sessions shows what's saved"))?;
+            .find(|p| {
+                p.file_stem()
+                    .is_some_and(|s| s.to_string_lossy().eq_ignore_ascii_case(&file_stem(name)))
+            })
+            .ok_or_else(|| {
+                format!("no session named '{name}'; list_sessions shows what's saved")
+            })?;
         let session = read_json(&path).map_err(|e| format!("{e:#}"))?;
         self.apply_session(session);
         self.mcp_note(format!("loaded session '{name}'"));
@@ -693,7 +809,9 @@ impl App {
         }
         let pad = match (kind, args.get("pad").and_then(Value::as_u64)) {
             (SynthKind::Kit, Some(p @ 1..=16)) => p as usize - 1,
-            (SynthKind::Kit, _) => return Err("kits need a pad (1-16); see get_rack for the pads".into()),
+            (SynthKind::Kit, _) => {
+                return Err("kits need a pad (1-16); see get_rack for the pads".into());
+            }
             _ => 0,
         };
         let path = self.resolve_path(str_arg(args, "path")?);
@@ -704,7 +822,11 @@ impl App {
         if let Some(s) = self.status.as_ref().filter(|s| s.error) {
             return Err(s.text.clone());
         }
-        let status = self.status.as_ref().map(|s| s.text.clone()).unwrap_or_default();
+        let status = self
+            .status
+            .as_ref()
+            .map(|s| s.text.clone())
+            .unwrap_or_default();
         self.mcp_note(status.clone());
         let mut out = self.slot_json(i);
         out["result"] = json!(status);
@@ -717,17 +839,28 @@ impl App {
             Some(rest) => dirs::home_dir().unwrap_or_default().join(rest),
             None => PathBuf::from(raw),
         };
-        if path.is_relative() { self.storage.samples_dir().join(path) } else { path }
+        if path.is_relative() {
+            self.storage.samples_dir().join(path)
+        } else {
+            path
+        }
     }
 
     fn tool_load_kit_folder(&mut self, args: &Value) -> ToolResult {
         let i = self.slot_arg(args)?;
         if self.slots[i].as_ref().expect("checked").kind != SynthKind::Kit {
-            return Err(format!("slot {} isn't a drum kit; add one with add_synth kind \"kit\"", i + 1));
+            return Err(format!(
+                "slot {} isn't a drum kit; add one with add_synth kind \"kit\"",
+                i + 1
+            ));
         }
         let dir = self.resolve_path(str_arg(args, "path")?);
         let loaded = self.load_kit_folder(i, &dir)?;
-        self.mcp_note(format!("loaded {} samples into slot {}'s kit", loaded.len(), i + 1));
+        self.mcp_note(format!(
+            "loaded {} samples into slot {}'s kit",
+            loaded.len(),
+            i + 1
+        ));
         Ok(json!({
             "loaded": loaded
                 .iter()
@@ -738,7 +871,10 @@ impl App {
 
     fn tool_play_notes(&mut self, args: &Value) -> ToolResult {
         let i = self.slot_arg(args)?;
-        let notes = args.get("notes").and_then(Value::as_array).ok_or("missing 'notes' array")?;
+        let notes = args
+            .get("notes")
+            .and_then(Value::as_array)
+            .ok_or("missing 'notes' array")?;
         if notes.len() > MAX_NOTES {
             return Err(format!("at most {MAX_NOTES} notes per call"));
         }
@@ -753,14 +889,35 @@ impl App {
             }
             .filter(|v| (0..=127).contains(v))
             .ok_or_else(|| format!("bad note in {n}"))? as u8;
-            let velocity = n.get("velocity").and_then(Value::as_u64).unwrap_or(100).clamp(1, 127) as f32 / 127.0;
-            let start = Duration::from_millis(n.get("start_ms").and_then(Value::as_u64).unwrap_or(0));
-            let length = Duration::from_millis(n.get("duration_ms").and_then(Value::as_u64).unwrap_or(400).max(1));
+            let velocity = n
+                .get("velocity")
+                .and_then(Value::as_u64)
+                .unwrap_or(100)
+                .clamp(1, 127) as f32
+                / 127.0;
+            let start =
+                Duration::from_millis(n.get("start_ms").and_then(Value::as_u64).unwrap_or(0));
+            let length = Duration::from_millis(
+                n.get("duration_ms")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(400)
+                    .max(1),
+            );
             if start + length > MAX_SCHEDULE {
-                return Err(format!("notes must finish within {} s", MAX_SCHEDULE.as_secs()));
+                return Err(format!(
+                    "notes must finish within {} s",
+                    MAX_SCHEDULE.as_secs()
+                ));
             }
             end = end.max(start + length);
-            events.push((now + start, Command::NoteOn { slot: i, note, velocity }));
+            events.push((
+                now + start,
+                Command::NoteOn {
+                    slot: i,
+                    note,
+                    velocity,
+                },
+            ));
             events.push((now + start + length, Command::NoteOff { slot: i, note }));
         }
         self.scheduled.extend(events);
@@ -787,11 +944,18 @@ mod tests {
         let dir = temp_dir("mcp-tools");
         let mut app = test_app(&dir);
 
-        let added = app.run_tool("add_synth", &json!({ "kind": "acid", "patch": "Acid Squelch", "channel": 5 })).unwrap();
+        let added = app
+            .run_tool(
+                "add_synth",
+                &json!({ "kind": "acid", "patch": "Acid Squelch", "channel": 5 }),
+            )
+            .unwrap();
         assert_eq!(added["slot"], 1);
         assert_eq!(added["name"], "Acid Squelch");
         assert_eq!(added["channel"], 5);
-        let drums = app.run_tool("add_synth", &json!({ "kind": "drums" })).unwrap();
+        let drums = app
+            .run_tool("add_synth", &json!({ "kind": "drums" }))
+            .unwrap();
         assert_eq!(drums["channel"], 10);
 
         let r = app
@@ -801,29 +965,68 @@ mod tests {
         assert_eq!(r["applied"]["wave"], "Square");
         assert_eq!(r["applied"]["decay"], "300 ms");
         assert!(r["errors"]["nope"].is_string());
-        assert!(app.run_tool("set_params", &json!({ "slot": 1, "values": { "wave": "triangle" } })).is_err());
+        assert!(
+            app.run_tool(
+                "set_params",
+                &json!({ "slot": 1, "values": { "wave": "triangle" } })
+            )
+            .is_err()
+        );
 
         let params = app.run_tool("get_params", &json!({ "slot": 1 })).unwrap();
-        let cutoff = params["params"].as_array().unwrap().iter().find(|p| p["key"] == "cutoff").unwrap();
+        let cutoff = params["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["key"] == "cutoff")
+            .unwrap();
         assert_eq!(cutoff["value"], 1200.0);
 
-        app.run_tool("set_params", &json!({ "slot": "master", "values": { "volume": "50%" } })).unwrap();
+        app.run_tool(
+            "set_params",
+            &json!({ "slot": "master", "values": { "volume": "50%" } }),
+        )
+        .unwrap();
         assert_eq!(app.master[master::VOLUME], 0.5);
 
-        let s = app.run_tool("set_slot", &json!({ "slot": 2, "solo": true, "name": "Beat" })).unwrap();
+        let s = app
+            .run_tool(
+                "set_slot",
+                &json!({ "slot": 2, "solo": true, "name": "Beat" }),
+            )
+            .unwrap();
         assert_eq!(s["solo"], true);
-        assert_eq!(app.run_tool("get_rack", &json!({})).unwrap()["soloed"], json!([2]));
+        assert_eq!(
+            app.run_tool("get_rack", &json!({})).unwrap()["soloed"],
+            json!([2])
+        );
 
-        app.run_tool("load_patch", &json!({ "slot": 1, "name": "fm strings" })).unwrap();
+        app.run_tool("load_patch", &json!({ "slot": 1, "name": "fm strings" }))
+            .unwrap();
         assert_eq!(app.slots[0].as_ref().unwrap().kind, SynthKind::Fm);
-        app.run_tool("save_patch", &json!({ "slot": 1, "name": "My Strings" })).unwrap();
-        let fm = app.run_tool("list_patches", &json!({ "kind": "fm" })).unwrap();
-        assert!(fm.as_array().unwrap().iter().any(|p| p["name"] == "My Strings" && p["source"] == "user"));
+        app.run_tool("save_patch", &json!({ "slot": 1, "name": "My Strings" }))
+            .unwrap();
+        let fm = app
+            .run_tool("list_patches", &json!({ "kind": "fm" }))
+            .unwrap();
+        assert!(
+            fm.as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["name"] == "My Strings" && p["source"] == "user")
+        );
 
-        app.run_tool("save_session", &json!({ "name": "song" })).unwrap();
+        app.run_tool("save_session", &json!({ "name": "song" }))
+            .unwrap();
         app.run_tool("remove_synth", &json!({ "slot": 2 })).unwrap();
-        assert!(app.run_tool("get_params", &json!({ "slot": 2 })).unwrap_err().contains("empty"));
-        let rack = app.run_tool("load_session", &json!({ "name": "song" })).unwrap();
+        assert!(
+            app.run_tool("get_params", &json!({ "slot": 2 }))
+                .unwrap_err()
+                .contains("empty")
+        );
+        let rack = app
+            .run_tool("load_session", &json!({ "name": "song" }))
+            .unwrap();
         assert_eq!(rack["slots"].as_array().unwrap().len(), 2);
 
         let played = app
@@ -834,8 +1037,15 @@ mod tests {
         app.run_tool("panic", &json!({})).unwrap();
         assert!(app.scheduled.is_empty());
 
-        assert!(app.run_tool("load_sample", &json!({ "slot": 1, "path": "x.wav" })).unwrap_err().contains("drum kit"));
-        assert!(app.run_tool("add_synth", &json!({ "kind": "theremin" })).is_err());
+        assert!(
+            app.run_tool("load_sample", &json!({ "slot": 1, "path": "x.wav" }))
+                .unwrap_err()
+                .contains("drum kit")
+        );
+        assert!(
+            app.run_tool("add_synth", &json!({ "kind": "theremin" }))
+                .is_err()
+        );
         assert!(app.run_tool("bogus", &json!({})).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -844,60 +1054,152 @@ mod tests {
     fn midi_mappings_and_descriptions_over_mcp() {
         let dir = temp_dir("mcp-midi");
         let mut app = test_app(&dir);
-        app.run_tool("add_synth", &json!({ "kind": "analog" })).unwrap();
-        app.run_tool("add_synth", &json!({ "kind": "physical" })).unwrap();
+        app.run_tool("add_synth", &json!({ "kind": "analog" }))
+            .unwrap();
+        app.run_tool("add_synth", &json!({ "kind": "physical" }))
+            .unwrap();
 
         // get_params carries static facts and the instrument's MIDI behaviour.
         let p = app.run_tool("get_params", &json!({ "slot": 1 })).unwrap();
-        let cutoff = p["params"].as_array().unwrap().iter().find(|x| x["key"] == "cutoff").unwrap().clone();
+        let cutoff = p["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["key"] == "cutoff")
+            .unwrap()
+            .clone();
         assert_eq!(cutoff["scale"], "log");
         assert_eq!(cutoff["unit"], "Hz");
         assert_eq!(cutoff["default"], 2000.0);
         assert!(cutoff.get("midi_cc").is_none());
-        assert!(p["midi"]["mod_wheel_cc1"].as_str().unwrap().contains("vibrato"));
-        assert!(p["midi"]["velocity"].as_str().unwrap().contains("Vel>Cutoff"));
+        assert!(
+            p["midi"]["mod_wheel_cc1"]
+                .as_str()
+                .unwrap()
+                .contains("vibrato")
+        );
+        assert!(
+            p["midi"]["velocity"]
+                .as_str()
+                .unwrap()
+                .contains("Vel>Cutoff")
+        );
 
         // Map a knob, then a real CC message moves the parameter.
-        let m = app.run_tool("map_cc", &json!({ "channel": 1, "cc": 74, "slot": 1, "param": "cutoff" })).unwrap();
+        let m = app
+            .run_tool(
+                "map_cc",
+                &json!({ "channel": 1, "cc": 74, "slot": 1, "param": "cutoff" }),
+            )
+            .unwrap();
         assert_eq!(m["name"], "Cutoff");
         assert_eq!(m["active"], true);
-        app.on_midi(crate::midi::MidiMsg { channel: 0, kind: crate::midi::MidiKind::Cc { cc: 74, value: 127 } });
+        app.on_midi(crate::midi::MidiMsg {
+            channel: 0,
+            kind: crate::midi::MidiKind::Cc { cc: 74, value: 127 },
+        });
         let i = SynthKind::Analog.index_of("cutoff").unwrap();
         assert_eq!(app.param_value(Target::Slot(0), i), 20_000.0);
         let p = app.run_tool("get_params", &json!({ "slot": 1 })).unwrap();
-        let cutoff = p["params"].as_array().unwrap().iter().find(|x| x["key"] == "cutoff").unwrap().clone();
+        let cutoff = p["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["key"] == "cutoff")
+            .unwrap()
+            .clone();
         assert_eq!(cutoff["midi_cc"], json!({ "channel": 1, "cc": 74 }));
 
         // Remapping the same parameter moves it; one CC can drive several (a macro).
-        app.run_tool("map_cc", &json!({ "channel": 1, "cc": 71, "slot": 1, "param": "cutoff" })).unwrap();
-        app.run_tool("map_cc", &json!({ "channel": 1, "cc": 71, "slot": "master", "param": "reverb_return" })).unwrap();
+        app.run_tool(
+            "map_cc",
+            &json!({ "channel": 1, "cc": 71, "slot": 1, "param": "cutoff" }),
+        )
+        .unwrap();
+        app.run_tool(
+            "map_cc",
+            &json!({ "channel": 1, "cc": 71, "slot": "master", "param": "reverb_return" }),
+        )
+        .unwrap();
         let list = app.run_tool("list_midi_mappings", &json!({})).unwrap();
         assert_eq!(list.as_array().unwrap().len(), 2);
         assert!(list.as_array().unwrap().iter().all(|m| m["cc"] == 71));
 
         // Inactive parameters and built-in CCs are flagged; mode messages refused.
-        let bowed = app.run_tool("map_cc", &json!({ "channel": 2, "cc": 1, "slot": 2, "param": "bow_pressure" })).unwrap();
+        let bowed = app
+            .run_tool(
+                "map_cc",
+                &json!({ "channel": 2, "cc": 1, "slot": 2, "param": "bow_pressure" }),
+            )
+            .unwrap();
         let notes = bowed["notes"].to_string();
-        assert!(notes.contains("mod wheel") && notes.contains("inactive"), "{notes}");
-        assert!(app.run_tool("map_cc", &json!({ "channel": 1, "cc": 123, "slot": 1, "param": "cutoff" })).is_err());
-        assert!(app.run_tool("map_cc", &json!({ "channel": 1, "cc": 20, "slot": 1, "param": "nope" })).is_err());
+        assert!(
+            notes.contains("mod wheel") && notes.contains("inactive"),
+            "{notes}"
+        );
+        assert!(
+            app.run_tool(
+                "map_cc",
+                &json!({ "channel": 1, "cc": 123, "slot": 1, "param": "cutoff" })
+            )
+            .is_err()
+        );
+        assert!(
+            app.run_tool(
+                "map_cc",
+                &json!({ "channel": 1, "cc": 20, "slot": 1, "param": "nope" })
+            )
+            .is_err()
+        );
 
-        let cleared = app.run_tool("clear_midi_mapping", &json!({ "channel": 1, "cc": 71 })).unwrap();
+        let cleared = app
+            .run_tool("clear_midi_mapping", &json!({ "channel": 1, "cc": 71 }))
+            .unwrap();
         assert_eq!(cleared["removed"], 2);
-        app.run_tool("clear_midi_mapping", &json!({ "slot": 2, "param": "bow_pressure" })).unwrap();
+        app.run_tool(
+            "clear_midi_mapping",
+            &json!({ "slot": 2, "param": "bow_pressure" }),
+        )
+        .unwrap();
         assert!(app.cc_map.is_empty());
 
         // describe_synth works without a slot and explains conditional controls.
-        let d = app.run_tool("describe_synth", &json!({ "kind": "physical" })).unwrap();
-        let find = |key: &str| d["params"].as_array().unwrap().iter().find(|x| x["key"] == key).unwrap().clone();
+        let d = app
+            .run_tool("describe_synth", &json!({ "kind": "physical" }))
+            .unwrap();
+        let find = |key: &str| {
+            d["params"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["key"] == key)
+                .unwrap()
+                .clone()
+        };
         assert_eq!(find("bow_pressure")["applies_when"], "model is Bowed");
         assert_eq!(find("unison")["applies_when"], "model is Piano");
-        assert!(find("decay").get("applies_when").is_some(), "decay doesn't apply to Bowed");
+        assert!(
+            find("decay").get("applies_when").is_some(),
+            "decay doesn't apply to Bowed"
+        );
         assert!(find("width").get("applies_when").is_none());
-        let fx_delay = d["insert_fx"]["settings_by_type"]["Delay"].as_array().unwrap();
+        let fx_delay = d["insert_fx"]["settings_by_type"]["Delay"]
+            .as_array()
+            .unwrap();
         assert!(fx_delay.iter().any(|k| k == "delay_feedback"));
-        let full = app.run_tool("describe_synth", &json!({ "kind": "drums", "include_fx": true })).unwrap();
-        let fx2 = full["params"].as_array().unwrap().iter().find(|x| x["key"] == "fx2_reverb_size").unwrap().clone();
+        let full = app
+            .run_tool(
+                "describe_synth",
+                &json!({ "kind": "drums", "include_fx": true }),
+            )
+            .unwrap();
+        let fx2 = full["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["key"] == "fx2_reverb_size")
+            .unwrap()
+            .clone();
         assert_eq!(fx2["applies_when"], "fx2_type is Reverb");
         assert!(full["midi"]["notes"].as_str().unwrap().contains("36 kick"));
         let _ = std::fs::remove_dir_all(&dir);

@@ -35,7 +35,12 @@ const MAX_ONSETS: usize = 512;
 
 impl Sample {
     /// Build a sample, normalising its peak to -1 dB and analysing it.
-    pub fn new(name: impl Into<String>, mut data: Vec<f32>, mut right: Option<Vec<f32>>, sample_rate: f32) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        mut data: Vec<f32>,
+        mut right: Option<Vec<f32>>,
+        sample_rate: f32,
+    ) -> Self {
         let peak = data
             .iter()
             .chain(right.iter().flatten())
@@ -101,7 +106,13 @@ impl Sample {
         let len = self.data.len() as isize;
         let i = pos.floor() as isize;
         let f = (pos - i as f64) as f32;
-        let at = |buf: &[f32], k: isize| if (0..len).contains(&k) { buf[k as usize] } else { 0.0 };
+        let at = |buf: &[f32], k: isize| {
+            if (0..len).contains(&k) {
+                buf[k as usize]
+            } else {
+                0.0
+            }
+        };
         let interp = |buf: &[f32]| {
             let (xm1, x0, x1, x2) = (at(buf, i - 1), at(buf, i), at(buf, i + 1), at(buf, i + 2));
             let c1 = 0.5 * (x1 - xm1);
@@ -147,8 +158,12 @@ impl Sample {
         }
         // Skip the attack: analyse from 10% in, or from just after the
         // loudest point if that comes later.
-        let peak_at = (0..len).step_by(64).max_by(|&a, &b| self.mono_at(a).abs().total_cmp(&self.mono_at(b).abs()))?;
-        let from = (len / 10).max(peak_at + (0.03 * sr) as usize).min(len - span);
+        let peak_at = (0..len)
+            .step_by(64)
+            .max_by(|&a, &b| self.mono_at(a).abs().total_cmp(&self.mono_at(b).abs()))?;
+        let from = (len / 10)
+            .max(peak_at + (0.03 * sr) as usize)
+            .min(len - span);
         let to = (len - span).min(from + (2.0 * sr) as usize).max(from);
         let peak = self.data.iter().fold(0.0f32, |m, v| m.max(v.abs()));
 
@@ -176,17 +191,27 @@ impl Sample {
                     sum += x * x;
                 }
                 running += sum;
-                d[tau] = if running > 0.0 { sum * tau as f32 / running } else { 1.0 };
+                d[tau] = if running > 0.0 {
+                    sum * tau as f32 / running
+                } else {
+                    1.0
+                };
             }
             // First dip under the threshold, then walk down to its minimum.
-            let Some(mut tau) = (tau_min.max(2)..tau_max).find(|&t| d[t] < THRESHOLD) else { continue };
+            let Some(mut tau) = (tau_min.max(2)..tau_max).find(|&t| d[t] < THRESHOLD) else {
+                continue;
+            };
             while tau + 1 < tau_max && d[tau + 1] < d[tau] {
                 tau += 1;
             }
             // Parabolic interpolation for sub-sample accuracy.
             let (a, b, c) = (d[tau - 1], d[tau], d[tau + 1]);
             let denom = a - 2.0 * b + c;
-            let shift = if denom.abs() > 1e-9 { 0.5 * (a - c) / denom } else { 0.0 };
+            let shift = if denom.abs() > 1e-9 {
+                0.5 * (a - c) / denom
+            } else {
+                0.0
+            };
             let freq = sr / (tau as f32 + shift.clamp(-1.0, 1.0));
             notes.push(69.0 + 12.0 * (freq / 440.0).log2());
         }
@@ -196,7 +221,11 @@ impl Sample {
         notes.sort_by(f32::total_cmp);
         let median = notes[notes.len() / 2];
         // Require the estimates to agree; otherwise the pitch is unstable.
-        let agreeing: Vec<f32> = notes.iter().copied().filter(|n| (n - median).abs() < 0.5).collect();
+        let agreeing: Vec<f32> = notes
+            .iter()
+            .copied()
+            .filter(|n| (n - median).abs() < 0.5)
+            .collect();
         if agreeing.len() * 3 < analysed * 2 {
             return None;
         }
@@ -212,7 +241,9 @@ impl Sample {
         }
         let db: Vec<f32> = (0..frames)
             .map(|f| {
-                let e: f32 = (f * ONSET_HOP..(f + 1) * ONSET_HOP).map(|i| self.mono_at(i).powi(2)).sum();
+                let e: f32 = (f * ONSET_HOP..(f + 1) * ONSET_HOP)
+                    .map(|i| self.mono_at(i).powi(2))
+                    .sum();
                 10.0 * (e / ONSET_HOP as f32 + 1e-10).log10()
             })
             .collect();
@@ -298,7 +329,8 @@ fn decode_wav_lenient(path: &Path) -> Result<Decoded> {
         bail!("not a RIFF/WAVE file");
     }
     let u16_at = |i: usize| u16::from_le_bytes([bytes[i], bytes[i + 1]]);
-    let u32_at = |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
+    let u32_at =
+        |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
     let mut fmt: Option<(u16, usize, u32, u16)> = None;
     let mut data: Option<&[u8]> = None;
     let mut i = 12;
@@ -312,7 +344,12 @@ fn decode_wav_lenient(path: &Path) -> Result<Decoded> {
                 // Extensible: the real format is the start of the sub-format GUID.
                 format = u16_at(i + 8 + 24);
             }
-            fmt = Some((format, u16_at(i + 10).max(1) as usize, u32_at(i + 12), u16_at(i + 22)));
+            fmt = Some((
+                format,
+                u16_at(i + 10).max(1) as usize,
+                u32_at(i + 12),
+                u16_at(i + 22),
+            ));
         } else if id == b"data" {
             data = Some(body);
         }
@@ -322,13 +359,25 @@ fn decode_wav_lenient(path: &Path) -> Result<Decoded> {
     let data = data.context("no data chunk")?;
     let samples: Vec<f32> = match (format, bits) {
         (1, 8) => data.iter().map(|&b| (b as f32 - 128.0) / 128.0).collect(),
-        (1, 16) => data.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32_768.0).collect(),
+        (1, 16) => data
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32_768.0)
+            .collect(),
         (1, 24) => data
             .chunks_exact(3)
-            .map(|c| (((c[2] as i32) << 24 | (c[1] as i32) << 16 | (c[0] as i32) << 8) >> 8) as f32 / 8_388_608.0)
+            .map(|c| {
+                (((c[2] as i32) << 24 | (c[1] as i32) << 16 | (c[0] as i32) << 8) >> 8) as f32
+                    / 8_388_608.0
+            })
             .collect(),
-        (1, 32) => data.chunks_exact(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / 2_147_483_648.0).collect(),
-        (3, 32) => data.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect(),
+        (1, 32) => data
+            .chunks_exact(4)
+            .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / 2_147_483_648.0)
+            .collect(),
+        (3, 32) => data
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect(),
         (3, 64) => data
             .chunks_exact(8)
             .map(|c| f64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]) as f32)
@@ -339,7 +388,8 @@ fn decode_wav_lenient(path: &Path) -> Result<Decoded> {
 }
 
 fn decode_wav_hound(path: &Path) -> Result<Decoded> {
-    let mut reader = hound::WavReader::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut reader =
+        hound::WavReader::open(path).with_context(|| format!("opening {}", path.display()))?;
     let spec = reader.spec();
     let interleaved: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Float => reader.samples::<f32>().collect::<Result<_, _>>()?,
@@ -351,11 +401,16 @@ fn decode_wav_hound(path: &Path) -> Result<Decoded> {
                 .collect::<Result<_, _>>()?
         }
     };
-    Ok((interleaved, spec.channels.max(1) as usize, spec.sample_rate as f32))
+    Ok((
+        interleaved,
+        spec.channels.max(1) as usize,
+        spec.sample_rate as f32,
+    ))
 }
 
 fn decode_flac(path: &Path) -> Result<Decoded> {
-    let mut reader = claxon::FlacReader::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut reader =
+        claxon::FlacReader::open(path).with_context(|| format!("opening {}", path.display()))?;
     let info = reader.streaminfo();
     let scale = 1.0 / (1i64 << (info.bits_per_sample - 1)) as f32;
     let interleaved: Vec<f32> = reader
@@ -363,7 +418,11 @@ fn decode_flac(path: &Path) -> Result<Decoded> {
         .map(|s| s.map(|v| v as f32 * scale))
         .collect::<Result<_, _>>()
         .with_context(|| format!("decoding {}", path.display()))?;
-    Ok((interleaved, info.channels.max(1) as usize, info.sample_rate as f32))
+    Ok((
+        interleaved,
+        info.channels.max(1) as usize,
+        info.sample_rate as f32,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -383,9 +442,7 @@ pub fn builtins() -> Builtins {
     let gens: [fn() -> Vec<f32>; 5] = [gen_choir, gen_glass, gen_saw, gen_pluck, gen_noise];
     gens.iter()
         .zip(BUILTIN_NAMES)
-        .map(|(g, name)| {
-            Arc::new(Sample::new(name, g(), None, GEN_SR))
-        })
+        .map(|(g, name)| Arc::new(Sample::new(name, g(), None, GEN_SR)))
         .collect::<Vec<_>>()
         .into()
 }
@@ -418,7 +475,8 @@ fn gen_choir() -> Vec<f32> {
             let a = pos.floor() as usize;
             let b = (a + 1).min(VOWELS.len() - 1);
             let f = pos - a as f32;
-            let formants: [f32; 3] = std::array::from_fn(|k| VOWELS[a][k] * (1.0 - f) + VOWELS[b][k] * f);
+            let formants: [f32; 3] =
+                std::array::from_fn(|k| VOWELS[a][k] * (1.0 - f) + VOWELS[b][k] * f);
             for (h, amp) in amps.iter_mut().enumerate() {
                 let hf = C4 * (h + 1) as f32;
                 let mut g = 0.0;
@@ -554,7 +612,12 @@ fn gen_noise() -> Vec<f32> {
             if i % 64 == 0 {
                 let t = i as f32 / n as f32;
                 let sweep = 0.5 - 0.5 * sin_cycles(t + 0.25);
-                coefs = SvfCoefs::new(FilterMode::BandPass, 200.0 * 30f32.powf(sweep), 0.75, GEN_SR);
+                coefs = SvfCoefs::new(
+                    FilterMode::BandPass,
+                    200.0 * 30f32.powf(sweep),
+                    0.75,
+                    GEN_SR,
+                );
             }
             f.process(&coefs, rng.bipolar())
         })
@@ -566,7 +629,9 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name)
     }
 
     /// The FLAC fixtures were encoded from the WAV fixtures with the reference
@@ -591,7 +656,9 @@ mod tests {
             .map(|i| {
                 let t = i as f32 / sr;
                 // A few harmonics, like a real instrument.
-                (1..=5).map(|h| (std::f32::consts::TAU * freq * h as f32 * t).sin() / h as f32).sum::<f32>()
+                (1..=5)
+                    .map(|h| (std::f32::consts::TAU * freq * h as f32 * t).sin() / h as f32)
+                    .sum::<f32>()
             })
             .collect();
         Sample::new("tone", data, None, sr)
@@ -600,9 +667,19 @@ mod tests {
     #[test]
     fn detects_pitch_to_within_a_few_cents() {
         crate::dsp::init_tables();
-        for (freq, note) in [(440.0, 69.0), (55.0, 33.0), (1046.5, 84.0), (440.0 * 2f32.powf(0.3 / 12.0), 69.3)] {
-            let p = tone(freq, 1.0).detect_pitch().unwrap_or_else(|| panic!("{freq} Hz: no pitch"));
-            assert!((p - note).abs() < 0.05, "{freq} Hz: detected {p}, expected {note}");
+        for (freq, note) in [
+            (440.0, 69.0),
+            (55.0, 33.0),
+            (1046.5, 84.0),
+            (440.0 * 2f32.powf(0.3 / 12.0), 69.3),
+        ] {
+            let p = tone(freq, 1.0)
+                .detect_pitch()
+                .unwrap_or_else(|| panic!("{freq} Hz: no pitch"));
+            assert!(
+                (p - note).abs() < 0.05,
+                "{freq} Hz: detected {p}, expected {note}"
+            );
         }
     }
 
@@ -610,8 +687,13 @@ mod tests {
     fn builtin_sources_read_as_c4_and_noise_has_no_pitch() {
         crate::dsp::init_tables();
         let b = builtins();
-        for s in b.iter().filter(|s| matches!(s.name.as_str(), "Choir" | "Saw" | "Pluck")) {
-            let p = s.detect_pitch().unwrap_or_else(|| panic!("{}: no pitch", s.name));
+        for s in b
+            .iter()
+            .filter(|s| matches!(s.name.as_str(), "Choir" | "Saw" | "Pluck"))
+        {
+            let p = s
+                .detect_pitch()
+                .unwrap_or_else(|| panic!("{}: no pitch", s.name));
             assert!((p - 60.0).abs() < 0.1, "{}: {p}", s.name);
         }
         let noise = b.iter().find(|s| s.name == "Noise").unwrap();
@@ -621,8 +703,11 @@ mod tests {
     /// WAVs with a 20-byte fmt chunk (valid, but rejected by hound) still load.
     #[test]
     fn lenient_reader_handles_odd_fmt_chunks() {
-        let path = std::env::temp_dir().join(format!("arkeology-oddfmt-{}.wav", std::process::id()));
-        let frames: Vec<i16> = (0..400).map(|i| ((i as f32 * 0.05).sin() * 20_000.0) as i16).collect();
+        let path =
+            std::env::temp_dir().join(format!("arkeology-oddfmt-{}.wav", std::process::id()));
+        let frames: Vec<i16> = (0..400)
+            .map(|i| ((i as f32 * 0.05).sin() * 20_000.0) as i16)
+            .collect();
         let mut b = Vec::new();
         let data_len = (frames.len() * 2) as u32;
         b.extend(b"RIFF");
@@ -642,7 +727,10 @@ mod tests {
             b.extend(f.to_le_bytes());
         }
         std::fs::write(&path, &b).unwrap();
-        assert!(hound::WavReader::open(&path).is_err(), "hound accepts it now; test is moot");
+        assert!(
+            hound::WavReader::open(&path).is_err(),
+            "hound accepts it now; test is moot"
+        );
         let s = load_file(&path).unwrap();
         assert_eq!(s.len(), 400);
         assert_eq!(s.sample_rate, 44_100.0);

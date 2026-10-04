@@ -29,13 +29,19 @@ pub struct Job {
 
 /// Start the server on its own thread. Returns the bound address.
 pub fn start(port: u16, jobs: Sender<Job>) -> Result<SocketAddr> {
-    let server = Server::http(("127.0.0.1", port)).map_err(|e| anyhow!("MCP server on port {port}: {e}"))?;
-    let addr = server.server_addr().to_ip().ok_or_else(|| anyhow!("MCP server has no IP address"))?;
-    std::thread::Builder::new().name("mcp".into()).spawn(move || {
-        for request in server.incoming_requests() {
-            handle_http(request, &jobs);
-        }
-    })?;
+    let server =
+        Server::http(("127.0.0.1", port)).map_err(|e| anyhow!("MCP server on port {port}: {e}"))?;
+    let addr = server
+        .server_addr()
+        .to_ip()
+        .ok_or_else(|| anyhow!("MCP server has no IP address"))?;
+    std::thread::Builder::new()
+        .name("mcp".into())
+        .spawn(move || {
+            for request in server.incoming_requests() {
+                handle_http(request, &jobs);
+            }
+        })?;
     Ok(addr)
 }
 
@@ -64,14 +70,21 @@ fn handle_http(mut request: Request, jobs: &Sender<Job>) {
         Response::from_string("forbidden origin").with_status_code(403)
     } else if *request.method() != Method::Post {
         // No server-initiated SSE stream and no sessions to delete.
-        Response::from_string("method not allowed").with_status_code(405).with_header(header("Allow", "POST"))
+        Response::from_string("method not allowed")
+            .with_status_code(405)
+            .with_header(header("Allow", "POST"))
     } else {
         let mut body = String::new();
         let read = request.as_reader().take(MAX_BODY).read_to_string(&mut body);
-        match read.ok().and_then(|_| serde_json::from_str::<Value>(&body).ok()) {
-            None => Response::from_string(rpc_error(Value::Null, -32700, "parse error").to_string())
-                .with_status_code(400)
-                .with_header(json_type),
+        match read
+            .ok()
+            .and_then(|_| serde_json::from_str::<Value>(&body).ok())
+        {
+            None => {
+                Response::from_string(rpc_error(Value::Null, -32700, "parse error").to_string())
+                    .with_status_code(400)
+                    .with_header(json_type)
+            }
             Some(msg) => match handle_message(msg, jobs) {
                 Some(reply) => Response::from_string(reply.to_string()).with_header(json_type),
                 // Notifications and responses are acknowledged with no body.
@@ -89,7 +102,11 @@ fn rpc_error(id: Value, code: i64, message: &str) -> Value {
 /// Handle one JSON-RPC message. Returns `None` for notifications.
 pub fn handle_message(msg: Value, jobs: &Sender<Job>) -> Option<Value> {
     if msg.is_array() {
-        return Some(rpc_error(Value::Null, -32600, "batch requests are not supported"));
+        return Some(rpc_error(
+            Value::Null,
+            -32600,
+            "batch requests are not supported",
+        ));
     }
     let id = msg.get("id").cloned()?;
     let Some(method) = msg.get("method").and_then(Value::as_str) else {
@@ -98,8 +115,14 @@ pub fn handle_message(msg: Value, jobs: &Sender<Job>) -> Option<Value> {
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
     let result = match method {
         "initialize" => {
-            let requested = params.get("protocolVersion").and_then(Value::as_str).unwrap_or("");
-            let version = PROTOCOL_VERSIONS.iter().find(|v| **v == requested).unwrap_or(&PROTOCOL_VERSIONS[0]);
+            let requested = params
+                .get("protocolVersion")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let version = PROTOCOL_VERSIONS
+                .iter()
+                .find(|v| **v == requested)
+                .unwrap_or(&PROTOCOL_VERSIONS[0]);
             json!({
                 "protocolVersion": version,
                 "capabilities": { "tools": { "listChanged": false } },
@@ -113,7 +136,10 @@ pub fn handle_message(msg: Value, jobs: &Sender<Job>) -> Option<Value> {
             let Some(name) = params.get("name").and_then(Value::as_str) else {
                 return Some(rpc_error(id, -32602, "tools/call needs a tool name"));
             };
-            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             let outcome = call_tool(name, args, jobs);
             let (text, is_error) = match outcome {
                 Ok(v) => (serde_json::to_string_pretty(&v).unwrap_or_default(), false),
@@ -121,15 +147,25 @@ pub fn handle_message(msg: Value, jobs: &Sender<Job>) -> Option<Value> {
             };
             json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
         }
-        _ => return Some(rpc_error(id, -32601, &format!("method not found: {method}"))),
+        _ => {
+            return Some(rpc_error(
+                id,
+                -32601,
+                &format!("method not found: {method}"),
+            ));
+        }
     };
     Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
 }
 
 fn call_tool(name: &str, args: Value, jobs: &Sender<Job>) -> Result<Value, String> {
     let (tx, rx) = sync_channel(1);
-    jobs.send(Job { tool: name.to_string(), args, reply: tx })
-        .map_err(|_| "the synth is shutting down".to_string())?;
+    jobs.send(Job {
+        tool: name.to_string(),
+        args,
+        reply: tx,
+    })
+    .map_err(|_| "the synth is shutting down".to_string())?;
     rx.recv_timeout(TOOL_TIMEOUT)
         .map_err(|_| "the synth didn't answer in time".to_string())?
 }
@@ -163,35 +199,35 @@ fn tool_definitions() -> Value {
         "type": "string",
         "enum": ["fm", "analog", "physical", "granular", "acid", "drums", "kit", "sampler"],
         "description": "fm: 4-op FM · analog: poly subtractive (pads, brass, leads) · \
-physical: modelled plucked strings, mallets/bells, piano and bowed strings (violin family) · granular: grain clouds · \
-acid: 303-style mono bass · drums: synthesized 808/909 kit on the GM drum map · \
-kit: sample drum kit, 16 pads with their own WAV/FLAC files on GM notes · sampler: WAV/FLAC sampler (classic/one-shot/slice)"
+    physical: modelled plucked strings, mallets/bells, piano and bowed strings (violin family) · granular: grain clouds · \
+    acid: 303-style mono bass · drums: synthesized 808/909 kit on the GM drum map · \
+    kit: sample drum kit, 16 pads with their own WAV/FLAC files on GM notes · sampler: WAV/FLAC sampler (classic/one-shot/slice)"
     });
     let read_only = json!({ "readOnlyHint": true });
     json!([
         {
             "name": "get_rack",
             "description": "Overview of the rack: every slot's synth type, patch name, MIDI channel, mute/solo, \
-active voices and sample, plus master settings and connected MIDI inputs.",
+    active voices and sample, plus master settings and connected MIDI inputs.",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": read_only,
         },
         {
             "name": "get_params",
             "description": "All active parameters of a slot (or the master bus): key, name, group, kind, unit, \
-scale (linear/log), range, default, current value and display text, options for choices, and the MIDI CC \
-mapped to it if any. For a synth slot it also describes how the instrument responds to MIDI (pitch bend, \
-mod wheel, sustain, velocity, note layout). Includes the 3 insert effects (fx1_*, fx2_*, fx3_*); \
-an effect's settings appear once its fxN_type is set (Delay, Reverb, Chorus, Flanger, Phaser, Drive, \
-Filter, EQ, Compressor, Crusher, Tremolo).",
+    scale (linear/log), range, default, current value and display text, options for choices, and the MIDI CC \
+    mapped to it if any. For a synth slot it also describes how the instrument responds to MIDI (pitch bend, \
+    mod wheel, sustain, velocity, note layout). Includes the 3 insert effects (fx1_*, fx2_*, fx3_*); \
+    an effect's settings appear once its fxN_type is set (Delay, Reverb, Chorus, Flanger, Phaser, Drive, \
+    Filter, EQ, Compressor, Crusher, Tremolo).",
             "inputSchema": { "type": "object", "properties": { "slot": slot_or_master }, "required": ["slot"] },
             "annotations": read_only,
         },
         {
             "name": "describe_synth",
             "description": "Full control reference for a synth type without adding it: every parameter \
-(with kind, unit, scale, range, default and, where it only applies to some physical models or FX types, \
-an applies_when condition), how it responds to MIDI, and the insert-FX settings for each effect type.",
+    (with kind, unit, scale, range, default and, where it only applies to some physical models or FX types, \
+    an applies_when condition), how it responds to MIDI, and the insert-FX settings for each effect type.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -205,16 +241,16 @@ an applies_when condition), how it responds to MIDI, and the insert-FX settings 
         {
             "name": "list_midi_mappings",
             "description": "Controller mappings: which MIDI channel + CC drives which parameter (slot or master), \
-and whether that parameter is currently active.",
+    and whether that parameter is currently active.",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": read_only,
         },
         {
             "name": "map_cc",
             "description": "Map a MIDI CC (on one channel) to a parameter, like MIDI learn. The CC sweeps the \
-parameter's full range (log-scaled parameters sweep logarithmically; choices step through options). A \
-parameter has at most one CC; one CC can drive several parameters (macros). CC1 and CC64 keep their \
-built-in roles; CC120-127 can't be mapped. Saved with the session.",
+    parameter's full range (log-scaled parameters sweep logarithmically; choices step through options). A \
+    parameter has at most one CC; one CC can drive several parameters (macros). CC1 and CC64 keep their \
+    built-in roles; CC120-127 can't be mapped. Saved with the session.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -242,7 +278,7 @@ built-in roles; CC120-127 can't be mapped. Saved with the session.",
         {
             "name": "set_params",
             "description": "Set one or more parameters on a slot or the master bus. Values are numbers in the \
-parameter's units, or strings like \"250ms\", \"2.5k\", \"40%\", \"c4\", \"on\" or an option name.",
+    parameter's units, or strings like \"250ms\", \"2.5k\", \"40%\", \"c4\", \"on\" or an option name.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -259,7 +295,7 @@ parameter's units, or strings like \"250ms\", \"2.5k\", \"40%\", \"c4\", \"on\" 
         {
             "name": "add_synth",
             "description": "Add a synth in the first free slot. Drums default to channel 10, others to the \
-first unused channel. Optionally load a patch by name.",
+    first unused channel. Optionally load a patch by name.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -300,7 +336,7 @@ first unused channel. Optionally load a patch by name.",
         {
             "name": "load_patch",
             "description": "Load a patch by name into a slot (this can change the slot's synth type). \
-User patches win over factory patches with the same name.",
+    User patches win over factory patches with the same name.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "slot": slot, "name": { "type": "string" } },
@@ -322,8 +358,8 @@ User patches win over factory patches with the same name.",
         {
             "name": "new_rack",
             "description": "Replace the whole rack with an empty one or the starter rack (E.Piano, Choir Cloud, \
-Acid Classic, 808 Kit). Resets master settings and MIDI mappings; MIDI ports and any recording carry on. \
-Pass save_as to keep the current rack as a session first.",
+    Acid Classic, 808 Kit). Resets master settings and MIDI mappings; MIDI ports and any recording carry on. \
+    Pass save_as to keep the current rack as a session first.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -353,7 +389,7 @@ Pass save_as to keep the current rack as a session first.",
         {
             "name": "load_sample",
             "description": "Load a WAV or FLAC file into a granular, sampler or kit slot (kits need a pad, 1-16). \
-For samplers the pitch is detected and Root Note/Tune set to match.",
+    For samplers the pitch is detected and Root Note/Tune set to match.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -367,8 +403,8 @@ For samplers the pitch is detected and Root Note/Tune set to match.",
         {
             "name": "load_kit_folder",
             "description": "Load every WAV/FLAC in a folder into a kit slot, assigning pads from file names \
-(kick, snare, hh/closed hat, open hat, clap, rim, toms, crash, ride, tambourine, cowbell, shaker); \
-unrecognised files fill the remaining pads. Returns the assignments.",
+    (kick, snare, hh/closed hat, open hat, clap, rim, toms, crash, ride, tambourine, cowbell, shaker); \
+    unrecognised files fill the remaining pads. Returns the assignments.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -381,7 +417,7 @@ unrecognised files fill the remaining pads. Returns the assignments.",
         {
             "name": "play_notes",
             "description": "Audition a slot by scheduling notes through the user's speakers (timing is \
-accurate to about 20 ms). Drums use GM notes: 36 kick, 38 snare, 42 closed hat, 46 open hat.",
+    accurate to about 20 ms). Drums use GM notes: 36 kick, 38 snare, 42 closed hat, 46 open hat.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -407,7 +443,7 @@ accurate to about 20 ms). Drums use GM notes: 36 kick, 38 snare, 42 closed hat, 
         {
             "name": "start_recording",
             "description": "Record the master output (after FX, volume and drive) to a 32-bit float stereo WAV \
-in the recordings folder. The TUI shows a REC badge while it runs.",
+    in the recordings folder. The TUI shows a REC badge while it runs.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "name": { "type": "string", "description": "File name; defaults to the date and time" } }
@@ -436,7 +472,11 @@ mod tests {
         let (tx, rx) = channel::<Job>();
         std::thread::spawn(move || {
             for job in rx {
-                let r = if job.tool == "get_rack" { Ok(json!({ "slots": [] })) } else { Err("nope".into()) };
+                let r = if job.tool == "get_rack" {
+                    Ok(json!({ "slots": [] }))
+                } else {
+                    Err("nope".into())
+                };
                 let _ = job.reply.send(r);
             }
         });
@@ -452,16 +492,30 @@ mod tests {
         assert_eq!(r["result"]["protocolVersion"], "2025-06-18");
         assert!(r["result"]["capabilities"]["tools"].is_object());
 
-        assert!(handle_message(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }), &jobs).is_none());
+        assert!(
+            handle_message(
+                json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+                &jobs
+            )
+            .is_none()
+        );
 
-        let r = handle_message(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }), &jobs).unwrap();
+        let r = handle_message(
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
+            &jobs,
+        )
+        .unwrap();
         let tools = r["result"]["tools"].as_array().unwrap();
         assert!(tools.iter().any(|t| t["name"] == "set_params"));
         for t in tools {
             assert_eq!(t["inputSchema"]["type"], "object", "{}", t["name"]);
         }
 
-        let r = handle_message(json!({ "jsonrpc": "2.0", "id": 3, "method": "bogus" }), &jobs).unwrap();
+        let r = handle_message(
+            json!({ "jsonrpc": "2.0", "id": 3, "method": "bogus" }),
+            &jobs,
+        )
+        .unwrap();
         assert_eq!(r["error"]["code"], -32601);
     }
 
@@ -477,7 +531,12 @@ mod tests {
         };
         let ok = call("get_rack");
         assert_eq!(ok["result"]["isError"], false);
-        assert!(ok["result"]["content"][0]["text"].as_str().unwrap().contains("slots"));
+        assert!(
+            ok["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("slots")
+        );
         let err = call("whatever");
         assert_eq!(err["result"]["isError"], true);
     }
@@ -504,19 +563,28 @@ Accept: application/json, text/event-stream\r\n{extra}Content-Length: {}\r\nConn
         };
         let ok = http(addr, &post(""));
         assert!(ok.starts_with("HTTP/1.1 200"), "{ok}");
-        assert!(ok.contains("application/json") && ok.contains("slots"), "{ok}");
+        assert!(
+            ok.contains("application/json") && ok.contains("slots"),
+            "{ok}"
+        );
 
         let local = http(addr, &post("Origin: http://localhost:3000\r\n"));
         assert!(local.starts_with("HTTP/1.1 200"), "{local}");
         let evil = http(addr, &post("Origin: https://evil.example\r\n"));
         assert!(evil.starts_with("HTTP/1.1 403"), "{evil}");
 
-        let get = http(addr, "GET /mcp HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        let get = http(
+            addr,
+            "GET /mcp HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        );
         assert!(get.starts_with("HTTP/1.1 405"), "{get}");
         let note = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
         let notif = http(
             addr,
-            &format!("POST /mcp HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{note}", note.len()),
+            &format!(
+                "POST /mcp HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{note}",
+                note.len()
+            ),
         );
         assert!(notif.starts_with("HTTP/1.1 202"), "{notif}");
     }

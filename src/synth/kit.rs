@@ -49,13 +49,72 @@ macro_rules! pad_params {
     ($n:literal, $note:expr, $choke:expr) => {{
         const G: &str = concat!("Pad ", $n);
         [
-            P::int(concat!("pad", $n, "_note"), "Note", G, 0, 127, $note, Unit::Note),
-            P::float(concat!("pad", $n, "_tune"), "Tune", G, -24.0, 24.0, 0.0, Unit::Semitones).step(0.5),
-            P::float(concat!("pad", $n, "_level"), "Level", G, 0.0, 1.0, 0.8, Unit::Percent),
-            P::float(concat!("pad", $n, "_pan"), "Pan", G, -1.0, 1.0, 0.0, Unit::Pan),
-            P::float(concat!("pad", $n, "_decay"), "Decay", G, 0.02, 10.0, 10.0, Unit::Seconds).exp(),
-            P::float(concat!("pad", $n, "_cutoff"), "Cutoff", G, 200.0, 20_000.0, 20_000.0, Unit::Hz).exp(),
-            P::int(concat!("pad", $n, "_choke"), "Choke Group", G, 0, 4, $choke, Unit::None),
+            P::int(
+                concat!("pad", $n, "_note"),
+                "Note",
+                G,
+                0,
+                127,
+                $note,
+                Unit::Note,
+            ),
+            P::float(
+                concat!("pad", $n, "_tune"),
+                "Tune",
+                G,
+                -24.0,
+                24.0,
+                0.0,
+                Unit::Semitones,
+            )
+            .step(0.5),
+            P::float(
+                concat!("pad", $n, "_level"),
+                "Level",
+                G,
+                0.0,
+                1.0,
+                0.8,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("pad", $n, "_pan"),
+                "Pan",
+                G,
+                -1.0,
+                1.0,
+                0.0,
+                Unit::Pan,
+            ),
+            P::float(
+                concat!("pad", $n, "_decay"),
+                "Decay",
+                G,
+                0.02,
+                10.0,
+                10.0,
+                Unit::Seconds,
+            )
+            .exp(),
+            P::float(
+                concat!("pad", $n, "_cutoff"),
+                "Cutoff",
+                G,
+                200.0,
+                20_000.0,
+                20_000.0,
+                Unit::Hz,
+            )
+            .exp(),
+            P::int(
+                concat!("pad", $n, "_choke"),
+                "Choke Group",
+                G,
+                0,
+                4,
+                $choke,
+                Unit::None,
+            ),
         ]
     }};
 }
@@ -63,7 +122,15 @@ macro_rules! pad_params {
 const fn build_params() -> [P; PAD_BASE + PADS * PAD_STRIDE] {
     let head = [
         P::float("vel_sens", "Vel Sens", "Kit", 0.0, 1.0, 0.7, Unit::Percent),
-        P::float("vel_cutoff", "Vel>Cutoff", "Kit", 0.0, 1.0, 0.0, Unit::Percent),
+        P::float(
+            "vel_cutoff",
+            "Vel>Cutoff",
+            "Kit",
+            0.0,
+            1.0,
+            0.0,
+            Unit::Percent,
+        ),
     ];
     let pads: [[P; PAD_STRIDE]; PADS] = [
         pad_params!("1", 36, 0),
@@ -101,7 +168,10 @@ pub static PARAMS: [P; PAD_BASE + PADS * PAD_STRIDE] = build_params();
 
 /// Which pad a synth-specific parameter index belongs to.
 pub fn pad_of(local: usize) -> Option<usize> {
-    local.checked_sub(PAD_BASE).map(|r| r / PAD_STRIDE).filter(|p| *p < PADS)
+    local
+        .checked_sub(PAD_BASE)
+        .map(|r| r / PAD_STRIDE)
+        .filter(|p| *p < PADS)
 }
 
 const MAX_VOICES: usize = 32;
@@ -190,7 +260,11 @@ impl KitSynth {
 
     /// Swap a pad's sample; returns the old one so the caller can free it
     /// off the audio thread. Voices still playing that pad are cut.
-    pub fn set_pad_sample(&mut self, pad: usize, sample: Option<Arc<Sample>>) -> Option<Arc<Sample>> {
+    pub fn set_pad_sample(
+        &mut self,
+        pad: usize,
+        sample: Option<Arc<Sample>>,
+    ) -> Option<Arc<Sample>> {
         if pad >= PADS {
             return sample;
         }
@@ -211,10 +285,16 @@ impl KitSynth {
     fn trigger(&mut self, pad: usize, velocity: f32) {
         let sr = self.sample_rate;
         let p = self.pads[pad];
-        let Some(src_rate) = self.samples[pad].as_ref().map(|s| s.sample_rate) else { return };
+        let Some(src_rate) = self.samples[pad].as_ref().map(|s| s.sample_rate) else {
+            return;
+        };
         if p.choke > 0 {
             let pads = self.pads;
-            for v in self.voices.iter_mut().filter(|v| v.active && pads[v.pad].choke == p.choke) {
+            for v in self
+                .voices
+                .iter_mut()
+                .filter(|v| v.active && pads[v.pad].choke == p.choke)
+            {
                 v.choking = true;
             }
         }
@@ -223,7 +303,13 @@ impl KitSynth {
             .voices
             .iter()
             .position(|v| !v.active)
-            .unwrap_or_else(|| self.voices.iter().enumerate().min_by_key(|(_, v)| v.stamp).map_or(0, |(i, _)| i));
+            .unwrap_or_else(|| {
+                self.voices
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, v)| v.stamp)
+                    .map_or(0, |(i, _)| i)
+            });
         let semis = p.tune + self.transpose + self.bend * self.bend_range;
         let rate = semitones_to_ratio(semis) as f64 * (src_rate / sr) as f64;
         let vel_gain = 1.0 - self.vel_sens * (1.0 - velocity);
@@ -352,10 +438,16 @@ enum Role {
 }
 
 fn role_of(path: &Path) -> Role {
-    let name = path.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let name = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
     // Split into words ("HH_Closed-01" -> ["hh", "closed"]) and also keep the
     // whole name for compound words like "openhat".
-    let words: Vec<&str> = name.split(|c: char| !c.is_ascii_alphabetic()).filter(|w| !w.is_empty()).collect();
+    let words: Vec<&str> = name
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|w| !w.is_empty())
+        .collect();
     let has = |keys: &[&str]| words.iter().any(|w| keys.iter().any(|k| w.starts_with(k)));
     let exact = |keys: &[&str]| words.iter().any(|w| keys.contains(w));
     let hat = has(&["hat", "hihat", "hh"]) || exact(&["ch", "oh", "chh", "ohh", "phh"]);
@@ -407,7 +499,9 @@ mod tests {
 
     fn tone(freq: f32, seconds: f32) -> Arc<Sample> {
         let sr = 48_000.0;
-        let data = (0..(sr * seconds) as usize).map(|i| (std::f32::consts::TAU * freq * i as f32 / sr).sin()).collect();
+        let data = (0..(sr * seconds) as usize)
+            .map(|i| (std::f32::consts::TAU * freq * i as f32 / sr).sin())
+            .collect();
         Arc::new(Sample::new("t", data, None, sr))
     }
 
@@ -453,7 +547,10 @@ mod tests {
         k.set_pad_sample(0, Some(tone(200.0, 2.0)));
         k.note_on(36, 1.0);
         let out = render(&mut k, 4_800);
-        let crossings = out[..2_400].windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count();
+        let crossings = out[..2_400]
+            .windows(2)
+            .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+            .count();
         // 400 Hz for 50 ms = 40 crossings.
         assert!((36..=44).contains(&crossings), "{crossings} crossings");
         render(&mut k, 9_600);
@@ -471,7 +568,12 @@ mod tests {
         render(&mut k, 2_400);
         k.note_on(42, 1.0); // closed hat chokes the open hat
         render(&mut k, 4_800);
-        let pads: Vec<usize> = k.voices.iter().filter(|v| v.active).map(|v| v.pad).collect();
+        let pads: Vec<usize> = k
+            .voices
+            .iter()
+            .filter(|v| v.active)
+            .map(|v| v.pad)
+            .collect();
         assert!(!pads.contains(&3), "open hat still ringing: {pads:?}");
         assert!(pads.contains(&0) && pads.contains(&2));
     }
@@ -479,12 +581,28 @@ mod tests {
     #[test]
     fn folders_map_by_name() {
         let names = [
-            "Kick 01.wav", "SD_tight.wav", "HH Closed.wav", "OpenHat.wav", "clap.wav", "Tom Low.wav",
-            "Tom Hi.wav", "tom.wav", "crash 1.wav", "Snare Rim.wav", "snare2.wav", "Ride.wav", "weird noise.wav",
+            "Kick 01.wav",
+            "SD_tight.wav",
+            "HH Closed.wav",
+            "OpenHat.wav",
+            "clap.wav",
+            "Tom Low.wav",
+            "Tom Hi.wav",
+            "tom.wav",
+            "crash 1.wav",
+            "Snare Rim.wav",
+            "snare2.wav",
+            "Ride.wav",
+            "weird noise.wav",
         ];
         let files: Vec<PathBuf> = names.iter().map(PathBuf::from).collect();
         let pads = assign_files(&files);
-        let at = |p: usize| pads[p].as_ref().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default();
+        let at = |p: usize| {
+            pads[p]
+                .as_ref()
+                .map(|x| x.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
         assert_eq!(at(0), "Kick 01.wav");
         assert_eq!(at(2), "HH Closed.wav");
         assert_eq!(at(3), "OpenHat.wav");
@@ -497,7 +615,12 @@ mod tests {
         // Three snares: the first two (by name) take Snare and Snare 2.
         let snares = [at(1), at(12)];
         assert!(snares.contains(&"SD_tight.wav".to_string()), "{snares:?}");
-        assert!(pads.iter().flatten().any(|p| p.to_string_lossy() == "weird noise.wav"), "leftovers fill free pads");
+        assert!(
+            pads.iter()
+                .flatten()
+                .any(|p| p.to_string_lossy() == "weird noise.wav"),
+            "leftovers fill free pads"
+        );
         assert_eq!(pads.iter().flatten().count(), names.len());
     }
 }

@@ -135,7 +135,10 @@ impl SynthKind {
     }
 
     pub fn params(self) -> impl Iterator<Item = &'static P> {
-        COMMON.iter().chain(self.specific().iter()).chain(crate::fx::PARAMS.iter())
+        COMMON
+            .iter()
+            .chain(self.specific().iter())
+            .chain(crate::fx::PARAMS.iter())
     }
 
     pub fn defaults(self) -> Vec<f32> {
@@ -157,14 +160,46 @@ pub const BEND_RANGE: usize = 4;
 pub static COMMON: [P; 5] = [
     P::float("volume", "Volume", "Output", 0.0, 1.0, 0.75, Unit::Percent),
     P::float("pan", "Pan", "Output", -1.0, 1.0, 0.0, Unit::Pan),
-    P::float("reverb_send", "Reverb Send", "Output", 0.0, 1.0, 0.2, Unit::Percent),
-    P::int("transpose", "Transpose", "Output", -36, 36, 0, Unit::Semitones),
-    P::int("bend_range", "Bend Range", "Output", 0, 24, 2, Unit::Semitones),
+    P::float(
+        "reverb_send",
+        "Reverb Send",
+        "Output",
+        0.0,
+        1.0,
+        0.2,
+        Unit::Percent,
+    ),
+    P::int(
+        "transpose",
+        "Transpose",
+        "Output",
+        -36,
+        36,
+        0,
+        Unit::Semitones,
+    ),
+    P::int(
+        "bend_range",
+        "Bend Range",
+        "Output",
+        0,
+        24,
+        2,
+        Unit::Semitones,
+    ),
 ];
 
 /// Polyphonic synths start their own table with these (they join the
 /// "Output" group in the editor); mono synths leave out Voices.
-pub const VOICES_PARAM: P = P::int("voices", "Voices", "Output", 1, MAX_VOICES as i32, 12, Unit::None);
+pub const VOICES_PARAM: P = P::int(
+    "voices",
+    "Voices",
+    "Output",
+    1,
+    MAX_VOICES as i32,
+    12,
+    Unit::None,
+);
 pub const GLIDE_PARAM: P = P::float("glide", "Glide", "Output", 0.0, 2.0, 0.0, Unit::Seconds);
 
 // ---------------------------------------------------------------------------
@@ -265,7 +300,11 @@ impl<V: Voice> Poly<V> {
     pub fn note_on(&mut self, note: u8, velocity: f32, shared: &V::Shared) {
         self.stamp += 1;
         let limit = self.limit;
-        let from = if self.ctl.glide_coef > 0.0 { self.last_note.map(f32::from) } else { None };
+        let from = if self.ctl.glide_coef > 0.0 {
+            self.last_note.map(f32::from)
+        } else {
+            None
+        };
         self.last_note = Some(note);
 
         // Re-use a voice already playing this note, else a free one, else steal:
@@ -273,7 +312,11 @@ impl<V: Voice> Poly<V> {
         let idx = self.slots[..limit]
             .iter()
             .position(|s| s.voice.is_active() && s.note == note)
-            .or_else(|| self.slots[..limit].iter().position(|s| !s.voice.is_active()))
+            .or_else(|| {
+                self.slots[..limit]
+                    .iter()
+                    .position(|s| !s.voice.is_active())
+            })
             .or_else(|| {
                 self.slots[..limit]
                     .iter()
@@ -358,7 +401,11 @@ impl<V: Voice> Poly<V> {
 
 /// Per-sample coefficient for an exponential glide lasting roughly `time` seconds.
 pub fn glide_coef(time: f32, sample_rate: f32) -> f32 {
-    if time > 0.0005 { (-1.0 / (time * 0.3 * sample_rate)).exp() } else { 0.0 }
+    if time > 0.0005 {
+        (-1.0 / (time * 0.3 * sample_rate)).exp()
+    } else {
+        0.0
+    }
 }
 
 /// Glide helper: move `current` towards `target` with a per-sample coefficient,
@@ -397,11 +444,16 @@ impl Instrument {
             SynthKind::Acid => Instrument::Acid(acid::AcidSynth::new(sample_rate)),
             SynthKind::Drums => Instrument::Drums(Box::new(drums::DrumsSynth::new(sample_rate))),
             SynthKind::Kit => Instrument::Kit(Box::new(kit::KitSynth::new(sample_rate))),
-            SynthKind::Analog => Instrument::Analog(Box::new(analog::AnalogSynth::new(sample_rate))),
-            SynthKind::Physical => Instrument::Physical(Box::new(physical::PhysicalSynth::new(sample_rate))),
-            SynthKind::Sampler => {
-                Instrument::Sampler(Box::new(sampler::SamplerSynth::new(sample_rate, builtins.clone())))
+            SynthKind::Analog => {
+                Instrument::Analog(Box::new(analog::AnalogSynth::new(sample_rate)))
             }
+            SynthKind::Physical => {
+                Instrument::Physical(Box::new(physical::PhysicalSynth::new(sample_rate)))
+            }
+            SynthKind::Sampler => Instrument::Sampler(Box::new(sampler::SamplerSynth::new(
+                sample_rate,
+                builtins.clone(),
+            ))),
         }
     }
 

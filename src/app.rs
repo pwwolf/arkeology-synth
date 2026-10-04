@@ -14,12 +14,14 @@ use crossbeam_queue::ArrayQueue;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::engine::{self, Command, CommandQueue, GarbageQueue, MAX_SLOTS, Slot, Telemetry};
+use crate::fx::{self, FxKind, FxUnit};
 use crate::midi::{MidiKind, MidiManager, MidiMsg, note_name};
 use crate::params::{ParamDesc, StepSize, master};
-use crate::patch::{CcMapping, Patch, PatchEntry, Session, SessionSlot, Storage, master_index, read_json};
-use crate::sample::{self, Builtins, Sample};
-use crate::fx::{self, FxKind, FxUnit};
+use crate::patch::{
+    CcMapping, Patch, PatchEntry, Session, SessionSlot, Storage, master_index, read_json,
+};
 use crate::recorder::Recording;
+use crate::sample::{self, Builtins, Sample};
 use crate::synth::{SynthKind, granular, kit, sampler};
 
 /// Which parameter set is being viewed/edited.
@@ -58,7 +60,10 @@ impl UiSlot {
     }
 
     pub fn sample_paths(&self) -> Vec<Option<PathBuf>> {
-        self.samples.iter().map(|s| s.as_ref().map(|s| s.path.clone())).collect()
+        self.samples
+            .iter()
+            .map(|s| s.as_ref().map(|s| s.path.clone()))
+            .collect()
     }
 }
 
@@ -83,16 +88,42 @@ pub struct FileEntry {
 
 pub enum Popup {
     Help,
-    AddSynth { cursor: usize },
+    AddSynth {
+        cursor: usize,
+    },
     /// Start a new rack: `cursor` picks the template, `save` keeps the
     /// current rack as a session first.
-    NewRack { cursor: usize, save: bool },
-    ConfirmRemove { slot: usize },
-    Text { title: String, hint: String, input: String, action: TextAction },
-    Patches { all: Vec<PatchEntry>, filter: Option<SynthKind>, cursor: usize },
-    Sessions { items: Vec<PathBuf>, cursor: usize },
-    Ports { items: Vec<String>, cursor: usize },
-    Files { dir: PathBuf, entries: Vec<FileEntry>, cursor: usize },
+    NewRack {
+        cursor: usize,
+        save: bool,
+    },
+    ConfirmRemove {
+        slot: usize,
+    },
+    Text {
+        title: String,
+        hint: String,
+        input: String,
+        action: TextAction,
+    },
+    Patches {
+        all: Vec<PatchEntry>,
+        filter: Option<SynthKind>,
+        cursor: usize,
+    },
+    Sessions {
+        items: Vec<PathBuf>,
+        cursor: usize,
+    },
+    Ports {
+        items: Vec<String>,
+        cursor: usize,
+    },
+    Files {
+        dir: PathBuf,
+        entries: Vec<FileEntry>,
+        cursor: usize,
+    },
 }
 
 pub struct Status {
@@ -243,10 +274,14 @@ impl App {
         // Never overwrite an earlier take.
         let mut k = 2;
         while path.exists() {
-            path = self.storage.recordings_dir().join(format!("{stem} ({k}).wav"));
+            path = self
+                .storage
+                .recordings_dir()
+                .join(format!("{stem} ({k}).wav"));
             k += 1;
         }
-        let (rec, tap) = Recording::start(path.clone(), self.sample_rate).map_err(|e| format!("{e:#}"))?;
+        let (rec, tap) =
+            Recording::start(path.clone(), self.sample_rate).map_err(|e| format!("{e:#}"))?;
         self.send(Command::StartRecording(tap));
         self.recording = Some(rec);
         self.info(format!("recording to {}", path.display()));
@@ -265,7 +300,11 @@ impl App {
     fn toggle_recording(&mut self) {
         if self.recording.is_some() {
             if let Some((path, secs)) = self.stop_recording() {
-                self.info(format!("stopped recording ({}): saving {}", format_duration(secs), path.display()));
+                self.info(format!(
+                    "stopped recording ({}): saving {}",
+                    format_duration(secs),
+                    path.display()
+                ));
             }
         } else if let Err(e) = self.start_recording(None) {
             self.error(e);
@@ -288,7 +327,11 @@ impl App {
                     path.display(),
                     format_duration(secs)
                 )),
-                Ok(path) => self.info(format!("saved {} ({})", path.display(), format_duration(secs))),
+                Ok(path) => self.info(format!(
+                    "saved {} ({})",
+                    path.display(),
+                    format_duration(secs)
+                )),
                 Err(e) => self.error(format!("recording failed: {e:#}")),
             }
         }
@@ -305,11 +348,19 @@ impl App {
     }
 
     pub fn info(&mut self, text: impl Into<String>) {
-        self.status = Some(Status { text: text.into(), error: false, at: Instant::now() });
+        self.status = Some(Status {
+            text: text.into(),
+            error: false,
+            at: Instant::now(),
+        });
     }
 
     pub fn error(&mut self, text: impl Into<String>) {
-        self.status = Some(Status { text: text.into(), error: true, at: Instant::now() });
+        self.status = Some(Status {
+            text: text.into(),
+            error: true,
+            at: Instant::now(),
+        });
     }
 
     fn send(&mut self, cmd: Command) {
@@ -355,7 +406,11 @@ impl App {
     pub fn slot_sample(&self, index: usize) -> Option<Arc<Sample>> {
         let s = self.slots.get(index)?.as_ref()?;
         let src = s.params[s.kind.index_of("source")?].round() as usize;
-        if src == 0 { s.sample(0).map(|l| l.sample.clone()) } else { self.builtins.get(src - 1).cloned() }
+        if src == 0 {
+            s.sample(0).map(|l| l.sample.clone())
+        } else {
+            self.builtins.get(src - 1).cloned()
+        }
     }
 
     /// Lowest playable note for synths that aren't laid out chromatically.
@@ -365,7 +420,8 @@ impl App {
             SynthKind::Drums | SynthKind::Kit => Some(36),
             SynthKind::Sampler => {
                 let p = &s.params[crate::synth::COMMON.len()..];
-                (p[sampler::MODE].round() as usize == 2).then(|| p[sampler::BASE_NOTE].round() as i32)
+                (p[sampler::MODE].round() as usize == 2)
+                    .then(|| p[sampler::BASE_NOTE].round() as i32)
             }
             _ => None,
         }
@@ -410,7 +466,11 @@ impl App {
             Target::Slot(s) => {
                 if let Some(slot) = self.slots[s].as_mut() {
                     slot.params[i] = value;
-                    self.send(Command::SetParam { slot: s, index: i, value });
+                    self.send(Command::SetParam {
+                        slot: s,
+                        index: i,
+                        value,
+                    });
                 }
             }
         }
@@ -425,7 +485,9 @@ impl App {
     pub fn fx_base(&self, t: Target) -> usize {
         match t {
             Target::Master => master::FX_BASE,
-            Target::Slot(s) => self.slots[s].as_ref().map_or(usize::MAX, |s| s.kind.fx_base()),
+            Target::Slot(s) => self.slots[s]
+                .as_ref()
+                .map_or(usize::MAX, |s| s.kind.fx_base()),
         }
     }
 
@@ -440,12 +502,16 @@ impl App {
     pub fn param_visible(&self, t: Target, i: usize) -> bool {
         match t {
             Target::Master => fx::visible(&self.master, master::FX_BASE, i),
-            Target::Slot(s) => self.slots[s].as_ref().is_some_and(|slot| slot.kind.param_visible(&slot.params, i)),
+            Target::Slot(s) => self.slots[s]
+                .as_ref()
+                .is_some_and(|slot| slot.kind.param_visible(&slot.params, i)),
         }
     }
 
     pub fn visible_params(&self, t: Target) -> Vec<usize> {
-        (0..self.param_count(t)).filter(|&i| self.param_visible(t, i)).collect()
+        (0..self.param_count(t))
+            .filter(|&i| self.param_visible(t, i))
+            .collect()
     }
 
     /// An FX unit's type changed: give it that effect's usual mix and swap in
@@ -454,10 +520,17 @@ impl App {
         let base = self.fx_base(t) + unit * fx::STRIDE;
         let kind = FxKind::from_value(self.param_value(t, base + fx::TYPE));
         self.set_param(t, base + fx::MIX, kind.default_mix());
-        let built = FxUnit::from_values(fx::unit_values(self.values(t), self.fx_base(t), unit), self.sample_rate);
+        let built = FxUnit::from_values(
+            fx::unit_values(self.values(t), self.fx_base(t), unit),
+            self.sample_rate,
+        );
         match t {
             Target::Master => self.send(Command::SetMasterFx { unit, fx: built }),
-            Target::Slot(slot) => self.send(Command::SetFx { slot, unit, fx: built }),
+            Target::Slot(slot) => self.send(Command::SetFx {
+                slot,
+                unit,
+                fx: built,
+            }),
         }
     }
 
@@ -471,7 +544,9 @@ impl App {
             Target::Master => None,
             Target::Slot(s) => Some(s),
         };
-        self.cc_map.iter().find(|m| m.slot == slot && m.param == key)
+        self.cc_map
+            .iter()
+            .find(|m| m.slot == slot && m.param == key)
     }
 
     fn free_slot(&self) -> Option<usize> {
@@ -495,14 +570,19 @@ impl App {
         mute: bool,
         solo: bool,
     ) -> bool {
-        let mut samples: Vec<Option<LoadedSample>> = (0..kind.sample_slots()).map(|_| None).collect();
+        let mut samples: Vec<Option<LoadedSample>> =
+            (0..kind.sample_slots()).map(|_| None).collect();
         let mut failed = Vec::new();
         let mut missing_hint = None;
         for (i, path) in sample_paths.into_iter().enumerate().take(samples.len()) {
             let Some(path) = path else { continue };
             // Relative paths (factory kits) live in the samples folder.
             let relative = path.clone();
-            let path = if path.is_relative() { self.storage.samples_dir().join(path) } else { path };
+            let path = if path.is_relative() {
+                self.storage.samples_dir().join(path)
+            } else {
+                path
+            };
             if relative.is_relative() && !path.exists() {
                 let fix = if crate::vcsl::is_vcsl_path(&relative) {
                     "download it with `mise run fetch-kits` (or --fetch-kits)"
@@ -513,7 +593,12 @@ impl App {
                 continue;
             }
             match sample::load_file(&path) {
-                Ok(s) => samples[i] = Some(LoadedSample { path, sample: Arc::new(s) }),
+                Ok(s) => {
+                    samples[i] = Some(LoadedSample {
+                        path,
+                        sample: Arc::new(s),
+                    })
+                }
                 Err(e) => failed.push(format!("{e:#}")),
             }
         }
@@ -524,9 +609,19 @@ impl App {
             self.error(format!("this kit's samples aren't on disk yet: {fix}"));
         }
         let clean = failed.is_empty() && missing_hint.is_none();
-        let arcs: Vec<Option<Arc<Sample>>> = samples.iter().map(|s| s.as_ref().map(|s| s.sample.clone())).collect();
-        let data = Slot::new(kind, values.clone(), channel, self.sample_rate, &self.builtins, &arcs)
-            .with_flags(mute, solo);
+        let arcs: Vec<Option<Arc<Sample>>> = samples
+            .iter()
+            .map(|s| s.as_ref().map(|s| s.sample.clone()))
+            .collect();
+        let data = Slot::new(
+            kind,
+            values.clone(),
+            channel,
+            self.sample_rate,
+            &self.builtins,
+            &arcs,
+        )
+        .with_flags(mute, solo);
         self.send(Command::InstallSlot { slot: index, data });
         let notes_seen = self.telemetry.slots[index].notes.load(Ordering::Relaxed);
         self.slots[index] = Some(UiSlot {
@@ -552,9 +647,22 @@ impl App {
         };
         let ch10_free = !self.slots.iter().flatten().any(|s| s.channel == Some(9));
         let drums = matches!(kind, SynthKind::Drums | SynthKind::Kit);
-        let channel = if drums && ch10_free { Some(9) } else { self.free_channel() };
+        let channel = if drums && ch10_free {
+            Some(9)
+        } else {
+            self.free_channel()
+        };
         let name = format!("{} {}", kind.label(), index + 1);
-        let _ = self.install(index, kind, &name, kind.defaults(), channel, Vec::new(), false, false);
+        let _ = self.install(
+            index,
+            kind,
+            &name,
+            kind.defaults(),
+            channel,
+            Vec::new(),
+            false,
+            false,
+        );
         self.select(Target::Slot(index));
         self.info(format!(
             "added {} in slot {} on {}",
@@ -577,13 +685,22 @@ impl App {
     }
 
     fn change_channel(&mut self, index: usize, dir: i32) {
-        let Some(slot) = self.slots[index].as_mut() else { return };
+        let Some(slot) = self.slots[index].as_mut() else {
+            return;
+        };
         // Cycle: omni, 1..16
         let pos = slot.channel.map_or(0, |c| c as i32 + 1);
         let next = (pos + dir).rem_euclid(17);
-        slot.channel = if next == 0 { None } else { Some((next - 1) as u8) };
+        slot.channel = if next == 0 {
+            None
+        } else {
+            Some((next - 1) as u8)
+        };
         let channel = slot.channel;
-        self.send(Command::SetChannel { slot: index, channel });
+        self.send(Command::SetChannel {
+            slot: index,
+            channel,
+        });
     }
 
     fn toggle_mute(&mut self, index: usize) {
@@ -628,26 +745,50 @@ impl App {
 
     fn current_patch(&self, index: usize) -> Option<Patch> {
         let s = self.slots[index].as_ref()?;
-        Some(Patch::from_values(&s.name, s.kind, &s.params, &s.sample_paths()))
+        Some(Patch::from_values(
+            &s.name,
+            s.kind,
+            &s.params,
+            &s.sample_paths(),
+        ))
     }
 
     fn load_patch_into(&mut self, index: usize, patch: Patch) {
         let (channel, mute, solo) = self.slots[index]
             .as_ref()
-            .map_or((self.free_channel(), false, false), |s| (s.channel, s.mute, s.solo));
+            .map_or((self.free_channel(), false, false), |s| {
+                (s.channel, s.mute, s.solo)
+            });
         let values = patch.values();
         // Keep any sample error on screen rather than replacing it with "loaded".
-        if self.install(index, patch.kind, &patch.name, values, channel, patch.sample_paths(), mute, solo) {
-            self.info(format!("loaded patch '{}' into slot {}", patch.name, index + 1));
+        if self.install(
+            index,
+            patch.kind,
+            &patch.name,
+            values,
+            channel,
+            patch.sample_paths(),
+            mute,
+            solo,
+        ) {
+            self.info(format!(
+                "loaded patch '{}' into slot {}",
+                patch.name,
+                index + 1
+            ));
         }
     }
 
     fn save_patch(&mut self, name: &str) {
-        let Some(index) = self.selected_slot() else { return };
+        let Some(index) = self.selected_slot() else {
+            return;
+        };
         if let Some(s) = self.slots[index].as_mut() {
             s.name = name.to_string();
         }
-        let Some(patch) = self.current_patch(index) else { return };
+        let Some(patch) = self.current_patch(index) else {
+            return;
+        };
         match self.storage.save_patch(&patch) {
             Ok(path) => self.info(format!("saved patch to {}", path.display())),
             Err(e) => self.error(format!("{e:#}")),
@@ -686,9 +827,17 @@ impl App {
     /// Replace the rack with an empty one or the starter rack, optionally
     /// saving the current rack as a session first. Synths, master settings
     /// and MIDI mappings reset; MIDI port connections and recording carry on.
-    pub fn new_rack(&mut self, starter: bool, save_as: Option<String>) -> Result<Option<PathBuf>, String> {
+    pub fn new_rack(
+        &mut self,
+        starter: bool,
+        save_as: Option<String>,
+    ) -> Result<Option<PathBuf>, String> {
         let saved = match save_as {
-            Some(name) => Some(self.storage.save_session(&name, &self.session()).map_err(|e| format!("{e:#}"))?),
+            Some(name) => Some(
+                self.storage
+                    .save_session(&name, &self.session())
+                    .map_err(|e| format!("{e:#}"))?,
+            ),
             None => None,
         };
         self.all_keyboard_notes_off();
@@ -699,9 +848,16 @@ impl App {
         if starter {
             self.default_rack();
         }
-        let what = if starter { "starter rack" } else { "empty rack" };
+        let what = if starter {
+            "starter rack"
+        } else {
+            "empty rack"
+        };
         match &saved {
-            Some(path) => self.info(format!("new {what}; previous rack saved as {}", path.display())),
+            Some(path) => self.info(format!(
+                "new {what}; previous rack saved as {}",
+                path.display()
+            )),
             None => self.info(format!("new {what}")),
         }
         Ok(saved)
@@ -709,7 +865,9 @@ impl App {
 
     /// Default name for saving the current rack before replacing it.
     pub fn timestamped_rack_name() -> String {
-        chrono::Local::now().format("Rack %Y-%m-%d %H-%M").to_string()
+        chrono::Local::now()
+            .format("Rack %Y-%m-%d %H-%M")
+            .to_string()
     }
 
     pub fn has_synths(&self) -> bool {
@@ -782,11 +940,25 @@ impl App {
     pub fn default_rack(&mut self) {
         let patches = crate::patch::factory_patches();
         let find = |name: &str| patches.iter().find(|p| p.name == name).cloned();
-        let rack = [("E.Piano", 0u8), ("Choir Cloud", 1), ("Acid Classic", 2), ("808 Kit", 9)];
+        let rack = [
+            ("E.Piano", 0u8),
+            ("Choir Cloud", 1),
+            ("Acid Classic", 2),
+            ("808 Kit", 9),
+        ];
         for (i, (name, channel)) in rack.iter().enumerate() {
             if let Some(p) = find(name) {
                 let values = p.values();
-                let _ = self.install(i, p.kind, &p.name, values, Some(*channel), Vec::new(), false, false);
+                let _ = self.install(
+                    i,
+                    p.kind,
+                    &p.name,
+                    values,
+                    Some(*channel),
+                    Vec::new(),
+                    false,
+                    false,
+                );
             }
         }
         self.rack_cursor = 1;
@@ -794,7 +966,9 @@ impl App {
 
     /// The kit pad being edited (the one containing the parameter cursor), else pad 0.
     pub fn current_pad(&self, index: usize) -> usize {
-        let is_kit = self.slots[index].as_ref().is_some_and(|s| s.kind == SynthKind::Kit);
+        let is_kit = self.slots[index]
+            .as_ref()
+            .is_some_and(|s| s.kind == SynthKind::Kit);
         let local = self.param_cursor.checked_sub(crate::synth::COMMON.len());
         if is_kit && self.selected_slot() == Some(index) {
             local.and_then(kit::pad_of).unwrap_or(0)
@@ -814,18 +988,32 @@ impl App {
                 if kind == Some(SynthKind::Kit) {
                     self.set_pad_sample(index, pad, path.to_path_buf(), arc);
                     let role = kit::PAD_ROLES[pad.min(kit::PADS - 1)];
-                    self.info(format!("pad {} ({role}): {} ({dur:.2}s)", pad + 1, path.display()));
+                    self.info(format!(
+                        "pad {} ({role}): {} ({dur:.2}s)",
+                        pad + 1,
+                        path.display()
+                    ));
                     return;
                 }
-                self.send(Command::SetSample { slot: index, index: 0, sample: Some(arc.clone()) });
+                self.send(Command::SetSample {
+                    slot: index,
+                    index: 0,
+                    sample: Some(arc.clone()),
+                });
                 if let Some(slot) = self.slots[index].as_mut()
                     && let Some(entry) = slot.samples.first_mut()
                 {
-                    *entry = Some(LoadedSample { path: path.to_path_buf(), sample: arc });
+                    *entry = Some(LoadedSample {
+                        path: path.to_path_buf(),
+                        sample: arc,
+                    });
                 }
                 // Switch the source to "File" so the new sample is heard.
                 if let Some(src) = kind.and_then(|k| k.index_of("source")) {
-                    let file = granular::SOURCES.iter().position(|s| *s == "File").unwrap_or(0);
+                    let file = granular::SOURCES
+                        .iter()
+                        .position(|s| *s == "File")
+                        .unwrap_or(0);
                     self.set_param(Target::Slot(index), src, file as f32);
                 }
                 let mut msg = format!("loaded {} ({dur:.1}s)", path.display());
@@ -839,7 +1027,11 @@ impl App {
     }
 
     fn set_pad_sample(&mut self, index: usize, pad: usize, path: PathBuf, sample: Arc<Sample>) {
-        self.send(Command::SetSample { slot: index, index: pad, sample: Some(sample.clone()) });
+        self.send(Command::SetSample {
+            slot: index,
+            index: pad,
+            sample: Some(sample.clone()),
+        });
         if let Some(slot) = self.slots[index].as_mut()
             && let Some(entry) = slot.samples.get_mut(pad)
         {
@@ -849,7 +1041,11 @@ impl App {
 
     /// Load every audio file in `dir` into a kit, assigning pads by file name.
     /// Returns (pad, path) for each assignment.
-    pub(crate) fn load_kit_folder(&mut self, index: usize, dir: &Path) -> Result<Vec<(usize, PathBuf)>, String> {
+    pub(crate) fn load_kit_folder(
+        &mut self,
+        index: usize,
+        dir: &Path,
+    ) -> Result<Vec<(usize, PathBuf)>, String> {
         let files: Vec<PathBuf> = std::fs::read_dir(dir)
             .map_err(|e| format!("reading {}: {e}", dir.display()))?
             .flatten()
@@ -872,7 +1068,11 @@ impl App {
             }
         }
         let skipped = files.len().saturating_sub(loaded.len() + failed.len());
-        let mut msg = format!("loaded {} samples from {} into the kit", loaded.len(), dir.display());
+        let mut msg = format!(
+            "loaded {} samples from {} into the kit",
+            loaded.len(),
+            dir.display()
+        );
         if skipped > 0 {
             msg.push_str(&format!(" ({skipped} didn't fit in {} pads)", kit::PADS));
         }
@@ -902,14 +1102,21 @@ impl App {
         if cents == 0.0 {
             format!(" · pitch {name}: Root Note set to {name}")
         } else {
-            format!(" · pitch {name} {cents:+.0} ct: Root Note {name}, Tune {:+.0} ct", -cents)
+            format!(
+                " · pitch {name} {cents:+.0} ct: Root Note {name}, Tune {:+.0} ct",
+                -cents
+            )
         }
     }
 
     pub(crate) fn open_files(&mut self, dir: PathBuf) {
         let mut entries = Vec::new();
         if let Some(parent) = dir.parent() {
-            entries.push(FileEntry { name: "..".into(), path: parent.to_path_buf(), is_dir: true });
+            entries.push(FileEntry {
+                name: "..".into(),
+                path: parent.to_path_buf(),
+                is_dir: true,
+            });
         }
         let mut list: Vec<FileEntry> = std::fs::read_dir(&dir)
             .map(|rd| {
@@ -921,14 +1128,22 @@ impl App {
                             return None;
                         }
                         let is_dir = path.is_dir();
-                        (is_dir || sample::is_audio_file(&path)).then_some(FileEntry { name, path, is_dir })
+                        (is_dir || sample::is_audio_file(&path)).then_some(FileEntry {
+                            name,
+                            path,
+                            is_dir,
+                        })
                     })
                     .collect()
             })
             .unwrap_or_default();
         list.sort_by_key(|e| (!e.is_dir, e.name.to_lowercase()));
         entries.extend(list);
-        self.popup = Some(Popup::Files { dir, entries, cursor: 0 });
+        self.popup = Some(Popup::Files {
+            dir,
+            entries,
+            cursor: 0,
+        });
     }
 
     // -----------------------------------------------------------------------
@@ -949,8 +1164,9 @@ impl App {
         }
         if !self.scheduled.is_empty() {
             let now = Instant::now();
-            let (mut due, later): (Vec<_>, Vec<_>) =
-                std::mem::take(&mut self.scheduled).into_iter().partition(|(at, _)| *at <= now);
+            let (mut due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.scheduled)
+                .into_iter()
+                .partition(|(at, _)| *at <= now);
             self.scheduled = later;
             // Stable sort keeps a note-on ahead of its note-off at equal times.
             due.sort_by_key(|(at, _)| *at);
@@ -998,15 +1214,23 @@ impl App {
     fn on_midi(&mut self, msg: MidiMsg) {
         self.midi_log.push_front(msg.to_string());
         self.midi_log.truncate(64);
-        let MidiKind::Cc { cc, value } = msg.kind else { return };
+        let MidiKind::Cc { cc, value } = msg.kind else {
+            return;
+        };
         if let Some((target, index)) = self.learning.take() {
             let slot = match target {
                 Target::Master => None,
                 Target::Slot(s) => Some(s),
             };
             let param = self.param_key(target, index).to_string();
-            self.cc_map.retain(|m| !(m.slot == slot && m.param == param));
-            self.cc_map.push(CcMapping { channel: msg.channel, cc, slot, param });
+            self.cc_map
+                .retain(|m| !(m.slot == slot && m.param == param));
+            self.cc_map.push(CcMapping {
+                channel: msg.channel,
+                cc,
+                slot,
+                param,
+            });
             let name = self.param_desc(target, index).name;
             self.info(format!("mapped CC{cc} (ch {}) to {name}", msg.channel + 1));
         }
@@ -1083,7 +1307,10 @@ impl App {
             }
             return false;
         };
-        if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
             return false;
         }
         const KEYS: &str = "awsedftgyhujkolp;'";
@@ -1099,7 +1326,9 @@ impl App {
                 None => (self.keyboard.octave + 1) * 12,
             };
             let note = base + offset as i32;
-            let Ok(note) = u8::try_from(note) else { return true };
+            let Ok(note) = u8::try_from(note) else {
+                return true;
+            };
             if note > 127 {
                 return true;
             }
@@ -1110,9 +1339,21 @@ impl App {
                 k.released = None;
                 return true;
             }
-            self.keyboard.held.insert(c, HeldKey { slot, note, at: now, released: None });
+            self.keyboard.held.insert(
+                c,
+                HeldKey {
+                    slot,
+                    note,
+                    at: now,
+                    released: None,
+                },
+            );
             let velocity = self.keyboard.velocity as f32 / 127.0;
-            self.send(Command::NoteOn { slot, note, velocity });
+            self.send(Command::NoteOn {
+                slot,
+                note,
+                velocity,
+            });
             return true;
         }
         if key.kind == KeyEventKind::Repeat {
@@ -1121,11 +1362,19 @@ impl App {
         match c {
             'z' => {
                 self.keyboard.octave = (self.keyboard.octave - 1).max(-1);
-                self.info(format!("octave {} (C = {})", self.keyboard.octave, note_name(((self.keyboard.octave + 1) * 12).clamp(0, 127) as u8)));
+                self.info(format!(
+                    "octave {} (C = {})",
+                    self.keyboard.octave,
+                    note_name(((self.keyboard.octave + 1) * 12).clamp(0, 127) as u8)
+                ));
             }
             'x' => {
                 self.keyboard.octave = (self.keyboard.octave + 1).min(8);
-                self.info(format!("octave {} (C = {})", self.keyboard.octave, note_name(((self.keyboard.octave + 1) * 12).clamp(0, 127) as u8)));
+                self.info(format!(
+                    "octave {} (C = {})",
+                    self.keyboard.octave,
+                    note_name(((self.keyboard.octave + 1) * 12).clamp(0, 127) as u8)
+                ));
             }
             'c' => {
                 self.keyboard.velocity = self.keyboard.velocity.saturating_sub(20).max(7);
@@ -1145,7 +1394,10 @@ impl App {
     fn all_keyboard_notes_off(&mut self) {
         let held: Vec<_> = self.keyboard.held.drain().map(|(_, k)| k).collect();
         for k in held {
-            self.send(Command::NoteOff { slot: k.slot, note: k.note });
+            self.send(Command::NoteOff {
+                slot: k.slot,
+                note: k.note,
+            });
         }
     }
 
@@ -1165,7 +1417,10 @@ impl App {
             .collect();
         for c in done {
             if let Some(k) = self.keyboard.held.remove(&c) {
-                self.send(Command::NoteOff { slot: k.slot, note: k.note });
+                self.send(Command::NoteOff {
+                    slot: k.slot,
+                    note: k.note,
+                });
             }
         }
     }
@@ -1178,7 +1433,11 @@ impl App {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('?') | KeyCode::F(1) => self.popup = Some(Popup::Help),
             KeyCode::Tab | KeyCode::BackTab => {
-                self.focus = if self.focus == Focus::Rack { Focus::Params } else { Focus::Rack };
+                self.focus = if self.focus == Focus::Rack {
+                    Focus::Params
+                } else {
+                    Focus::Rack
+                };
             }
             KeyCode::Char(' ') => {
                 self.all_keyboard_notes_off();
@@ -1187,23 +1446,44 @@ impl App {
             }
             KeyCode::Char('k') => {
                 self.keyboard.enabled = true;
-                let how = if self.keyboard.has_release { "" } else { " (no key-up events in this terminal: notes auto-release)" };
-                self.info(format!("keyboard play mode: a-' play notes, z/x octave, c/v velocity, Esc exits{how}"));
+                let how = if self.keyboard.has_release {
+                    ""
+                } else {
+                    " (no key-up events in this terminal: notes auto-release)"
+                };
+                self.info(format!(
+                    "keyboard play mode: a-' play notes, z/x octave, c/v velocity, Esc exits{how}"
+                ));
             }
             KeyCode::Char('a') => self.popup = Some(Popup::AddSynth { cursor: 0 }),
-            KeyCode::Char('N') => self.popup = Some(Popup::NewRack { cursor: 0, save: self.has_synths() }),
+            KeyCode::Char('N') => {
+                self.popup = Some(Popup::NewRack {
+                    cursor: 0,
+                    save: self.has_synths(),
+                })
+            }
             KeyCode::Char('R') => self.toggle_recording(),
             KeyCode::Char('l') => {
                 if slot.is_none() {
-                    self.error("select a synth slot to load a patch into (or press 'a' to add one)");
+                    self.error(
+                        "select a synth slot to load a patch into (or press 'a' to add one)",
+                    );
                 } else {
                     let all = self.storage.list_patches();
                     let current = slot.and_then(|i| self.slots[i].as_ref());
                     let filter = current.map(|s| s.kind);
                     let cursor = current
-                        .and_then(|s| patch_view(&all, filter).iter().position(|e| e.patch.name == s.name))
+                        .and_then(|s| {
+                            patch_view(&all, filter)
+                                .iter()
+                                .position(|e| e.patch.name == s.name)
+                        })
                         .unwrap_or(0);
-                    self.popup = Some(Popup::Patches { all, filter, cursor });
+                    self.popup = Some(Popup::Patches {
+                        all,
+                        filter,
+                        cursor,
+                    });
                 }
             }
             KeyCode::Char('w') => {
@@ -1272,7 +1552,10 @@ impl App {
                     let i = self.param_cursor.min(self.param_count(target) - 1);
                     self.learning = Some((target, i));
                     self.focus = Focus::Params;
-                    self.info(format!("MIDI learn: move a knob/fader to map it to {}", self.param_desc(target, i).name));
+                    self.info(format!(
+                        "MIDI learn: move a knob/fader to map it to {}",
+                        self.param_desc(target, i).name
+                    ));
                 }
             }
             KeyCode::Char('C') => {
@@ -1312,9 +1595,17 @@ impl App {
                     self.param_scroll = 0;
                 }
             }
-            KeyCode::Left | KeyCode::Right | KeyCode::Char('-') | KeyCode::Char('=') | KeyCode::Char('+') => {
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Char('-')
+            | KeyCode::Char('=')
+            | KeyCode::Char('+') => {
                 if let Some(i) = self.selected_slot() {
-                    let dir = if matches!(key.code, KeyCode::Left | KeyCode::Char('-')) { -1 } else { 1 };
+                    let dir = if matches!(key.code, KeyCode::Left | KeyCode::Char('-')) {
+                        -1
+                    } else {
+                        1
+                    };
                     self.change_channel(i, dir);
                 }
             }
@@ -1336,7 +1627,10 @@ impl App {
         }
         // Navigate over visible parameters only (hidden FX settings are skipped).
         let vis = self.visible_params(target);
-        let pos = vis.iter().rposition(|&i| i <= self.param_cursor).unwrap_or(0);
+        let pos = vis
+            .iter()
+            .rposition(|&i| i <= self.param_cursor)
+            .unwrap_or(0);
         let cur = vis[pos];
         let group_of = |i: usize| self.param_desc(target, vis[i]).group;
         match key.code {
@@ -1352,17 +1646,29 @@ impl App {
             KeyCode::PageUp => {
                 // Start of this group, or of the previous one if already at the start.
                 let g = group_of(pos);
-                let start = (0..=pos).rev().take_while(|&k| group_of(k) == g).last().unwrap_or(pos);
+                let start = (0..=pos)
+                    .rev()
+                    .take_while(|&k| group_of(k) == g)
+                    .last()
+                    .unwrap_or(pos);
                 let k = if start == pos && pos > 0 {
                     let pg = group_of(pos - 1);
-                    (0..pos).rev().take_while(|&k| group_of(k) == pg).last().unwrap_or(0)
+                    (0..pos)
+                        .rev()
+                        .take_while(|&k| group_of(k) == pg)
+                        .last()
+                        .unwrap_or(0)
                 } else {
                     start
                 };
                 self.param_cursor = vis[k];
             }
             KeyCode::Left | KeyCode::Right | KeyCode::Char(',') | KeyCode::Char('.') => {
-                let dir = if matches!(key.code, KeyCode::Left | KeyCode::Char(',')) { -1.0 } else { 1.0 };
+                let dir = if matches!(key.code, KeyCode::Left | KeyCode::Char(',')) {
+                    -1.0
+                } else {
+                    1.0
+                };
                 let size = match key.code {
                     KeyCode::Char(_) => StepSize::Fine,
                     _ if shift => StepSize::Coarse,
@@ -1395,7 +1701,9 @@ impl App {
     }
 
     fn on_popup_key(&mut self, key: KeyEvent) {
-        let Some(mut popup) = self.popup.take() else { return };
+        let Some(mut popup) = self.popup.take() else {
+            return;
+        };
         let keep = match &mut popup {
             Popup::Help => false,
             Popup::NewRack { cursor, save } => match key.code {
@@ -1453,7 +1761,9 @@ impl App {
                         TextAction::SavePatch if !text.is_empty() => self.save_patch(&text),
                         TextAction::SaveSession if !text.is_empty() => self.save_session(&text),
                         TextAction::Rename if !text.is_empty() => {
-                            if let Some(s) = self.selected_slot().and_then(|i| self.slots[i].as_mut()) {
+                            if let Some(s) =
+                                self.selected_slot().and_then(|i| self.slots[i].as_mut())
+                            {
                                 s.name = text;
                             }
                         }
@@ -1480,8 +1790,14 @@ impl App {
                 }
                 _ => true,
             },
-            Popup::Patches { all, filter, cursor } => {
-                let chosen = patch_view(all, *filter).get(*cursor).map(|e| e.patch.clone());
+            Popup::Patches {
+                all,
+                filter,
+                cursor,
+            } => {
+                let chosen = patch_view(all, *filter)
+                    .get(*cursor)
+                    .map(|e| e.patch.clone());
                 match list_nav(key.code, cursor, patch_view(all, *filter).len()) {
                     ListAction::Select => {
                         if let (Some(index), Some(patch)) = (self.selected_slot(), chosen) {
@@ -1545,7 +1861,11 @@ impl App {
                     true
                 }
             },
-            Popup::Files { dir, entries, cursor } => match list_nav(key.code, cursor, entries.len()) {
+            Popup::Files {
+                dir,
+                entries,
+                cursor,
+            } => match list_nav(key.code, cursor, entries.len()) {
                 ListAction::Select | ListAction::Preview => {
                     if let Some(e) = entries.get(*cursor) {
                         let path = e.path.clone();
@@ -1563,7 +1883,11 @@ impl App {
                 ListAction::Stay if key.code == KeyCode::Char('K') => {
                     // Load the folder being browsed as a whole kit.
                     let dir = dir.clone();
-                    match self.selected_slot().filter(|&i| self.slots[i].as_ref().is_some_and(|s| s.kind == SynthKind::Kit)) {
+                    match self.selected_slot().filter(|&i| {
+                        self.slots[i]
+                            .as_ref()
+                            .is_some_and(|s| s.kind == SynthKind::Kit)
+                    }) {
                         Some(i) => {
                             if let Err(e) = self.load_kit_folder(i, &dir) {
                                 self.error(e);
@@ -1577,7 +1901,10 @@ impl App {
                 ListAction::Close => false,
                 ListAction::Stay => {
                     if key.code == KeyCode::Backspace
-                        && let Some(up) = entries.first().filter(|e| e.name == "..").map(|e| e.path.clone())
+                        && let Some(up) = entries
+                            .first()
+                            .filter(|e| e.name == "..")
+                            .map(|e| e.path.clone())
                     {
                         self.open_files(up);
                         return;
@@ -1594,14 +1921,21 @@ impl App {
 
 /// The patches shown in the browser for a kind filter (`None` = all kinds).
 pub fn patch_view(all: &[PatchEntry], filter: Option<SynthKind>) -> Vec<&PatchEntry> {
-    all.iter().filter(|e| filter.is_none_or(|k| e.patch.kind == k)).collect()
+    all.iter()
+        .filter(|e| filter.is_none_or(|k| e.patch.kind == k))
+        .collect()
 }
 
 /// Keys that act again while held (terminals that report repeats separately
 /// from presses). Actions like Enter, Esc or Space only fire once.
 fn repeatable(code: KeyCode, typing: bool) -> bool {
     match code {
-        KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right | KeyCode::PageUp | KeyCode::PageDown => true,
+        KeyCode::Up
+        | KeyCode::Down
+        | KeyCode::Left
+        | KeyCode::Right
+        | KeyCode::PageUp
+        | KeyCode::PageDown => true,
         // Fine parameter steps.
         KeyCode::Char(',') | KeyCode::Char('.') => true,
         KeyCode::Char(_) | KeyCode::Backspace => typing,
@@ -1656,7 +1990,10 @@ pub(crate) mod tests_support {
     pub fn test_app(dir: &Path) -> App {
         let commands: CommandQueue = Arc::new(ArrayQueue::new(4096));
         let midi_in = Arc::new(ArrayQueue::new(64));
-        let midi = MidiManager::new(Sink { engine: commands.clone(), ui: midi_in.clone() });
+        let midi = MidiManager::new(Sink {
+            engine: commands.clone(),
+            ui: midi_in.clone(),
+        });
         App::new(AppInit {
             sample_rate: 48_000.0,
             device_name: "Test Device".into(),
@@ -1687,7 +2024,12 @@ mod tests {
     use ratatui::crossterm::event::KeyEventState;
 
     fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent { code, modifiers: KeyModifiers::NONE, kind: KeyEventKind::Press, state: KeyEventState::NONE }
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
     }
 
     fn screen(app: &mut App, w: u16, h: u16) -> String {
@@ -1695,7 +2037,11 @@ mod tests {
         term.draw(|f| crate::ui::draw(f, app)).unwrap();
         let buf = term.backend().buffer().clone();
         (0..h)
-            .map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>())
+            .map(|y| {
+                (0..w)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -1732,7 +2078,10 @@ mod tests {
         app.add_synth(SynthKind::Analog);
         let idx = app.selected_slot().unwrap();
         let s = screen(&mut app, 150, 42);
-        assert!(s.contains("Oscillators") && s.contains("Filter Env") && s.contains("Osc 2 Detune"), "{s}");
+        assert!(
+            s.contains("Oscillators") && s.contains("Filter Env") && s.contains("Osc 2 Detune"),
+            "{s}"
+        );
         if std::env::var("SHOW_UI").is_ok() {
             println!("{s}");
         }
@@ -1748,7 +2097,10 @@ mod tests {
         app.set_param(Target::Slot(idx), mode, 2.0);
         app.set_param(Target::Slot(idx), slice_by, 1.0);
         let s = screen(&mut app, 150, 42);
-        assert!(s.contains("Pluck") && s.contains("slices · notes 36"), "{s}");
+        assert!(
+            s.contains("Pluck") && s.contains("slices · notes 36"),
+            "{s}"
+        );
         if std::env::var("SHOW_UI").is_ok() {
             println!("{s}");
         }
@@ -1785,26 +2137,45 @@ mod tests {
         assert_eq!(app.rack_rows().len(), 6);
         app.load_session_file(&dir.join("sessions/song.json"));
         assert_eq!(app.rack_rows().len(), 5);
-        assert_eq!(app.slots[3].as_ref().unwrap().channel, Some(9), "drums default to channel 10");
+        assert_eq!(
+            app.slots[3].as_ref().unwrap().channel,
+            Some(9),
+            "drums default to channel 10"
+        );
 
         // The browser lists built-in patches for the slot's synth type, plus
         // the copy saved above; tab cycles the type filter.
         app.on_key(key(KeyCode::Char('l')));
-        let Some(Popup::Patches { all, filter, .. }) = &app.popup else { panic!("no browser") };
+        let Some(Popup::Patches { all, filter, .. }) = &app.popup else {
+            panic!("no browser")
+        };
         assert_eq!(*filter, Some(SynthKind::Fm));
-        assert!(all.iter().any(|e| e.is_factory() && e.patch.name == "FM Strings"));
-        assert!(all.iter().any(|e| !e.is_factory() && e.patch.name == "Choir Cloud"));
+        assert!(
+            all.iter()
+                .any(|e| e.is_factory() && e.patch.name == "FM Strings")
+        );
+        assert!(
+            all.iter()
+                .any(|e| !e.is_factory() && e.patch.name == "Choir Cloud")
+        );
         let fm_count = patch_view(all, *filter).len();
         app.on_key(key(KeyCode::Tab));
-        let Some(Popup::Patches { all, filter, .. }) = &app.popup else { panic!("no browser") };
+        let Some(Popup::Patches { all, filter, .. }) = &app.popup else {
+            panic!("no browser")
+        };
         assert_eq!(*filter, Some(SynthKind::Analog));
         assert_ne!(patch_view(all, *filter).len(), fm_count);
         // Tab on to "all synths", then load "FM Strings" into slot 1.
         while !matches!(&app.popup, Some(Popup::Patches { filter: None, .. })) {
             app.on_key(key(KeyCode::Tab));
         }
-        let Some(Popup::Patches { all, filter, .. }) = &app.popup else { panic!("no browser") };
-        let pos = patch_view(all, *filter).iter().position(|e| e.patch.name == "FM Strings").unwrap();
+        let Some(Popup::Patches { all, filter, .. }) = &app.popup else {
+            panic!("no browser")
+        };
+        let pos = patch_view(all, *filter)
+            .iter()
+            .position(|e| e.patch.name == "FM Strings")
+            .unwrap();
         for _ in 0..pos {
             app.on_key(key(KeyCode::Down));
         }
@@ -1833,18 +2204,29 @@ mod tests {
         let slot = app.selected_slot().unwrap();
         // One second of A4 played 25 cents flat.
         let path = dir.join("samples/flat-a4.wav");
-        let spec = hound::WavSpec { channels: 1, sample_rate: 44_100, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 44_100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
         let mut w = hound::WavWriter::create(&path, spec).unwrap();
         let freq = 440.0 * 2f32.powf(-0.25 / 12.0);
         for i in 0..44_100 {
             let t = i as f32 / 44_100.0;
-            let v = (std::f32::consts::TAU * freq * t).sin() * 0.5 + (std::f32::consts::TAU * 2.0 * freq * t).sin() * 0.2;
+            let v = (std::f32::consts::TAU * freq * t).sin() * 0.5
+                + (std::f32::consts::TAU * 2.0 * freq * t).sin() * 0.2;
             w.write_sample((v * 32767.0) as i16).unwrap();
         }
         w.finalize().unwrap();
 
         app.load_sample(slot, 0, &path);
-        let p = |key: &str| app.param_value(Target::Slot(slot), SynthKind::Sampler.index_of(key).unwrap());
+        let p = |key: &str| {
+            app.param_value(
+                Target::Slot(slot),
+                SynthKind::Sampler.index_of(key).unwrap(),
+            )
+        };
         assert_eq!(p("root"), 69.0);
         assert!((p("tune") - 25.0).abs() <= 1.0, "tune {}", p("tune"));
         assert_eq!(p("source"), 0.0, "source switched to File");
@@ -1858,7 +2240,10 @@ mod tests {
         let dir = temp_dir("repeat");
         let mut app = test_app(&dir);
         app.default_rack();
-        let repeat = |code| KeyEvent { kind: KeyEventKind::Repeat, ..key(code) };
+        let repeat = |code| KeyEvent {
+            kind: KeyEventKind::Repeat,
+            ..key(code)
+        };
 
         // Holding Down scrolls the patch browser.
         app.on_key(key(KeyCode::Char('l')));
@@ -1914,7 +2299,10 @@ mod tests {
             }
             (on, off)
         };
-        let release = KeyEvent { kind: KeyEventKind::Release, ..key(KeyCode::Char('a')) };
+        let release = KeyEvent {
+            kind: KeyEventKind::Release,
+            ..key(KeyCode::Char('a'))
+        };
 
         app.on_key(key(KeyCode::Char('a')));
         for _ in 0..20 {
@@ -1945,7 +2333,14 @@ mod tests {
         app.set_param(t, key("fx1_type"), 1.0);
         let mut swapped = false;
         while let Some(cmd) = app.commands.pop() {
-            swapped |= matches!(cmd, Command::SetFx { slot: 0, unit: 0, .. });
+            swapped |= matches!(
+                cmd,
+                Command::SetFx {
+                    slot: 0,
+                    unit: 0,
+                    ..
+                }
+            );
         }
         assert!(swapped, "no SetFx sent");
         assert_eq!(app.param_value(t, key("fx1_mix")), 0.3);
@@ -1959,7 +2354,10 @@ mod tests {
         assert!(!app.param_visible(t, key("fx1_reverb_size")));
         assert!(!app.param_visible(t, key("fx2_mix")), "unit 2 is off");
         let s = screen(&mut app, 150, 60);
-        assert!(s.contains("FX 1 · Delay") && s.contains("FX 2 · Off"), "{s}");
+        assert!(
+            s.contains("FX 1 · Delay") && s.contains("FX 2 · Off"),
+            "{s}"
+        );
 
         // Saved patches keep the active FX and omit hidden settings.
         app.set_param(t, key("fx1_delay_feedback"), 0.6);
@@ -1977,8 +2375,15 @@ mod tests {
         // MCP: types by name, settings appear once the type is set.
         app.run_tool("set_params", &serde_json::json!({ "slot": 1, "values": { "fx2_type": "reverb", "fx2_reverb_size": "90%" } }))
             .unwrap();
-        let params = app.run_tool("get_params", &serde_json::json!({ "slot": 1 })).unwrap();
-        let keys: Vec<&str> = params["params"].as_array().unwrap().iter().map(|p| p["key"].as_str().unwrap()).collect();
+        let params = app
+            .run_tool("get_params", &serde_json::json!({ "slot": 1 }))
+            .unwrap();
+        let keys: Vec<&str> = params["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["key"].as_str().unwrap())
+            .collect();
         assert!(keys.contains(&"fx2_reverb_size") && !keys.contains(&"fx2_delay_time"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1993,16 +2398,34 @@ mod tests {
         let key = |k: &str| SynthKind::Physical.index_of(k).unwrap();
         let shown = |app: &App, k: &str| app.param_visible(t, key(k));
         app.set_param(t, key("model"), 2.0); // Piano
-        assert!(shown(&app, "unison") && shown(&app, "hardness") && !shown(&app, "bow_pressure") && !shown(&app, "material"));
+        assert!(
+            shown(&app, "unison")
+                && shown(&app, "hardness")
+                && !shown(&app, "bow_pressure")
+                && !shown(&app, "material")
+        );
         let s = screen(&mut app, 150, 50);
-        assert!(s.contains("Unison Detune") && !s.contains("Bow Pressure"), "{s}");
+        assert!(
+            s.contains("Unison Detune") && !s.contains("Bow Pressure"),
+            "{s}"
+        );
         app.set_param(t, key("model"), 3.0); // Bowed
-        assert!(shown(&app, "bow_pressure") && shown(&app, "vibrato") && !shown(&app, "hardness") && !shown(&app, "decay"));
+        assert!(
+            shown(&app, "bow_pressure")
+                && shown(&app, "vibrato")
+                && !shown(&app, "hardness")
+                && !shown(&app, "decay")
+        );
         let s = screen(&mut app, 150, 50);
-        assert!(s.contains("Bow Pressure") && s.contains("Instrument") && !s.contains("Hardness"), "{s}");
+        assert!(
+            s.contains("Bow Pressure") && s.contains("Instrument") && !s.contains("Hardness"),
+            "{s}"
+        );
         // Saved patches leave out the other models' settings.
         let patch = app.current_patch(i).unwrap();
-        assert!(patch.params.contains_key("bow_pressure") && !patch.params.contains_key("hardness"));
+        assert!(
+            patch.params.contains_key("bow_pressure") && !patch.params.contains_key("hardness")
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2013,8 +2436,12 @@ mod tests {
         let mut app = test_app(&dir);
         app.default_rack();
         // A real engine on its own thread, fed by the app's command queue.
-        let mut engine =
-            crate::engine::Engine::new(48_000.0, app.commands.clone(), app.garbage.clone(), app.telemetry.clone());
+        let mut engine = crate::engine::Engine::new(
+            48_000.0,
+            app.commands.clone(),
+            app.garbage.clone(),
+            app.telemetry.clone(),
+        );
         let running = Arc::new(AtomicBool::new(true));
         let flag = running.clone();
         let audio = std::thread::spawn(move || {
@@ -2025,24 +2452,48 @@ mod tests {
             }
         });
 
-        let started = app.run_tool("start_recording", &serde_json::json!({ "name": "take" })).unwrap();
-        assert!(started["recording"].as_str().unwrap().ends_with("recordings/take.wav"));
-        app.send(Command::NoteOn { slot: 0, note: 60, velocity: 1.0 });
+        let started = app
+            .run_tool("start_recording", &serde_json::json!({ "name": "take" }))
+            .unwrap();
+        assert!(
+            started["recording"]
+                .as_str()
+                .unwrap()
+                .ends_with("recordings/take.wav")
+        );
+        app.send(Command::NoteOn {
+            slot: 0,
+            note: 60,
+            velocity: 1.0,
+        });
         std::thread::sleep(Duration::from_millis(400));
         let s = screen(&mut app, 120, 30);
         assert!(s.contains("● REC 0:00"), "{s}");
         assert!(app.run_tool("get_rack", &serde_json::json!({})).unwrap()["recording"].is_object());
 
-        let stopped = app.run_tool("stop_recording", &serde_json::json!({})).unwrap();
+        let stopped = app
+            .run_tool("stop_recording", &serde_json::json!({}))
+            .unwrap();
         assert_eq!(stopped["finalized"], true, "{stopped}");
         let path = PathBuf::from(stopped["saved"].as_str().unwrap());
         let mut wav = hound::WavReader::open(&path).unwrap();
         assert_eq!((wav.spec().channels, wav.spec().sample_rate), (2, 48_000));
         let samples: Vec<f32> = wav.samples::<f32>().map(Result::unwrap).collect();
         let secs = samples.len() as f64 / 2.0 / 48_000.0;
-        assert!((secs - stopped["seconds"].as_f64().unwrap()).abs() < 0.01, "{secs}s on disk vs {stopped}");
-        assert!(samples.iter().any(|v| v.abs() > 0.01), "the note isn't in the recording");
-        assert!(app.recording.is_none() && app.run_tool("stop_recording", &serde_json::json!({})).is_err());
+        assert!(
+            (secs - stopped["seconds"].as_f64().unwrap()).abs() < 0.01,
+            "{secs}s on disk vs {stopped}"
+        );
+        assert!(
+            samples.iter().any(|v| v.abs() > 0.01),
+            "the note isn't in the recording"
+        );
+        assert!(
+            app.recording.is_none()
+                && app
+                    .run_tool("stop_recording", &serde_json::json!({}))
+                    .is_err()
+        );
 
         // Another take with the same name doesn't overwrite the first.
         let again = app.start_recording(Some("take")).unwrap();
@@ -2062,16 +2513,33 @@ mod tests {
         app.default_rack();
         app.set_param(Target::Master, master::VOLUME, 0.3);
         app.set_param(Target::Master, master::FX_BASE + fx::TYPE, 1.0); // master delay
-        app.cc_map.push(CcMapping { channel: 0, cc: 74, slot: Some(0), param: "volume".into() });
+        app.cc_map.push(CcMapping {
+            channel: 0,
+            cc: 74,
+            slot: Some(0),
+            param: "volume".into(),
+        });
 
         // N defaults to saving first when the rack has synths.
         app.on_key(key(KeyCode::Char('N')));
-        assert!(matches!(app.popup, Some(Popup::NewRack { cursor: 0, save: true })));
+        assert!(matches!(
+            app.popup,
+            Some(Popup::NewRack {
+                cursor: 0,
+                save: true
+            })
+        ));
         let s = screen(&mut app, 120, 40);
-        assert!(s.contains("Starter rack") && s.contains("save current rack"), "{s}");
+        assert!(
+            s.contains("Starter rack") && s.contains("save current rack"),
+            "{s}"
+        );
         app.on_key(key(KeyCode::Enter)); // empty rack
         assert!(!app.has_synths() && app.cc_map.is_empty());
-        assert_eq!(app.master[master::VOLUME], master::PARAMS[master::VOLUME].default);
+        assert_eq!(
+            app.master[master::VOLUME],
+            master::PARAMS[master::VOLUME].default
+        );
         assert_eq!(app.master[master::FX_BASE + fx::TYPE], 0.0);
         let saved = app.storage.list_sessions();
         assert_eq!(saved.len(), 1);
@@ -2081,22 +2549,43 @@ mod tests {
 
         // Starter template, without saving the (empty) rack.
         app.on_key(key(KeyCode::Char('N')));
-        assert!(matches!(app.popup, Some(Popup::NewRack { save: false, .. })), "nothing to save");
+        assert!(
+            matches!(app.popup, Some(Popup::NewRack { save: false, .. })),
+            "nothing to save"
+        );
         app.on_key(key(KeyCode::Down));
         app.on_key(key(KeyCode::Enter));
         assert_eq!(app.rack_rows().len(), 5);
         assert_eq!(app.storage.list_sessions().len(), 1);
 
         // MCP: save under a name, start empty.
-        let r = app.run_tool("new_rack", &serde_json::json!({ "template": "empty", "save_as": "before" })).unwrap();
+        let r = app
+            .run_tool(
+                "new_rack",
+                &serde_json::json!({ "template": "empty", "save_as": "before" }),
+            )
+            .unwrap();
         assert!(r["slots"].as_array().unwrap().is_empty());
-        assert!(r["previous_rack_saved_as"].as_str().unwrap().ends_with("sessions/before.json"));
-        assert!(app.run_tool("new_rack", &serde_json::json!({ "template": "huge" })).is_err());
+        assert!(
+            r["previous_rack_saved_as"]
+                .as_str()
+                .unwrap()
+                .ends_with("sessions/before.json")
+        );
+        assert!(
+            app.run_tool("new_rack", &serde_json::json!({ "template": "huge" }))
+                .is_err()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn write_wav(path: &Path, freq: f32, seconds: f32) {
-        let spec = hound::WavSpec { channels: 1, sample_rate: 44_100, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 44_100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
         let mut w = hound::WavWriter::create(path, spec).unwrap();
         for i in 0..(44_100.0 * seconds) as usize {
             let t = i as f32 / 44_100.0;
@@ -2112,38 +2601,70 @@ mod tests {
         let mut app = test_app(&dir);
         let folder = dir.join("samples/My Kit");
         std::fs::create_dir_all(&folder).unwrap();
-        for (name, f) in [("BD 808.wav", 60.0), ("Snare.wav", 200.0), ("hh closed.wav", 900.0), ("Open HH.wav", 800.0), ("zap.wav", 400.0)] {
+        for (name, f) in [
+            ("BD 808.wav", 60.0),
+            ("Snare.wav", 200.0),
+            ("hh closed.wav", 900.0),
+            ("Open HH.wav", 800.0),
+            ("zap.wav", 400.0),
+        ] {
             write_wav(&folder.join(name), f, 0.3);
         }
         app.add_synth(SynthKind::Kit);
         let i = app.selected_slot().unwrap();
-        assert_eq!(app.slots[i].as_ref().unwrap().channel, Some(9), "kits default to channel 10");
+        assert_eq!(
+            app.slots[i].as_ref().unwrap().channel,
+            Some(9),
+            "kits default to channel 10"
+        );
 
         // Browse to the folder and press K.
         app.on_key(key(KeyCode::Char('f')));
         app.open_files(folder.clone());
         let s = screen(&mut app, 140, 40);
-        assert!(s.contains("Load into pad 1 (Kick)") && s.contains("K: load this whole folder"), "{s}");
+        assert!(
+            s.contains("Load into pad 1 (Kick)") && s.contains("K: load this whole folder"),
+            "{s}"
+        );
         app.on_key(key(KeyCode::Char('K')));
         assert!(app.popup.is_none());
         let slot = app.slots[i].as_ref().unwrap();
-        let name = |p: usize| slot.sample(p).map(|l| l.path.file_name().unwrap().to_string_lossy().into_owned());
+        let name = |p: usize| {
+            slot.sample(p)
+                .map(|l| l.path.file_name().unwrap().to_string_lossy().into_owned())
+        };
         assert_eq!(name(0).as_deref(), Some("BD 808.wav"));
         assert_eq!(name(1).as_deref(), Some("Snare.wav"));
         assert_eq!(name(2).as_deref(), Some("hh closed.wav"));
         assert_eq!(name(3).as_deref(), Some("Open HH.wav"));
-        assert_eq!(name(4).as_deref(), Some("zap.wav"), "unrecognised file fills the next free pad");
+        assert_eq!(
+            name(4).as_deref(),
+            Some("zap.wav"),
+            "unrecognised file fills the next free pad"
+        );
         let s = screen(&mut app, 140, 60);
-        assert!(s.contains("Pad 1 · 36 C2 · BD 808") && s.contains("Pad 10 · 49 C#3 · empty (Crash)"), "{s}");
+        assert!(
+            s.contains("Pad 1 · 36 C2 · BD 808") && s.contains("Pad 10 · 49 C#3 · empty (Crash)"),
+            "{s}"
+        );
 
         // Patches remember every pad's sample and restore them.
         let patch = app.current_patch(i).unwrap();
         assert_eq!(patch.samples.len(), 5);
-        app.storage.save_patch(&Patch { name: "My Kit".into(), ..patch.clone() }).unwrap();
+        app.storage
+            .save_patch(&Patch {
+                name: "My Kit".into(),
+                ..patch.clone()
+            })
+            .unwrap();
         app.new_rack(false, None).unwrap();
         app.add_synth(SynthKind::Fm);
         let j = app.selected_slot().unwrap();
-        app.run_tool("load_patch", &serde_json::json!({ "slot": j + 1, "name": "My Kit" })).unwrap();
+        app.run_tool(
+            "load_patch",
+            &serde_json::json!({ "slot": j + 1, "name": "My Kit" }),
+        )
+        .unwrap();
         let restored = app.slots[j].as_ref().unwrap();
         assert_eq!(restored.kind, SynthKind::Kit);
         assert_eq!(restored.samples.iter().flatten().count(), 5);
@@ -2152,17 +2673,45 @@ mod tests {
         let rack = app.run_tool("get_rack", &serde_json::json!({})).unwrap();
         let pads = rack["slots"][0]["pads"].as_array().unwrap();
         assert_eq!(pads[2]["role"], "Closed Hat");
-        assert!(pads[2]["sample"].as_str().unwrap().ends_with("hh closed.wav"));
+        assert!(
+            pads[2]["sample"]
+                .as_str()
+                .unwrap()
+                .ends_with("hh closed.wav")
+        );
         let clap = folder.join("Snare.wav").to_string_lossy().into_owned();
-        assert!(app.run_tool("load_sample", &serde_json::json!({ "slot": j + 1, "path": clap })).is_err());
-        app.run_tool("load_sample", &serde_json::json!({ "slot": j + 1, "path": clap, "pad": 5 })).unwrap();
-        let r = app.run_tool("load_kit_folder", &serde_json::json!({ "slot": j + 1, "path": folder })).unwrap();
+        assert!(
+            app.run_tool(
+                "load_sample",
+                &serde_json::json!({ "slot": j + 1, "path": clap })
+            )
+            .is_err()
+        );
+        app.run_tool(
+            "load_sample",
+            &serde_json::json!({ "slot": j + 1, "path": clap, "pad": 5 }),
+        )
+        .unwrap();
+        let r = app
+            .run_tool(
+                "load_kit_folder",
+                &serde_json::json!({ "slot": j + 1, "path": folder }),
+            )
+            .unwrap();
         assert_eq!(r["loaded"].as_array().unwrap().len(), 5);
 
         // And the kit plays through the engine.
-        let mut engine =
-            crate::engine::Engine::new(48_000.0, app.commands.clone(), app.garbage.clone(), app.telemetry.clone());
-        app.send(Command::NoteOn { slot: j, note: 36, velocity: 1.0 });
+        let mut engine = crate::engine::Engine::new(
+            48_000.0,
+            app.commands.clone(),
+            app.garbage.clone(),
+            app.telemetry.clone(),
+        );
+        app.send(Command::NoteOn {
+            slot: j,
+            note: 36,
+            velocity: 1.0,
+        });
         let mut out = vec![0.0f32; 2 * 9_600];
         engine.process(&mut out, 2);
         assert!(out.iter().any(|v| v.abs() > 0.05), "kick pad silent");
@@ -2175,15 +2724,25 @@ mod tests {
         let mut app = test_app(&dir);
         app.add_synth(SynthKind::Kit);
         let i = app.selected_slot().unwrap();
-        let patch = crate::patch::factory_patches().into_iter().find(|p| p.name == "VCSL Acoustic Kit").unwrap();
+        let patch = crate::patch::factory_patches()
+            .into_iter()
+            .find(|p| p.name == "VCSL Acoustic Kit")
+            .unwrap();
 
         // Not downloaded yet: the browser says so, and loading explains how to fix it.
         app.on_key(key(KeyCode::Char('l')));
         let s = screen(&mut app, 140, 60);
-        assert!(s.contains("VCSL Acoustic Kit") && s.contains("download"), "{s}");
+        assert!(
+            s.contains("VCSL Acoustic Kit") && s.contains("download"),
+            "{s}"
+        );
         app.on_key(key(KeyCode::Esc));
         app.load_patch_into(i, patch.clone());
-        let status = app.status.as_ref().map(|s| s.text.clone()).unwrap_or_default();
+        let status = app
+            .status
+            .as_ref()
+            .map(|s| s.text.clone())
+            .unwrap_or_default();
         assert!(status.contains("fetch-kits"), "{status}");
 
         // Once the files exist (here: stand-ins), every pad loads from the relative paths.
@@ -2193,7 +2752,16 @@ mod tests {
             write_wav(&full, 220.0, 0.1);
         }
         app.load_patch_into(i, patch);
-        assert_eq!(app.slots[i].as_ref().unwrap().samples.iter().flatten().count(), 16);
+        assert_eq!(
+            app.slots[i]
+                .as_ref()
+                .unwrap()
+                .samples
+                .iter()
+                .flatten()
+                .count(),
+            16
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2204,9 +2772,15 @@ mod tests {
         app.default_rack();
         app.on_key(key(KeyCode::Tab));
         app.on_key(key(KeyCode::Char('c')));
-        app.on_midi(MidiMsg { channel: 3, kind: MidiKind::Cc { cc: 74, value: 0 } });
+        app.on_midi(MidiMsg {
+            channel: 3,
+            kind: MidiKind::Cc { cc: 74, value: 0 },
+        });
         assert_eq!(app.cc_map.len(), 1);
-        app.on_midi(MidiMsg { channel: 3, kind: MidiKind::Cc { cc: 74, value: 127 } });
+        app.on_midi(MidiMsg {
+            channel: 3,
+            kind: MidiKind::Cc { cc: 74, value: 127 },
+        });
         assert_eq!(app.param_value(Target::Slot(0), 0), 1.0);
         let _ = std::fs::remove_dir_all(&dir);
     }

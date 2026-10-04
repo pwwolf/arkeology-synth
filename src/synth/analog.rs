@@ -4,7 +4,8 @@
 //! Juno-style stereo chorus.
 
 use crate::dsp::{
-    AdsrParams, Env, FilterMode, Ladder, Rng, Svf, SvfCoefs, midi_to_freq, pan_gains, poly_blep, sin_cycles,
+    AdsrParams, Env, FilterMode, Ladder, Rng, Svf, SvfCoefs, midi_to_freq, pan_gains, poly_blep,
+    sin_cycles,
 };
 use crate::params::{ParamDesc as P, Unit};
 
@@ -59,37 +60,253 @@ pub static PARAMS: [P; 36] = [
     GLIDE_PARAM,
     P::choice("osc1_wave", "Osc 1 Wave", "Oscillators", &WAVES, 0),
     P::choice("osc2_wave", "Osc 2 Wave", "Oscillators", &WAVES, 0),
-    P::int("osc2_semi", "Osc 2 Semi", "Oscillators", -24, 24, 0, Unit::Semitones),
-    P::float("osc2_detune", "Osc 2 Detune", "Oscillators", -50.0, 50.0, 7.0, Unit::Cents).step(1.0),
-    P::float("pulse_width", "Pulse Width", "Oscillators", 0.05, 0.95, 0.5, Unit::Percent),
-    P::float("osc_mix", "Osc 1<>2 Mix", "Oscillators", 0.0, 1.0, 0.5, Unit::Percent),
-    P::float("sub", "Sub Osc", "Oscillators", 0.0, 1.0, 0.0, Unit::Percent),
-    P::float("noise", "Noise", "Oscillators", 0.0, 1.0, 0.0, Unit::Percent),
-    P::float("drift", "Analog Drift", "Oscillators", 0.0, 1.0, 0.3, Unit::Percent),
-    P::int("unison", "Unison", "Unison", 1, MAX_UNISON as i32, 1, Unit::None),
-    P::float("unison_detune", "Detune", "Unison", 0.0, 1.0, 0.3, Unit::Percent),
-    P::float("unison_spread", "Stereo Spread", "Unison", 0.0, 1.0, 0.7, Unit::Percent),
-    P::float("cutoff", "Cutoff", "Filter", 20.0, 20_000.0, 2_000.0, Unit::Hz).exp(),
-    P::float("resonance", "Resonance", "Filter", 0.0, 1.0, 0.2, Unit::Percent),
+    P::int(
+        "osc2_semi",
+        "Osc 2 Semi",
+        "Oscillators",
+        -24,
+        24,
+        0,
+        Unit::Semitones,
+    ),
+    P::float(
+        "osc2_detune",
+        "Osc 2 Detune",
+        "Oscillators",
+        -50.0,
+        50.0,
+        7.0,
+        Unit::Cents,
+    )
+    .step(1.0),
+    P::float(
+        "pulse_width",
+        "Pulse Width",
+        "Oscillators",
+        0.05,
+        0.95,
+        0.5,
+        Unit::Percent,
+    ),
+    P::float(
+        "osc_mix",
+        "Osc 1<>2 Mix",
+        "Oscillators",
+        0.0,
+        1.0,
+        0.5,
+        Unit::Percent,
+    ),
+    P::float(
+        "sub",
+        "Sub Osc",
+        "Oscillators",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
+    P::float(
+        "noise",
+        "Noise",
+        "Oscillators",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
+    P::float(
+        "drift",
+        "Analog Drift",
+        "Oscillators",
+        0.0,
+        1.0,
+        0.3,
+        Unit::Percent,
+    ),
+    P::int(
+        "unison",
+        "Unison",
+        "Unison",
+        1,
+        MAX_UNISON as i32,
+        1,
+        Unit::None,
+    ),
+    P::float(
+        "unison_detune",
+        "Detune",
+        "Unison",
+        0.0,
+        1.0,
+        0.3,
+        Unit::Percent,
+    ),
+    P::float(
+        "unison_spread",
+        "Stereo Spread",
+        "Unison",
+        0.0,
+        1.0,
+        0.7,
+        Unit::Percent,
+    ),
+    P::float(
+        "cutoff",
+        "Cutoff",
+        "Filter",
+        20.0,
+        20_000.0,
+        2_000.0,
+        Unit::Hz,
+    )
+    .exp(),
+    P::float(
+        "resonance",
+        "Resonance",
+        "Filter",
+        0.0,
+        1.0,
+        0.2,
+        Unit::Percent,
+    ),
     P::choice("poles", "Slope", "Filter", &POLES, 1),
-    P::float("filter_env", "Env Amount", "Filter", -1.0, 1.0, 0.4, Unit::Percent),
-    P::float("key_track", "Key Track", "Filter", 0.0, 1.0, 0.5, Unit::Percent),
-    P::float("vel_filter", "Vel>Cutoff", "Filter", 0.0, 1.0, 0.3, Unit::Percent),
-    P::float("f_attack", "Attack", "Filter Env", 0.001, 10.0, 0.005, Unit::Seconds).exp(),
-    P::float("f_decay", "Decay", "Filter Env", 0.005, 20.0, 0.6, Unit::Seconds).exp(),
-    P::float("f_sustain", "Sustain", "Filter Env", 0.0, 1.0, 0.3, Unit::Percent),
-    P::float("f_release", "Release", "Filter Env", 0.005, 20.0, 0.5, Unit::Seconds).exp(),
-    P::float("attack", "Attack", "Amp Env", 0.001, 10.0, 0.005, Unit::Seconds).exp(),
+    P::float(
+        "filter_env",
+        "Env Amount",
+        "Filter",
+        -1.0,
+        1.0,
+        0.4,
+        Unit::Percent,
+    ),
+    P::float(
+        "key_track",
+        "Key Track",
+        "Filter",
+        0.0,
+        1.0,
+        0.5,
+        Unit::Percent,
+    ),
+    P::float(
+        "vel_filter",
+        "Vel>Cutoff",
+        "Filter",
+        0.0,
+        1.0,
+        0.3,
+        Unit::Percent,
+    ),
+    P::float(
+        "f_attack",
+        "Attack",
+        "Filter Env",
+        0.001,
+        10.0,
+        0.005,
+        Unit::Seconds,
+    )
+    .exp(),
+    P::float(
+        "f_decay",
+        "Decay",
+        "Filter Env",
+        0.005,
+        20.0,
+        0.6,
+        Unit::Seconds,
+    )
+    .exp(),
+    P::float(
+        "f_sustain",
+        "Sustain",
+        "Filter Env",
+        0.0,
+        1.0,
+        0.3,
+        Unit::Percent,
+    ),
+    P::float(
+        "f_release",
+        "Release",
+        "Filter Env",
+        0.005,
+        20.0,
+        0.5,
+        Unit::Seconds,
+    )
+    .exp(),
+    P::float(
+        "attack",
+        "Attack",
+        "Amp Env",
+        0.001,
+        10.0,
+        0.005,
+        Unit::Seconds,
+    )
+    .exp(),
     P::float("decay", "Decay", "Amp Env", 0.005, 20.0, 0.5, Unit::Seconds).exp(),
-    P::float("sustain", "Sustain", "Amp Env", 0.0, 1.0, 0.8, Unit::Percent),
-    P::float("release", "Release", "Amp Env", 0.005, 20.0, 0.4, Unit::Seconds).exp(),
-    P::float("vel_amp", "Vel>Amp", "Amp Env", 0.0, 1.0, 0.5, Unit::Percent),
+    P::float(
+        "sustain",
+        "Sustain",
+        "Amp Env",
+        0.0,
+        1.0,
+        0.8,
+        Unit::Percent,
+    ),
+    P::float(
+        "release",
+        "Release",
+        "Amp Env",
+        0.005,
+        20.0,
+        0.4,
+        Unit::Seconds,
+    )
+    .exp(),
+    P::float(
+        "vel_amp",
+        "Vel>Amp",
+        "Amp Env",
+        0.0,
+        1.0,
+        0.5,
+        Unit::Percent,
+    ),
     P::choice("lfo_wave", "Wave", "LFO", &LFO_WAVES, 1),
     P::float("lfo_rate", "Rate", "LFO", 0.05, 20.0, 4.0, Unit::Hz).exp(),
     P::float("lfo_pitch", "> Pitch", "LFO", 0.0, 100.0, 0.0, Unit::Cents).step(1.0),
-    P::float("lfo_filter", "> Cutoff", "LFO", 0.0, 1.0, 0.0, Unit::Percent),
-    P::float("lfo_pw", "> Pulse Width", "LFO", 0.0, 1.0, 0.0, Unit::Percent),
-    P::float("wheel_vib", "Wheel>Vibrato", "LFO", 0.0, 100.0, 30.0, Unit::Cents).step(1.0),
+    P::float(
+        "lfo_filter",
+        "> Cutoff",
+        "LFO",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
+    P::float(
+        "lfo_pw",
+        "> Pulse Width",
+        "LFO",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
+    P::float(
+        "wheel_vib",
+        "Wheel>Vibrato",
+        "LFO",
+        0.0,
+        100.0,
+        30.0,
+        Unit::Cents,
+    )
+    .step(1.0),
     P::choice("chorus", "Mode", "Chorus", &CHORUS_MODES, 0),
 ];
 
@@ -200,7 +417,10 @@ impl Voice for AnalogVoice {
         } else if from_note.is_none() {
             self.pitch = note as f32;
         }
-        self.drift = [self.rng.bipolar() * s.drift * 6.0, self.rng.bipolar() * s.drift * 6.0];
+        self.drift = [
+            self.rng.bipolar() * s.drift * 6.0,
+            self.rng.bipolar() * s.drift * 6.0,
+        ];
         self.note = note;
         self.vel = velocity;
         self.active = true;
@@ -234,9 +454,17 @@ impl Voice for AnalogVoice {
         let mut gains = [(1.0f32, 1.0f32); MAX_UNISON];
         let stereo = uni > 1 && s.unison_spread > 0.0;
         for k in 0..uni {
-            let pos = if uni == 1 { 0.0 } else { k as f32 / (uni - 1) as f32 * 2.0 - 1.0 };
+            let pos = if uni == 1 {
+                0.0
+            } else {
+                k as f32 / (uni - 1) as f32 * 2.0 - 1.0
+            };
             ratios[k] = (pos * s.unison_detune * 50.0 / 1200.0).exp2();
-            gains[k] = if stereo { pan_gains(pos * s.unison_spread) } else { (1.0, 1.0) };
+            gains[k] = if stereo {
+                pan_gains(pos * s.unison_spread)
+            } else {
+                (1.0, 1.0)
+            };
         }
         let uni_norm = 1.0 / (uni as f32).sqrt();
         let (g1, g2) = ((1.0 - s.mix) * uni_norm, s.mix * uni_norm);
@@ -270,25 +498,35 @@ impl Voice for AnalogVoice {
             for k in 0..uni {
                 let dt1 = f1 * ratios[k] / sr;
                 let dt2 = f2 * ratios[k] / sr;
-                let v = osc(s.wave1, self.phase1[k], dt1, pw) * g1 + osc(s.wave2, self.phase2[k], dt2, pw) * g2;
+                let v = osc(s.wave1, self.phase1[k], dt1, pw) * g1
+                    + osc(s.wave2, self.phase2[k], dt2, pw) * g2;
                 wrap(&mut self.phase1[k], dt1);
                 wrap(&mut self.phase2[k], dt2);
                 xl += v * gains[k].0;
                 xr += v * gains[k].1;
             }
             let dts = fsub / sr;
-            let common = osc(1, self.sub_phase, dts, 0.5) * s.sub * 0.7 + self.rng.bipolar() * s.noise * 0.5;
+            let common =
+                osc(1, self.sub_phase, dts, 0.5) * s.sub * 0.7 + self.rng.bipolar() * s.noise * 0.5;
             wrap(&mut self.sub_phase, dts);
             xl += common;
             xr += common;
 
             let (yl, yr) = if s.ladder {
                 let yl = self.ladders[0].process(xl * 0.5, g, k_ladder) * comp * 2.0;
-                let yr = if stereo { self.ladders[1].process(xr * 0.5, g, k_ladder) * comp * 2.0 } else { yl };
+                let yr = if stereo {
+                    self.ladders[1].process(xr * 0.5, g, k_ladder) * comp * 2.0
+                } else {
+                    yl
+                };
                 (yl, yr)
             } else {
                 let yl = self.svfs[0].process(&svf, xl * svf_trim);
-                let yr = if stereo { self.svfs[1].process(&svf, xr * svf_trim) } else { yl };
+                let yr = if stereo {
+                    self.svfs[1].process(&svf, xr * svf_trim)
+                } else {
+                    yl
+                };
                 (yl, yr)
             };
             let a = self.amp_env.next(&s.amp_adsr) * amp_scale;
@@ -310,7 +548,11 @@ struct Chorus {
 impl Chorus {
     fn new(sample_rate: f32) -> Self {
         let len = ((0.03 * sample_rate) as usize).next_power_of_two();
-        Chorus { buf: [vec![0.0; len], vec![0.0; len]], write: 0, phase: 0.0 }
+        Chorus {
+            buf: [vec![0.0; len], vec![0.0; len]],
+            write: 0,
+            phase: 0.0,
+        }
     }
 
     fn process(&mut self, mode: u8, l: &mut [f32], r: &mut [f32], sample_rate: f32) {
@@ -450,7 +692,8 @@ impl AnalogSynth {
         tr.fill(0.0);
         self.poly.render(&self.shared, tl, tr);
         // The chorus keeps running so delay tails fade out naturally.
-        self.chorus.process(self.chorus_mode, tl, tr, self.sample_rate);
+        self.chorus
+            .process(self.chorus_mode, tl, tr, self.sample_rate);
         for i in 0..n {
             l[i] += tl[i];
             r[i] += tr[i];
@@ -493,7 +736,12 @@ mod tests {
 
     #[test]
     fn every_setting_is_finite_and_bounded() {
-        for (poles, wave, unison, chorus) in [(0.0, 0.0, 1.0, 0.0), (1.0, 1.0, 7.0, 3.0), (1.0, 2.0, 3.0, 1.0), (0.0, 1.0, 5.0, 2.0)] {
+        for (poles, wave, unison, chorus) in [
+            (0.0, 0.0, 1.0, 0.0),
+            (1.0, 1.0, 7.0, 3.0),
+            (1.0, 2.0, 3.0, 1.0),
+            (0.0, 1.0, 5.0, 2.0),
+        ] {
             let mut s = synth_with(&[
                 ("poles", poles),
                 ("osc1_wave", wave),
@@ -509,9 +757,15 @@ mod tests {
                 s.poly.note_on(note, 1.0, &s.shared);
             }
             let (l, r) = render(&mut s, 24_000);
-            assert!(l.iter().chain(&r).all(|v| v.is_finite()), "{poles} {wave} {unison} {chorus}");
+            assert!(
+                l.iter().chain(&r).all(|v| v.is_finite()),
+                "{poles} {wave} {unison} {chorus}"
+            );
             let p = peak(&l).max(peak(&r));
-            assert!(p > 0.05 && p < 2.0, "peak {p} for {poles} {wave} {unison} {chorus}");
+            assert!(
+                p > 0.05 && p < 2.0,
+                "peak {p} for {poles} {wave} {unison} {chorus}"
+            );
         }
     }
 

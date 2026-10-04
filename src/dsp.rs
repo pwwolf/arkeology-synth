@@ -237,7 +237,13 @@ impl SvfCoefs {
         let a1 = 1.0 / (1.0 + g * (g + k));
         let a2 = g * a1;
         let a3 = g * a2;
-        SvfCoefs { a1, a2, a3, k, mode }
+        SvfCoefs {
+            a1,
+            a2,
+            a3,
+            k,
+            mode,
+        }
     }
 }
 
@@ -368,14 +374,28 @@ impl Biquad {
         let a = 10f64.powf(gain_db as f64 / 40.0);
         let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
         let (c, alpha) = (w.cos(), w.sin() / (2.0 * q as f64));
-        Self::from_coefs(1.0 + alpha * a, -2.0 * c, 1.0 - alpha * a, 1.0 + alpha / a, -2.0 * c, 1.0 - alpha / a)
+        Self::from_coefs(
+            1.0 + alpha * a,
+            -2.0 * c,
+            1.0 - alpha * a,
+            1.0 + alpha / a,
+            -2.0 * c,
+            1.0 - alpha / a,
+        )
     }
 
     /// 12 dB/oct high-pass.
     pub fn high_pass(f0: f32, q: f32, sr: f32) -> Self {
         let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
         let (c, alpha) = (w.cos(), w.sin() / (2.0 * q as f64));
-        Self::from_coefs((1.0 + c) / 2.0, -(1.0 + c), (1.0 + c) / 2.0, 1.0 + alpha, -2.0 * c, 1.0 - alpha)
+        Self::from_coefs(
+            (1.0 + c) / 2.0,
+            -(1.0 + c),
+            (1.0 + c) / 2.0,
+            1.0 + alpha,
+            -2.0 * c,
+            1.0 - alpha,
+        )
     }
 
     #[inline]

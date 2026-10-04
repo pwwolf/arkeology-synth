@@ -33,7 +33,18 @@ pub enum FxKind {
 }
 
 pub const KIND_NAMES: [&str; 12] = [
-    "Off", "Delay", "Reverb", "Chorus", "Flanger", "Phaser", "Drive", "Filter", "EQ", "Compressor", "Crusher", "Tremolo",
+    "Off",
+    "Delay",
+    "Reverb",
+    "Chorus",
+    "Flanger",
+    "Phaser",
+    "Drive",
+    "Filter",
+    "EQ",
+    "Compressor",
+    "Crusher",
+    "Tremolo",
 ];
 const KINDS: [FxKind; 12] = [
     FxKind::Off,
@@ -50,14 +61,32 @@ const KINDS: [FxKind; 12] = [
     FxKind::Tremolo,
 ];
 /// (offset within the unit, length) of each kind's parameter segment.
-const SEGMENTS: [(usize, usize); 12] =
-    [(2, 0), (2, 4), (6, 4), (10, 2), (12, 3), (15, 3), (18, 4), (22, 5), (27, 4), (31, 5), (36, 2), (38, 4)];
+const SEGMENTS: [(usize, usize); 12] = [
+    (2, 0),
+    (2, 4),
+    (6, 4),
+    (10, 2),
+    (12, 3),
+    (15, 3),
+    (18, 4),
+    (22, 5),
+    (27, 4),
+    (31, 5),
+    (36, 2),
+    (38, 4),
+];
 /// Mix to apply when a unit switches to each kind: time effects blend,
 /// processors replace the signal.
 const DEFAULT_MIX: [f32; 12] = [0.5, 0.3, 0.3, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
 
 pub const DRIVE_MODES: [&str; 4] = ["Soft", "Hard", "Fold", "Tube"];
-pub const FILTER_TYPES: [&str; 5] = ["LowPass", "BandPass", "HighPass", "LowPass 24", "HighPass 24"];
+pub const FILTER_TYPES: [&str; 5] = [
+    "LowPass",
+    "BandPass",
+    "HighPass",
+    "LowPass 24",
+    "HighPass 24",
+];
 pub const TREMOLO_SHAPES: [&str; 2] = ["Sine", "Square"];
 
 impl FxKind {
@@ -79,57 +108,377 @@ macro_rules! fx_unit {
         const G: &str = concat!("FX ", $n);
         [
             P::choice(concat!("fx", $n, "_type"), "Type", G, &KIND_NAMES, 0),
-            P::float(concat!("fx", $n, "_mix"), "Mix", G, 0.0, 1.0, 0.5, Unit::Percent),
+            P::float(
+                concat!("fx", $n, "_mix"),
+                "Mix",
+                G,
+                0.0,
+                1.0,
+                0.5,
+                Unit::Percent,
+            ),
             // Delay
-            P::float(concat!("fx", $n, "_delay_time"), "Time", G, 0.01, 2.0, 0.375, Unit::Seconds).exp(),
-            P::float(concat!("fx", $n, "_delay_feedback"), "Feedback", G, 0.0, 0.95, 0.4, Unit::Percent),
+            P::float(
+                concat!("fx", $n, "_delay_time"),
+                "Time",
+                G,
+                0.01,
+                2.0,
+                0.375,
+                Unit::Seconds,
+            )
+            .exp(),
+            P::float(
+                concat!("fx", $n, "_delay_feedback"),
+                "Feedback",
+                G,
+                0.0,
+                0.95,
+                0.4,
+                Unit::Percent,
+            ),
             P::toggle(concat!("fx", $n, "_delay_pingpong"), "Ping-Pong", G, true),
-            P::float(concat!("fx", $n, "_delay_tone"), "Tone", G, 500.0, 20_000.0, 6_000.0, Unit::Hz).exp(),
+            P::float(
+                concat!("fx", $n, "_delay_tone"),
+                "Tone",
+                G,
+                500.0,
+                20_000.0,
+                6_000.0,
+                Unit::Hz,
+            )
+            .exp(),
             // Reverb
-            P::float(concat!("fx", $n, "_reverb_size"), "Size", G, 0.0, 1.0, 0.7, Unit::Percent),
-            P::float(concat!("fx", $n, "_reverb_damp"), "Damping", G, 0.0, 1.0, 0.4, Unit::Percent),
-            P::float(concat!("fx", $n, "_reverb_width"), "Width", G, 0.0, 1.0, 1.0, Unit::Percent),
-            P::float(concat!("fx", $n, "_reverb_predelay"), "Pre-Delay", G, 0.0, 0.2, 0.02, Unit::Seconds),
+            P::float(
+                concat!("fx", $n, "_reverb_size"),
+                "Size",
+                G,
+                0.0,
+                1.0,
+                0.7,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_reverb_damp"),
+                "Damping",
+                G,
+                0.0,
+                1.0,
+                0.4,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_reverb_width"),
+                "Width",
+                G,
+                0.0,
+                1.0,
+                1.0,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_reverb_predelay"),
+                "Pre-Delay",
+                G,
+                0.0,
+                0.2,
+                0.02,
+                Unit::Seconds,
+            ),
             // Chorus
-            P::float(concat!("fx", $n, "_chorus_rate"), "Rate", G, 0.05, 5.0, 0.6, Unit::Hz).exp(),
-            P::float(concat!("fx", $n, "_chorus_depth"), "Depth", G, 0.0, 1.0, 0.5, Unit::Percent),
+            P::float(
+                concat!("fx", $n, "_chorus_rate"),
+                "Rate",
+                G,
+                0.05,
+                5.0,
+                0.6,
+                Unit::Hz,
+            )
+            .exp(),
+            P::float(
+                concat!("fx", $n, "_chorus_depth"),
+                "Depth",
+                G,
+                0.0,
+                1.0,
+                0.5,
+                Unit::Percent,
+            ),
             // Flanger
-            P::float(concat!("fx", $n, "_flanger_rate"), "Rate", G, 0.02, 5.0, 0.25, Unit::Hz).exp(),
-            P::float(concat!("fx", $n, "_flanger_depth"), "Depth", G, 0.0, 1.0, 0.7, Unit::Percent),
-            P::float(concat!("fx", $n, "_flanger_feedback"), "Feedback", G, -0.95, 0.95, 0.5, Unit::Percent),
+            P::float(
+                concat!("fx", $n, "_flanger_rate"),
+                "Rate",
+                G,
+                0.02,
+                5.0,
+                0.25,
+                Unit::Hz,
+            )
+            .exp(),
+            P::float(
+                concat!("fx", $n, "_flanger_depth"),
+                "Depth",
+                G,
+                0.0,
+                1.0,
+                0.7,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_flanger_feedback"),
+                "Feedback",
+                G,
+                -0.95,
+                0.95,
+                0.5,
+                Unit::Percent,
+            ),
             // Phaser
-            P::float(concat!("fx", $n, "_phaser_rate"), "Rate", G, 0.05, 5.0, 0.4, Unit::Hz).exp(),
-            P::float(concat!("fx", $n, "_phaser_depth"), "Depth", G, 0.0, 1.0, 0.7, Unit::Percent),
-            P::float(concat!("fx", $n, "_phaser_feedback"), "Feedback", G, 0.0, 0.9, 0.5, Unit::Percent),
+            P::float(
+                concat!("fx", $n, "_phaser_rate"),
+                "Rate",
+                G,
+                0.05,
+                5.0,
+                0.4,
+                Unit::Hz,
+            )
+            .exp(),
+            P::float(
+                concat!("fx", $n, "_phaser_depth"),
+                "Depth",
+                G,
+                0.0,
+                1.0,
+                0.7,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_phaser_feedback"),
+                "Feedback",
+                G,
+                0.0,
+                0.9,
+                0.5,
+                Unit::Percent,
+            ),
             // Drive
             P::choice(concat!("fx", $n, "_drive_mode"), "Mode", G, &DRIVE_MODES, 0),
-            P::float(concat!("fx", $n, "_drive_amount"), "Drive", G, 0.0, 1.0, 0.5, Unit::Percent),
-            P::float(concat!("fx", $n, "_drive_tone"), "Tone", G, 500.0, 20_000.0, 8_000.0, Unit::Hz).exp(),
-            P::float(concat!("fx", $n, "_drive_output"), "Output", G, -24.0, 6.0, -6.0, Unit::Decibels).step(0.5),
+            P::float(
+                concat!("fx", $n, "_drive_amount"),
+                "Drive",
+                G,
+                0.0,
+                1.0,
+                0.5,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_drive_tone"),
+                "Tone",
+                G,
+                500.0,
+                20_000.0,
+                8_000.0,
+                Unit::Hz,
+            )
+            .exp(),
+            P::float(
+                concat!("fx", $n, "_drive_output"),
+                "Output",
+                G,
+                -24.0,
+                6.0,
+                -6.0,
+                Unit::Decibels,
+            )
+            .step(0.5),
             // Filter
-            P::choice(concat!("fx", $n, "_filter_type"), "Filter", G, &FILTER_TYPES, 0),
-            P::float(concat!("fx", $n, "_filter_cutoff"), "Cutoff", G, 20.0, 20_000.0, 1_000.0, Unit::Hz).exp(),
-            P::float(concat!("fx", $n, "_filter_resonance"), "Resonance", G, 0.0, 1.0, 0.5, Unit::Percent),
-            P::float(concat!("fx", $n, "_filter_lfo_rate"), "LFO Rate", G, 0.05, 10.0, 1.0, Unit::Hz).exp(),
-            P::float(concat!("fx", $n, "_filter_lfo_depth"), "LFO Depth", G, 0.0, 1.0, 0.0, Unit::Percent),
+            P::choice(
+                concat!("fx", $n, "_filter_type"),
+                "Filter",
+                G,
+                &FILTER_TYPES,
+                0,
+            ),
+            P::float(
+                concat!("fx", $n, "_filter_cutoff"),
+                "Cutoff",
+                G,
+                20.0,
+                20_000.0,
+                1_000.0,
+                Unit::Hz,
+            )
+            .exp(),
+            P::float(
+                concat!("fx", $n, "_filter_resonance"),
+                "Resonance",
+                G,
+                0.0,
+                1.0,
+                0.5,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_filter_lfo_rate"),
+                "LFO Rate",
+                G,
+                0.05,
+                10.0,
+                1.0,
+                Unit::Hz,
+            )
+            .exp(),
+            P::float(
+                concat!("fx", $n, "_filter_lfo_depth"),
+                "LFO Depth",
+                G,
+                0.0,
+                1.0,
+                0.0,
+                Unit::Percent,
+            ),
             // EQ
-            P::float(concat!("fx", $n, "_eq_low"), "Low", G, -15.0, 15.0, 0.0, Unit::Decibels).step(0.5),
-            P::float(concat!("fx", $n, "_eq_mid"), "Mid", G, -15.0, 15.0, 0.0, Unit::Decibels).step(0.5),
-            P::float(concat!("fx", $n, "_eq_mid_freq"), "Mid Freq", G, 200.0, 5_000.0, 1_000.0, Unit::Hz).exp(),
-            P::float(concat!("fx", $n, "_eq_high"), "High", G, -15.0, 15.0, 0.0, Unit::Decibels).step(0.5),
+            P::float(
+                concat!("fx", $n, "_eq_low"),
+                "Low",
+                G,
+                -15.0,
+                15.0,
+                0.0,
+                Unit::Decibels,
+            )
+            .step(0.5),
+            P::float(
+                concat!("fx", $n, "_eq_mid"),
+                "Mid",
+                G,
+                -15.0,
+                15.0,
+                0.0,
+                Unit::Decibels,
+            )
+            .step(0.5),
+            P::float(
+                concat!("fx", $n, "_eq_mid_freq"),
+                "Mid Freq",
+                G,
+                200.0,
+                5_000.0,
+                1_000.0,
+                Unit::Hz,
+            )
+            .exp(),
+            P::float(
+                concat!("fx", $n, "_eq_high"),
+                "High",
+                G,
+                -15.0,
+                15.0,
+                0.0,
+                Unit::Decibels,
+            )
+            .step(0.5),
             // Compressor
-            P::float(concat!("fx", $n, "_comp_threshold"), "Threshold", G, -40.0, 0.0, -18.0, Unit::Decibels).step(0.5),
-            P::float(concat!("fx", $n, "_comp_ratio"), "Ratio", G, 1.0, 20.0, 4.0, Unit::None).exp(),
-            P::float(concat!("fx", $n, "_comp_attack"), "Attack", G, 0.0001, 0.1, 0.01, Unit::Seconds).exp(),
-            P::float(concat!("fx", $n, "_comp_release"), "Release", G, 0.01, 1.0, 0.12, Unit::Seconds).exp(),
-            P::float(concat!("fx", $n, "_comp_makeup"), "Makeup", G, 0.0, 24.0, 4.0, Unit::Decibels).step(0.5),
+            P::float(
+                concat!("fx", $n, "_comp_threshold"),
+                "Threshold",
+                G,
+                -40.0,
+                0.0,
+                -18.0,
+                Unit::Decibels,
+            )
+            .step(0.5),
+            P::float(
+                concat!("fx", $n, "_comp_ratio"),
+                "Ratio",
+                G,
+                1.0,
+                20.0,
+                4.0,
+                Unit::None,
+            )
+            .exp(),
+            P::float(
+                concat!("fx", $n, "_comp_attack"),
+                "Attack",
+                G,
+                0.0001,
+                0.1,
+                0.01,
+                Unit::Seconds,
+            )
+            .exp(),
+            P::float(
+                concat!("fx", $n, "_comp_release"),
+                "Release",
+                G,
+                0.01,
+                1.0,
+                0.12,
+                Unit::Seconds,
+            )
+            .exp(),
+            P::float(
+                concat!("fx", $n, "_comp_makeup"),
+                "Makeup",
+                G,
+                0.0,
+                24.0,
+                4.0,
+                Unit::Decibels,
+            )
+            .step(0.5),
             // Crusher
-            P::int(concat!("fx", $n, "_crush_bits"), "Bits", G, 1, 16, 8, Unit::None),
-            P::float(concat!("fx", $n, "_crush_downsample"), "Downsample", G, 1.0, 32.0, 4.0, Unit::None).exp(),
+            P::int(
+                concat!("fx", $n, "_crush_bits"),
+                "Bits",
+                G,
+                1,
+                16,
+                8,
+                Unit::None,
+            ),
+            P::float(
+                concat!("fx", $n, "_crush_downsample"),
+                "Downsample",
+                G,
+                1.0,
+                32.0,
+                4.0,
+                Unit::None,
+            )
+            .exp(),
             // Tremolo
-            P::float(concat!("fx", $n, "_trem_rate"), "Rate", G, 0.1, 20.0, 5.0, Unit::Hz).exp(),
-            P::float(concat!("fx", $n, "_trem_depth"), "Depth", G, 0.0, 1.0, 0.6, Unit::Percent),
-            P::choice(concat!("fx", $n, "_trem_shape"), "Shape", G, &TREMOLO_SHAPES, 0),
+            P::float(
+                concat!("fx", $n, "_trem_rate"),
+                "Rate",
+                G,
+                0.1,
+                20.0,
+                5.0,
+                Unit::Hz,
+            )
+            .exp(),
+            P::float(
+                concat!("fx", $n, "_trem_depth"),
+                "Depth",
+                G,
+                0.0,
+                1.0,
+                0.6,
+                Unit::Percent,
+            ),
+            P::choice(
+                concat!("fx", $n, "_trem_shape"),
+                "Shape",
+                G,
+                &TREMOLO_SHAPES,
+                0,
+            ),
             P::toggle(concat!("fx", $n, "_trem_pan"), "Auto-Pan", G, false),
         ]
     }};
@@ -254,7 +603,10 @@ impl Delay {
             let dr = read_delay(&self.buf[1], self.w, self.current);
             self.lp[0] = (1.0 - self.tone) * dl + self.tone * self.lp[0];
             self.lp[1] = (1.0 - self.tone) * dr + self.tone * self.lp[1];
-            let (fl, fr) = ((self.lp[0] * self.feedback).tanh(), (self.lp[1] * self.feedback).tanh());
+            let (fl, fr) = (
+                (self.lp[0] * self.feedback).tanh(),
+                (self.lp[1] * self.feedback).tanh(),
+            );
             if self.pingpong {
                 self.buf[0][self.w] = 0.5 * (l[i] + r[i]) + fr;
                 self.buf[1][self.w] = fl;
@@ -279,7 +631,12 @@ struct ReverbFx {
 impl ReverbFx {
     fn new(sr: f32) -> Self {
         let len = ((0.21 * sr) as usize).next_power_of_two();
-        ReverbFx { reverb: Reverb::new(sr), pre: [vec![0.0; len], vec![0.0; len]], w: 0, predelay: 0 }
+        ReverbFx {
+            reverb: Reverb::new(sr),
+            pre: [vec![0.0; len], vec![0.0; len]],
+            w: 0,
+            predelay: 0,
+        }
     }
 
     fn set(&mut self, p: &[f32], sr: f32) {
@@ -316,7 +673,16 @@ struct ModDelay {
 impl ModDelay {
     fn new(sr: f32) -> Self {
         let len = ((0.04 * sr) as usize).next_power_of_two();
-        ModDelay { buf: [vec![0.0; len], vec![0.0; len]], w: 0, phase: 0.0, rate: 0.0, base: 0.0, range: 0.0, feedback: 0.0, last: [0.0; 2] }
+        ModDelay {
+            buf: [vec![0.0; len], vec![0.0; len]],
+            w: 0,
+            phase: 0.0,
+            rate: 0.0,
+            base: 0.0,
+            range: 0.0,
+            feedback: 0.0,
+            last: [0.0; 2],
+        }
     }
 
     fn set_chorus(&mut self, p: &[f32], sr: f32) {
@@ -366,7 +732,16 @@ struct Phaser {
 
 impl Phaser {
     fn new(sr: f32) -> Self {
-        Phaser { stages: [[(0.0, 0.0); PHASER_STAGES]; 2], phase: 0.0, rate: 0.0, depth: 0.0, feedback: 0.0, last: [0.0; 2], coef: [0.0; 2], sr }
+        Phaser {
+            stages: [[(0.0, 0.0); PHASER_STAGES]; 2],
+            phase: 0.0,
+            rate: 0.0,
+            depth: 0.0,
+            feedback: 0.0,
+            last: [0.0; 2],
+            coef: [0.0; 2],
+            sr,
+        }
     }
 
     fn set(&mut self, p: &[f32], sr: f32) {
@@ -573,7 +948,11 @@ impl Compressor {
         for i in 0..l.len() {
             // Stereo-linked peak detector, smoothed in the dB domain.
             let level = 20.0 * (l[i].abs().max(r[i].abs()) + 1e-9).log10();
-            let coef = if level > self.env_db { self.attack } else { self.release };
+            let coef = if level > self.env_db {
+                self.attack
+            } else {
+                self.release
+            };
             self.env_db = level + (self.env_db - level) * coef;
             let g = db_to_gain(self.gain_db(self.env_db) + self.makeup);
             l[i] *= g;
@@ -601,7 +980,10 @@ impl Crusher {
             self.acc += 1.0;
             if self.acc >= self.factor {
                 self.acc -= self.factor;
-                self.held = [(l[i] * self.levels).round() / self.levels, (r[i] * self.levels).round() / self.levels];
+                self.held = [
+                    (l[i] * self.levels).round() / self.levels,
+                    (r[i] * self.levels).round() / self.levels,
+                ];
             }
             l[i] = self.held[0];
             r[i] = self.held[1];
@@ -632,7 +1014,11 @@ impl Tremolo {
             // A steep tanh makes a square wave without clicks.
             let lfo = if self.square { (s * 6.0).tanh() } else { s };
             let gl = 1.0 - self.depth * (0.5 + 0.5 * lfo);
-            let gr = if self.pan { 1.0 - self.depth * (0.5 - 0.5 * lfo) } else { gl };
+            let gr = if self.pan {
+                1.0 - self.depth * (0.5 - 0.5 * lfo)
+            } else {
+                gl
+            };
             l[i] *= gl;
             r[i] *= gr;
             self.phase = (self.phase + self.rate).fract();
@@ -676,7 +1062,14 @@ impl FxUnit {
             FxKind::Chorus => Dsp::Chorus(ModDelay::new(sr)),
             FxKind::Flanger => Dsp::Flanger(ModDelay::new(sr)),
             FxKind::Phaser => Dsp::Phaser(Phaser::new(sr)),
-            FxKind::Drive => Dsp::Drive(Drive { mode: 0, pre: 1.0, out: 1.0, tone: 0.0, lp: [0.0; 2], dc: [(0.0, 0.0); 2] }),
+            FxKind::Drive => Dsp::Drive(Drive {
+                mode: 0,
+                pre: 1.0,
+                out: 1.0,
+                tone: 0.0,
+                lp: [0.0; 2],
+                dc: [(0.0, 0.0); 2],
+            }),
             FxKind::Filter => Dsp::Filter(FilterFx {
                 mode: FilterMode::LowPass,
                 steep: false,
@@ -696,7 +1089,13 @@ impl FxUnit {
             FxKind::Crusher => Dsp::Crusher(Crusher::default()),
             FxKind::Tremolo => Dsp::Tremolo(Tremolo::default()),
         };
-        let mut unit = Box::new(FxUnit { mix: 1.0, sample_rate, dsp, dry_l: [0.0; MAX_BLOCK], dry_r: [0.0; MAX_BLOCK] });
+        let mut unit = Box::new(FxUnit {
+            mix: 1.0,
+            sample_rate,
+            dsp,
+            dry_l: [0.0; MAX_BLOCK],
+            dry_r: [0.0; MAX_BLOCK],
+        });
         unit.update(p);
         unit
     }
@@ -771,7 +1170,10 @@ mod tests {
         p[TYPE] = kind as usize as f32;
         p[MIX] = 1.0;
         for (key, v) in overrides {
-            let i = TABLE[..STRIDE].iter().position(|d| d.key == format!("fx1_{key}")).unwrap();
+            let i = TABLE[..STRIDE]
+                .iter()
+                .position(|d| d.key == format!("fx1_{key}"))
+                .unwrap();
             p[i] = *v;
         }
         FxUnit::from_values(&p, 48_000.0)
@@ -814,7 +1216,12 @@ mod tests {
             }
             .to_ascii_lowercase();
             for d in &TABLE[start..start + len] {
-                assert!(d.key.starts_with(&format!("fx1_{prefix}_")), "{} not in {:?}", d.key, KINDS[k]);
+                assert!(
+                    d.key.starts_with(&format!("fx1_{prefix}_")),
+                    "{} not in {:?}",
+                    d.key,
+                    KINDS[k]
+                );
             }
         }
         assert_eq!(SEGMENTS.last().map(|(s, n)| s + n), Some(STRIDE));
@@ -824,7 +1231,10 @@ mod tests {
     fn visibility_follows_type() {
         let mut v: Vec<f32> = TABLE.iter().map(|d| d.default).collect();
         let base = 0;
-        assert!(visible(&v, base, TYPE) && !visible(&v, base, MIX), "off hides mix");
+        assert!(
+            visible(&v, base, TYPE) && !visible(&v, base, MIX),
+            "off hides mix"
+        );
         v[TYPE] = FxKind::Delay as usize as f32;
         assert!(visible(&v, base, MIX) && visible(&v, base, 2) && !visible(&v, base, 6));
         assert!(!visible(&v, base, STRIDE + MIX), "unit 2 still off");
@@ -834,9 +1244,21 @@ mod tests {
 
     #[test]
     fn delay_echoes_after_its_time() {
-        let mut u = unit(FxKind::Delay, &[("delay_time", 0.1), ("delay_feedback", 0.0), ("delay_pingpong", 0.0)]);
+        let mut u = unit(
+            FxKind::Delay,
+            &[
+                ("delay_time", 0.1),
+                ("delay_feedback", 0.0),
+                ("delay_pingpong", 0.0),
+            ],
+        );
         let (l, _) = run(&mut u, |t| if t == 0 { 1.0 } else { 0.0 }, 9_600);
-        let peak = l.iter().enumerate().max_by(|a, b| a.1.abs().total_cmp(&b.1.abs())).unwrap().0;
+        let peak = l
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+            .unwrap()
+            .0;
         assert!((peak as i32 - 4_800).abs() <= 2, "echo at {peak}");
     }
 
@@ -855,7 +1277,14 @@ mod tests {
         // One octave below a 200 Hz cutoff with resonance 0 (Q = 0.5 per
         // stage): |H| = 0.25 / 1.25 -> -14 dB per stage, so -28 dB for two.
         for (kind, expected_db) in [(2.0, -14.0), (4.0, -28.0)] {
-            let mut u = unit(FxKind::Filter, &[("filter_type", kind), ("filter_cutoff", 200.0), ("filter_resonance", 0.0)]);
+            let mut u = unit(
+                FxKind::Filter,
+                &[
+                    ("filter_type", kind),
+                    ("filter_cutoff", 200.0),
+                    ("filter_resonance", 0.0),
+                ],
+            );
             let (l, _) = run(&mut u, sine(100.0, 0.1), 48_000);
             let db = 20.0 * (rms(&l[24_000..]) / (0.1 / 2f32.sqrt())).log10();
             assert!((db - expected_db).abs() < 1.0, "type {kind}: {db} dB");
@@ -864,7 +1293,14 @@ mod tests {
 
     #[test]
     fn compressor_reduces_loud_signals() {
-        let mut u = unit(FxKind::Compressor, &[("comp_threshold", -20.0), ("comp_ratio", 4.0), ("comp_makeup", 0.0)]);
+        let mut u = unit(
+            FxKind::Compressor,
+            &[
+                ("comp_threshold", -20.0),
+                ("comp_ratio", 4.0),
+                ("comp_makeup", 0.0),
+            ],
+        );
         let (l, _) = run(&mut u, sine(200.0, 1.0), 48_000);
         let out_db = 20.0 * (l[24_000..].iter().fold(0.0f32, |m, v| m.max(v.abs()))).log10();
         // 0 dB in, -20 threshold, 4:1 -> about -15 dB out.
@@ -874,8 +1310,17 @@ mod tests {
     #[test]
     fn every_effect_is_stable() {
         for (k, &kind) in KINDS.iter().enumerate().skip(1) {
-            let mut u = unit(kind, &[("delay_feedback", 0.95), ("flanger_feedback", 0.95), ("phaser_feedback", 0.9)]);
-            let noise = |t: usize| ((t.wrapping_mul(2_654_435_761) >> 7) as u32 as f32 / u32::MAX as f32 - 0.5) * 1.6;
+            let mut u = unit(
+                kind,
+                &[
+                    ("delay_feedback", 0.95),
+                    ("flanger_feedback", 0.95),
+                    ("phaser_feedback", 0.9),
+                ],
+            );
+            let noise = |t: usize| {
+                ((t.wrapping_mul(2_654_435_761) >> 7) as u32 as f32 / u32::MAX as f32 - 0.5) * 1.6
+            };
             let (l, r) = run(&mut u, noise, 96_000);
             let peak = l.iter().chain(&r).fold(0.0f32, |m, v| m.max(v.abs()));
             assert!(l.iter().chain(&r).all(|v| v.is_finite()), "{:?}", KINDS[k]);

@@ -13,9 +13,17 @@ pub const CLIENT_NAME: &str = "Arkeology Synth";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MidiKind {
-    NoteOn { note: u8, velocity: u8 },
-    NoteOff { note: u8 },
-    Cc { cc: u8, value: u8 },
+    NoteOn {
+        note: u8,
+        velocity: u8,
+    },
+    NoteOff {
+        note: u8,
+    },
+    Cc {
+        cc: u8,
+        value: u8,
+    },
     /// Normalised to -1..=1.
     PitchBend(f32),
     Program(u8),
@@ -40,7 +48,10 @@ pub fn parse(bytes: &[u8]) -> Option<MidiMsg> {
     let kind = match status & 0xF0 {
         0x80 => MidiKind::NoteOff { note: d1 },
         0x90 if d2 == 0 => MidiKind::NoteOff { note: d1 },
-        0x90 => MidiKind::NoteOn { note: d1, velocity: d2 },
+        0x90 => MidiKind::NoteOn {
+            note: d1,
+            velocity: d2,
+        },
         0xB0 => MidiKind::Cc { cc: d1, value: d2 },
         0xC0 => MidiKind::Program(d1),
         0xD0 => MidiKind::Aftertouch(d1),
@@ -53,7 +64,9 @@ pub fn parse(bytes: &[u8]) -> Option<MidiMsg> {
     Some(MidiMsg { channel, kind })
 }
 
-const NOTE_NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const NOTE_NAMES: [&str; 12] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+];
 
 pub fn note_name(note: u8) -> String {
     format!("{}{}", NOTE_NAMES[note as usize % 12], note as i32 / 12 - 1)
@@ -63,7 +76,9 @@ impl std::fmt::Display for MidiMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "ch{:<2} ", self.channel + 1)?;
         match self.kind {
-            MidiKind::NoteOn { note, velocity } => write!(f, "on  {:<4} v{velocity}", note_name(note)),
+            MidiKind::NoteOn { note, velocity } => {
+                write!(f, "on  {:<4} v{velocity}", note_name(note))
+            }
             MidiKind::NoteOff { note } => write!(f, "off {}", note_name(note)),
             MidiKind::Cc { cc, value } => write!(f, "cc{cc} = {value}"),
             MidiKind::PitchBend(v) => write!(f, "bend {v:+.2}"),
@@ -112,7 +127,9 @@ impl MidiManager {
     }
 
     pub fn available_ports() -> Vec<String> {
-        let Ok(input) = new_input() else { return Vec::new() };
+        let Ok(input) = new_input() else {
+            return Vec::new();
+        };
         input
             .ports()
             .iter()
@@ -146,7 +163,12 @@ impl MidiManager {
             .ok_or_else(|| anyhow!("MIDI port '{name}' not found"))?;
         let sink = self.sink.clone();
         let conn = input
-            .connect(&port, "arkeology-in", move |_ts, bytes, _| sink.deliver(bytes), ())
+            .connect(
+                &port,
+                "arkeology-in",
+                move |_ts, bytes, _| sink.deliver(bytes),
+                (),
+            )
             .map_err(|e| anyhow!("connecting to '{name}': {e}"))?;
         self.connections.push((name.to_string(), conn));
         Ok(())
@@ -181,7 +203,9 @@ impl MidiManager {
 
     #[cfg(not(unix))]
     pub fn open_virtual(&mut self) -> Result<()> {
-        Err(anyhow!("virtual MIDI ports are not supported on this platform"))
+        Err(anyhow!(
+            "virtual MIDI ports are not supported on this platform"
+        ))
     }
 }
 
@@ -193,13 +217,26 @@ mod tests {
     fn parses_messages() {
         assert_eq!(
             parse(&[0x91, 60, 100]),
-            Some(MidiMsg { channel: 1, kind: MidiKind::NoteOn { note: 60, velocity: 100 } })
+            Some(MidiMsg {
+                channel: 1,
+                kind: MidiKind::NoteOn {
+                    note: 60,
+                    velocity: 100
+                }
+            })
         );
         assert_eq!(
             parse(&[0x90, 60, 0]),
-            Some(MidiMsg { channel: 0, kind: MidiKind::NoteOff { note: 60 } })
+            Some(MidiMsg {
+                channel: 0,
+                kind: MidiKind::NoteOff { note: 60 }
+            })
         );
-        let Some(MidiMsg { kind: MidiKind::PitchBend(v), .. }) = parse(&[0xE0, 0, 64]) else {
+        let Some(MidiMsg {
+            kind: MidiKind::PitchBend(v),
+            ..
+        }) = parse(&[0xE0, 0, 64])
+        else {
             panic!()
         };
         assert!(v.abs() < 1e-6);

@@ -26,7 +26,9 @@ use crate::params::{ParamDesc as P, Unit};
 use super::{COMMON, Controls, MAX_BLOCK, Poly, VOICES_PARAM, Voice};
 
 pub const MODELS: [&str; 4] = ["String", "Mallet", "Piano", "Bowed"];
-pub const MATERIALS: [&str; 7] = ["Wood", "Metal", "Glass", "Free Bar", "Bell", "Membrane", "Tine"];
+pub const MATERIALS: [&str; 7] = [
+    "Wood", "Metal", "Glass", "Free Bar", "Bell", "Membrane", "Tine",
+];
 pub const BOWED_BODIES: [&str; 4] = ["Violin", "Viola", "Cello", "Bass"];
 
 pub const VOICES: usize = 0;
@@ -53,24 +55,140 @@ pub const WIDTH: usize = 19;
 pub static PARAMS: [P; 20] = [
     VOICES_PARAM,
     P::choice("model", "Model", "Model", &MODELS, 0),
-    P::float("hardness", "Hardness", "Exciter", 0.0, 1.0, 0.5, Unit::Percent),
-    P::float("position", "Position", "Exciter", 0.02, 0.5, 0.18, Unit::Percent),
-    P::float("vel_bright", "Vel>Bright", "Exciter", 0.0, 1.0, 0.6, Unit::Percent),
-    P::float("bow_pressure", "Bow Pressure", "Bow", 0.0, 1.0, 0.55, Unit::Percent),
-    P::float("bow_position", "Bow Position", "Bow", 0.08, 0.25, 0.13, Unit::Percent),
-    P::float("bow_attack", "Bow Attack", "Bow", 0.005, 2.0, 0.12, Unit::Seconds).exp(),
+    P::float(
+        "hardness",
+        "Hardness",
+        "Exciter",
+        0.0,
+        1.0,
+        0.5,
+        Unit::Percent,
+    ),
+    P::float(
+        "position",
+        "Position",
+        "Exciter",
+        0.02,
+        0.5,
+        0.18,
+        Unit::Percent,
+    ),
+    P::float(
+        "vel_bright",
+        "Vel>Bright",
+        "Exciter",
+        0.0,
+        1.0,
+        0.6,
+        Unit::Percent,
+    ),
+    P::float(
+        "bow_pressure",
+        "Bow Pressure",
+        "Bow",
+        0.0,
+        1.0,
+        0.55,
+        Unit::Percent,
+    ),
+    P::float(
+        "bow_position",
+        "Bow Position",
+        "Bow",
+        0.08,
+        0.25,
+        0.13,
+        Unit::Percent,
+    ),
+    P::float(
+        "bow_attack",
+        "Bow Attack",
+        "Bow",
+        0.005,
+        2.0,
+        0.12,
+        Unit::Seconds,
+    )
+    .exp(),
     P::float("vibrato", "Vibrato", "Bow", 0.0, 50.0, 18.0, Unit::Cents).step(1.0),
-    P::float("vibrato_rate", "Vibrato Rate", "Bow", 3.0, 8.0, 5.5, Unit::Hz),
+    P::float(
+        "vibrato_rate",
+        "Vibrato Rate",
+        "Bow",
+        3.0,
+        8.0,
+        5.5,
+        Unit::Hz,
+    ),
     P::choice("bowed_body", "Instrument", "Bow", &BOWED_BODIES, 0),
-    P::float("decay", "Decay", "Resonator", 0.05, 30.0, 3.0, Unit::Seconds).exp(),
-    P::float("hf_damp", "HF Damping", "Resonator", 0.0, 1.0, 0.4, Unit::Percent),
-    P::float("stiffness", "Stiffness", "Resonator", 0.0, 1.0, 0.0, Unit::Percent),
-    P::float("unison", "Unison Detune", "Resonator", 0.0, 12.0, 1.2, Unit::Cents).step(0.1),
+    P::float(
+        "decay",
+        "Decay",
+        "Resonator",
+        0.05,
+        30.0,
+        3.0,
+        Unit::Seconds,
+    )
+    .exp(),
+    P::float(
+        "hf_damp",
+        "HF Damping",
+        "Resonator",
+        0.0,
+        1.0,
+        0.4,
+        Unit::Percent,
+    ),
+    P::float(
+        "stiffness",
+        "Stiffness",
+        "Resonator",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
+    P::float(
+        "unison",
+        "Unison Detune",
+        "Resonator",
+        0.0,
+        12.0,
+        1.2,
+        Unit::Cents,
+    )
+    .step(0.1),
     P::choice("material", "Material", "Resonator", &MATERIALS, 0),
     P::float("body", "Body", "Response", 0.0, 1.0, 0.25, Unit::Percent),
-    P::float("release_damp", "Release Damp", "Response", 0.0, 1.0, 0.6, Unit::Percent),
-    P::float("tone", "Tone", "Response", 200.0, 20_000.0, 20_000.0, Unit::Hz).exp(),
-    P::float("width", "Stereo Width", "Response", 0.0, 1.0, 0.4, Unit::Percent),
+    P::float(
+        "release_damp",
+        "Release Damp",
+        "Response",
+        0.0,
+        1.0,
+        0.6,
+        Unit::Percent,
+    ),
+    P::float(
+        "tone",
+        "Tone",
+        "Response",
+        200.0,
+        20_000.0,
+        20_000.0,
+        Unit::Hz,
+    )
+    .exp(),
+    P::float(
+        "width",
+        "Stereo Width",
+        "Response",
+        0.0,
+        1.0,
+        0.4,
+        Unit::Percent,
+    ),
 ];
 
 /// Which of this synth's own parameters apply to the selected model.
@@ -78,8 +196,12 @@ pub static PARAMS: [P; 20] = [
 pub fn param_visible(p: &[f32], local: usize) -> bool {
     let model = model_from(p[MODEL]);
     match local {
-        HARDNESS | POSITION | VEL_BRIGHT | STIFFNESS | DECAY | RELEASE_DAMP => model != Model::Bowed,
-        BOW_PRESSURE | BOW_POSITION | BOW_ATTACK | VIBRATO | VIBRATO_RATE | BOWED_BODY => model == Model::Bowed,
+        HARDNESS | POSITION | VEL_BRIGHT | STIFFNESS | DECAY | RELEASE_DAMP => {
+            model != Model::Bowed
+        }
+        BOW_PRESSURE | BOW_POSITION | BOW_ATTACK | VIBRATO | VIBRATO_RATE | BOWED_BODY => {
+            model == Model::Bowed
+        }
         UNISON => model == Model::Piano,
         MATERIAL => model == Model::Mallet,
         _ => true,
@@ -95,12 +217,28 @@ struct Material {
 
 const MATERIAL_TABLE: [Material; 7] = [
     // Tuned marimba bar: partials tuned to 1:4:10.
-    Material { ratios: &[1.0, 3.99, 10.0], amps: &[1.0, 0.45, 0.2], decay: 0.5 },
+    Material {
+        ratios: &[1.0, 3.99, 10.0],
+        amps: &[1.0, 0.45, 0.2],
+        decay: 0.5,
+    },
     // Vibraphone-like metal bar: long, nearly harmonic ring.
-    Material { ratios: &[1.0, 4.0, 10.0, 17.6], amps: &[1.0, 0.35, 0.18, 0.08], decay: 3.0 },
-    Material { ratios: &[1.0, 2.32, 4.25, 6.63, 9.38], amps: &[1.0, 0.6, 0.4, 0.3, 0.2], decay: 1.5 },
+    Material {
+        ratios: &[1.0, 4.0, 10.0, 17.6],
+        amps: &[1.0, 0.35, 0.18, 0.08],
+        decay: 3.0,
+    },
+    Material {
+        ratios: &[1.0, 2.32, 4.25, 6.63, 9.38],
+        amps: &[1.0, 0.6, 0.4, 0.3, 0.2],
+        decay: 1.5,
+    },
     // Free (untuned) bar, xylophone-like.
-    Material { ratios: &[1.0, 2.756, 5.404, 8.933, 13.344], amps: &[1.0, 0.5, 0.35, 0.25, 0.15], decay: 0.8 },
+    Material {
+        ratios: &[1.0, 2.756, 5.404, 8.933, 13.344],
+        amps: &[1.0, 0.5, 0.35, 0.25, 0.15],
+        decay: 0.8,
+    },
     // Church bell: hum, prime, tierce, quint, nominal and upper partials.
     Material {
         ratios: &[0.5, 1.0, 1.183, 1.506, 2.0, 2.514, 2.662, 3.011],
@@ -114,7 +252,11 @@ const MATERIAL_TABLE: [Material; 7] = [
         decay: 0.35,
     },
     // Kalimba / tine.
-    Material { ratios: &[1.0, 5.9, 15.4], amps: &[1.0, 0.2, 0.08], decay: 2.0 },
+    Material {
+        ratios: &[1.0, 5.9, 15.4],
+        amps: &[1.0, 0.2, 0.08],
+        decay: 2.0,
+    },
 ];
 
 const MAX_MODES: usize = 8;
@@ -245,7 +387,11 @@ impl WaveString {
         let per_period = 10f32.powf(-3.0 / (f0 * t60.max(0.005)));
         let wanted = 0.03 + 0.47 * hf_damp;
         let c = (1.0 - per_period * per_period) / (2.0 * (1.0 - w.cos() as f32));
-        let max_s = if c >= 0.25 { 0.5 } else { (1.0 - (1.0 - 4.0 * c).sqrt()) / 2.0 };
+        let max_s = if c >= 0.25 {
+            0.5
+        } else {
+            (1.0 - (1.0 - 4.0 * c).sqrt()) / 2.0
+        };
         self.damp_s = wanted.min(max_s * 0.98);
         let sd = self.damp_s as f64;
         let (lp_re, lp_im) = ((1.0 - sd) + sd * w.cos(), -sd * w.sin());
@@ -254,7 +400,11 @@ impl WaveString {
 
         self.disp_a = -0.75 * stiffness.clamp(0.0, 1.0);
         let (dr, di) = allpass_at(self.disp_a as f64, w);
-        let disp_delay = if stiffness > 0.0 { phase_delay(dr, di, w) * DISPERSION_STAGES as f64 } else { 0.0 };
+        let disp_delay = if stiffness > 0.0 {
+            phase_delay(dr, di, w) * DISPERSION_STAGES as f64
+        } else {
+            0.0
+        };
 
         let remaining = (period - lp_delay - disp_delay).max(2.5);
         // Keep the Thiran all-pass delay within 0.5..1.5 samples for accuracy.
@@ -325,7 +475,9 @@ fn bow_table(dv: f32, slope: f32) -> f32 {
 /// high notes towards a sine.
 fn bowed_loss_pole(s: &PhysicalShared, f0: f32) -> f32 {
     let harmonics = 16.0 * 0.25f32.powf(s.hf_damp);
-    (-std::f32::consts::TAU * f0 * harmonics / s.sample_rate).exp().clamp(0.05, 0.95)
+    (-std::f32::consts::TAU * f0 * harmonics / s.sample_rate)
+        .exp()
+        .clamp(0.05, 0.95)
 }
 
 /// Bow speed (velocity 0.8) at which `bow_slope` was measured.
@@ -531,7 +683,8 @@ impl PhysicalVoice {
     }
 
     fn decay_time(&self, s: &PhysicalShared) -> f32 {
-        let damped = self.released && !(self.model == Model::Piano && self.note >= PIANO_UNDAMPED_FROM);
+        let damped =
+            self.released && !(self.model == Model::Piano && self.note >= PIANO_UNDAMPED_FROM);
         if self.killed {
             0.01
         } else if damped && s.release_damp > 0.0 {
@@ -565,7 +718,8 @@ impl PhysicalVoice {
         // Register: decay is long in the bass and short in the treble, and
         // strings get stiffer (more inharmonic) towards the top.
         let reg = ((self.note as f32 - 21.0) / 87.0).clamp(0.0, 1.0);
-        let t60 = (self.decay_time(s) * ((60.0 - self.note as f32) / 18.0).exp2()).clamp(0.02, 40.0);
+        let t60 =
+            (self.decay_time(s) * ((60.0 - self.note as f32) / 18.0).exp2()).clamp(0.02, 40.0);
         let stiffness = (s.stiffness * (0.4 + 1.2 * reg)).min(1.0);
         // Slightly different decays per string give the two-stage decay.
         let spread = [1.0, 0.75, 1.3];
@@ -611,12 +765,21 @@ impl PhysicalVoice {
         // Felt hammer: felt stiffens with force, so contact time shrinks
         // steeply as the hammer hits harder (~3.5 ms soft to ~0.4 ms hard),
         // capped to half a period so short treble strings still get a strike.
-        let contact = ((0.0045 * (1.0 - h).powf(1.5) + 0.0003) * sr).min(period * 0.5).max(2.0);
+        let contact = ((0.0045 * (1.0 - h).powf(1.5) + 0.0003) * sr)
+            .min(period * 0.5)
+            .max(2.0);
         let width = contact as usize;
         let strike = ((s.position * period).round() as usize).max(1);
-        let len = (width + strike).min(period as usize).max(width).min(DELAY_LEN - 1);
+        let len = (width + strike)
+            .min(period as usize)
+            .max(width)
+            .min(DELAY_LEN - 1);
         for (i, e) in self.exc[..len].iter_mut().enumerate() {
-            *e = if i < width { 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / contact).cos() } else { 0.0 };
+            *e = if i < width {
+                0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / contact).cos()
+            } else {
+                0.0
+            };
         }
         // Hammer position: notches the harmonics with a node at the strike
         // point. Only meaningful when the strike point is well clear of the
@@ -653,7 +816,11 @@ impl PhysicalVoice {
             let t60 = base_t60 / (1.0 + s.hf_damp * 3.0 * (ratio - 1.0).max(0.0));
             let r = 0.001f32.powf(1.0 / (t60.max(0.005) * sr));
             let theta = std::f32::consts::TAU * f / sr;
-            let pos = 0.25 + 0.75 * (std::f32::consts::PI * (k + 1) as f32 * s.position).sin().abs();
+            let pos = 0.25
+                + 0.75
+                    * (std::f32::consts::PI * (k + 1) as f32 * s.position)
+                        .sin()
+                        .abs();
             let soft = 1.0 / (1.0 + (1.0 - h) * 4.0 * (ratio - 1.0).max(0.0) / 3.0);
             let m = &mut self.modes[count];
             m.b1 = 2.0 * r * theta.cos();
@@ -701,7 +868,13 @@ impl PhysicalVoice {
         y
     }
 
-    fn render_bowed(&mut self, s: &PhysicalShared, ctl: &Controls, l: &mut [f32], r: &mut [f32]) -> f32 {
+    fn render_bowed(
+        &mut self,
+        s: &PhysicalShared,
+        ctl: &Controls,
+        l: &mut [f32],
+        r: &mut [f32],
+    ) -> f32 {
         let sr = s.sample_rate;
         let n = l.len();
         // Delayed vibrato: fades in over ~0.4 s after a short pause.
@@ -818,7 +991,9 @@ impl Voice for PhysicalVoice {
             match self.model {
                 Model::String => self.tune_string(s, f0),
                 Model::Piano => self.tune_piano(s, f0),
-                Model::Mallet => self.tune_mallet(s, f0, !self.pending || self.tuned_for.is_finite()),
+                Model::Mallet => {
+                    self.tune_mallet(s, f0, !self.pending || self.tuned_for.is_finite())
+                }
                 Model::Bowed => {
                     self.bow.tune(s, f0);
                     if self.pending {
@@ -854,7 +1029,8 @@ impl Voice for PhysicalVoice {
                     }
                     let mut o = self.dc_block(z * norm) * gain;
                     if self.thump > 1e-5 {
-                        self.thump_lp = (1.0 - thump_c) * self.rng.bipolar() + thump_c * self.thump_lp;
+                        self.thump_lp =
+                            (1.0 - thump_c) * self.rng.bipolar() + thump_c * self.thump_lp;
                         o += self.thump_lp * self.thump * 6.0;
                         self.thump *= self.thump_coef;
                     }
@@ -984,7 +1160,11 @@ impl PhysicalSynth {
         tl.fill(0.0);
         tr.fill(0.0);
         self.poly.render(&self.shared, tl, tr);
-        let body = if self.shared.model == Model::Bowed { 0.0 } else { self.body };
+        let body = if self.shared.model == Model::Bowed {
+            0.0
+        } else {
+            self.body
+        };
         for (ch, buf) in [&mut *tl, &mut *tr].into_iter().enumerate() {
             for x in buf.iter_mut() {
                 let mut y = *x;
@@ -1049,8 +1229,14 @@ mod tests {
     fn measured_pitch(s: &mut PhysicalSynth, note: u8) -> f32 {
         s.poly.note_on(note, 0.8, &s.shared);
         let out = render(s, 48_000);
-        assert!(out.iter().all(|v| v.is_finite()) && peak(&out) > 0.02, "note {note}: peak {}", peak(&out));
-        Sample::new("t", out, None, 48_000.0).detect_pitch().unwrap_or(f32::NAN)
+        assert!(
+            out.iter().all(|v| v.is_finite()) && peak(&out) > 0.02,
+            "note {note}: peak {}",
+            peak(&out)
+        );
+        Sample::new("t", out, None, 48_000.0)
+            .detect_pitch()
+            .unwrap_or(f32::NAN)
     }
 
     #[test]
@@ -1059,7 +1245,10 @@ mod tests {
             for note in [40u8, 52, 69, 84] {
                 let mut s = synth_with(&[("hf_damp", damp), ("stiffness", stiff), ("body", 0.0)]);
                 let p = measured_pitch(&mut s, note);
-                assert!((p - note as f32).abs() < 0.05, "note {note} damp {damp} stiff {stiff}: measured {p}");
+                assert!(
+                    (p - note as f32).abs() < 0.05,
+                    "note {note} damp {damp} stiff {stiff}: measured {p}"
+                );
             }
         }
     }
@@ -1070,7 +1259,10 @@ mod tests {
             for note in [57u8, 72, 84] {
                 let mut s = synth_with(&[("model", 1.0), ("material", material), ("body", 0.0)]);
                 let p = measured_pitch(&mut s, note);
-                assert!((p - note as f32).abs() < 0.05, "material {material} note {note}: measured {p}");
+                assert!(
+                    (p - note as f32).abs() < 0.05,
+                    "material {material} note {note}: measured {p}"
+                );
             }
         }
     }
@@ -1080,7 +1272,10 @@ mod tests {
         for note in [28u8, 40, 52, 64, 76, 88] {
             let mut s = synth_with(&[("model", 2.0), ("stiffness", 0.3), ("body", 0.0)]);
             let p = measured_pitch(&mut s, note);
-            assert!((p - note as f32).abs() < 0.06, "piano note {note}: measured {p}");
+            assert!(
+                (p - note as f32).abs() < 0.06,
+                "piano note {note}: measured {p}"
+            );
         }
     }
 
@@ -1093,7 +1288,11 @@ mod tests {
             s.poly.note_off(note);
             let after = render(&mut s, 24_000);
             let late = rms(&after[19_200..]);
-            assert_eq!(late > 1e-3, should_ring, "note {note}: rms after release {late}");
+            assert_eq!(
+                late > 1e-3,
+                should_ring,
+                "note {note}: rms after release {late}"
+            );
         }
     }
 
@@ -1103,9 +1302,16 @@ mod tests {
             let mut s = synth_with(&[("model", 2.0), ("body", 0.0)]);
             s.poly.note_on(48, vel, &s.shared);
             let out = render(&mut s, 9_600);
-            out.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count()
+            out.windows(2)
+                .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+                .count()
         };
-        assert!(zc(1.0) as f32 > zc(0.2) as f32 * 1.3, "loud {} soft {}", zc(1.0), zc(0.2));
+        assert!(
+            zc(1.0) as f32 > zc(0.2) as f32 * 1.3,
+            "loud {} soft {}",
+            zc(1.0),
+            zc(0.2)
+        );
     }
 
     #[test]
@@ -1116,7 +1322,10 @@ mod tests {
         assert!(held.iter().all(|v| v.is_finite()));
         let (early, late) = (rms(&held[24_000..48_000]), rms(&held[72_000..96_000]));
         assert!(early > 0.02, "bow didn't start the string: {early}");
-        assert!(late > early * 0.6, "note died while bowing: {early} -> {late}");
+        assert!(
+            late > early * 0.6,
+            "note died while bowing: {early} -> {late}"
+        );
         s.poly.note_off(64);
         render(&mut s, 96_000);
         assert_eq!(s.poly.active_voices(), 0);
@@ -1127,7 +1336,10 @@ mod tests {
         for note in [43u8, 55, 62, 69, 76, 84] {
             let mut s = synth_with(&[("model", 3.0), ("vibrato", 0.0), ("body", 0.0)]);
             let p = measured_pitch(&mut s, note);
-            assert!((p - note as f32).abs() < 0.12, "bowed note {note}: measured {p}");
+            assert!(
+                (p - note as f32).abs() < 0.12,
+                "bowed note {note}: measured {p}"
+            );
         }
     }
 
@@ -1135,14 +1347,23 @@ mod tests {
     fn bowed_extremes_stay_bounded() {
         for (pressure, position) in [(0.0, 0.08), (1.0, 0.25), (1.0, 0.08), (0.0, 0.25)] {
             for body in [0.0, 1.0, 2.0, 3.0] {
-                let mut s = synth_with(&[("model", 3.0), ("bow_pressure", pressure), ("bow_position", position), ("bowed_body", body)]);
+                let mut s = synth_with(&[
+                    ("model", 3.0),
+                    ("bow_pressure", pressure),
+                    ("bow_position", position),
+                    ("bowed_body", body),
+                ]);
                 for note in [36u8, 55, 76] {
                     s.poly.note_on(note, 1.0, &s.shared);
                 }
                 s.poly.set_modwheel(1.0);
                 let out = render(&mut s, 48_000);
                 assert!(out.iter().all(|v| v.is_finite()));
-                assert!(peak(&out) < 2.0, "pressure {pressure} position {position} body {body}: {}", peak(&out));
+                assert!(
+                    peak(&out) < 2.0,
+                    "pressure {pressure} position {position} body {body}: {}",
+                    peak(&out)
+                );
             }
         }
     }
@@ -1170,7 +1391,9 @@ mod tests {
                     s.poly.note_on(note, vel, &s.shared);
                     let out = render(&mut s, 48_000);
                     let f0 = midi_to_freq(note as f32);
-                    let h: Vec<f32> = (1..=6).map(|k| harmonic(&out[24_000..], f0 * k as f32)).collect();
+                    let h: Vec<f32> = (1..=6)
+                        .map(|k| harmonic(&out[24_000..], f0 * k as f32))
+                        .collect();
                     let strongest_other = h[1..].iter().fold(0.0f32, |m, v| m.max(*v));
                     assert!(
                         h[0] > 0.005 && h[0] >= 0.8 * strongest_other,
@@ -1185,9 +1408,17 @@ mod tests {
     fn controls_follow_the_model() {
         let mut p = SynthKind::Physical.defaults()[COMMON.len()..].to_vec();
         p[MODEL] = 2.0; // piano
-        assert!(param_visible(&p, UNISON) && !param_visible(&p, MATERIAL) && !param_visible(&p, BOW_PRESSURE));
+        assert!(
+            param_visible(&p, UNISON)
+                && !param_visible(&p, MATERIAL)
+                && !param_visible(&p, BOW_PRESSURE)
+        );
         p[MODEL] = 3.0; // bowed
-        assert!(param_visible(&p, BOW_PRESSURE) && !param_visible(&p, HARDNESS) && !param_visible(&p, UNISON));
+        assert!(
+            param_visible(&p, BOW_PRESSURE)
+                && !param_visible(&p, HARDNESS)
+                && !param_visible(&p, UNISON)
+        );
         p[MODEL] = 1.0; // mallet
         assert!(param_visible(&p, MATERIAL) && param_visible(&p, HARDNESS));
     }
@@ -1195,12 +1426,24 @@ mod tests {
     #[test]
     fn every_material_rings_and_dies_away() {
         for material in 0..MATERIALS.len() {
-            let mut s = synth_with(&[("model", 1.0), ("material", material as f32), ("decay", 0.3)]);
+            let mut s = synth_with(&[
+                ("model", 1.0),
+                ("material", material as f32),
+                ("decay", 0.3),
+            ]);
             s.poly.note_on(60, 1.0, &s.shared);
             let out = render(&mut s, 48_000 * 8);
             assert!(out.iter().all(|v| v.is_finite()));
-            assert!(peak(&out) > 0.02 && peak(&out) < 1.5, "material {material} peak {}", peak(&out));
-            assert_eq!(s.poly.active_voices(), 0, "material {material} still ringing");
+            assert!(
+                peak(&out) > 0.02 && peak(&out) < 1.5,
+                "material {material} peak {}",
+                peak(&out)
+            );
+            assert_eq!(
+                s.poly.active_voices(),
+                0,
+                "material {material} still ringing"
+            );
         }
     }
 
@@ -1220,7 +1463,9 @@ mod tests {
             let mut s = synth_with(&[("hardness", hard), ("vel_bright", 0.0), ("body", 0.0)]);
             s.poly.note_on(48, 1.0, &s.shared);
             let out = render(&mut s, 4_800);
-            out.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count()
+            out.windows(2)
+                .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+                .count()
         };
         assert!(zc(1.0) > zc(0.1) * 2, "hard {} soft {}", zc(1.0), zc(0.1));
     }
@@ -1228,7 +1473,10 @@ mod tests {
     #[test]
     fn factory_patches_play_cleanly() {
         crate::dsp::init_tables();
-        for patch in crate::patch::factory_patches().into_iter().filter(|p| p.kind == SynthKind::Physical) {
+        for patch in crate::patch::factory_patches()
+            .into_iter()
+            .filter(|p| p.kind == SynthKind::Physical)
+        {
             let mut s = PhysicalSynth::new(48_000.0);
             s.update(&patch.values());
             for note in [48u8, 60, 67, 76] {
@@ -1236,7 +1484,12 @@ mod tests {
             }
             let out = render(&mut s, 48_000 * 2);
             assert!(out.iter().all(|v| v.is_finite()), "{}", patch.name);
-            assert!(peak(&out) > 0.05 && peak(&out) < 1.5, "{}: peak {}", patch.name, peak(&out));
+            assert!(
+                peak(&out) > 0.05 && peak(&out) < 1.5,
+                "{}: peak {}",
+                patch.name,
+                peak(&out)
+            );
         }
     }
 }

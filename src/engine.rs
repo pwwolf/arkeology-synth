@@ -13,9 +13,9 @@ use crossbeam_queue::ArrayQueue;
 
 use crate::dsp::{Smooth, pan_gains};
 use crate::fx::{self, FX_UNITS, FxUnit};
-use crate::recorder::RecordTap;
 use crate::midi::{MidiKind, MidiMsg};
 use crate::params::master;
+use crate::recorder::RecordTap;
 use crate::reverb::Reverb;
 use crate::sample::{Builtins, Sample};
 use crate::synth::{self, Instrument, MAX_BLOCK, SynthKind};
@@ -28,20 +28,59 @@ const MASTER_GAIN: f32 = 1.5;
 
 pub enum Command {
     Midi(MidiMsg),
-    NoteOn { slot: usize, note: u8, velocity: f32 },
-    NoteOff { slot: usize, note: u8 },
-    InstallSlot { slot: usize, data: Box<Slot> },
-    RemoveSlot { slot: usize },
-    SetParam { slot: usize, index: usize, value: f32 },
-    SetMaster { index: usize, value: f32 },
-    SetChannel { slot: usize, channel: Option<u8> },
-    SetMute { slot: usize, on: bool },
-    SetSolo { slot: usize, on: bool },
+    NoteOn {
+        slot: usize,
+        note: u8,
+        velocity: f32,
+    },
+    NoteOff {
+        slot: usize,
+        note: u8,
+    },
+    InstallSlot {
+        slot: usize,
+        data: Box<Slot>,
+    },
+    RemoveSlot {
+        slot: usize,
+    },
+    SetParam {
+        slot: usize,
+        index: usize,
+        value: f32,
+    },
+    SetMaster {
+        index: usize,
+        value: f32,
+    },
+    SetChannel {
+        slot: usize,
+        channel: Option<u8>,
+    },
+    SetMute {
+        slot: usize,
+        on: bool,
+    },
+    SetSolo {
+        slot: usize,
+        on: bool,
+    },
     /// Replace sample `index` (a kit pad; 0 for granular/sampler).
-    SetSample { slot: usize, index: usize, sample: Option<Arc<Sample>> },
+    SetSample {
+        slot: usize,
+        index: usize,
+        sample: Option<Arc<Sample>>,
+    },
     /// Swap in a freshly built insert effect (built off the audio thread).
-    SetFx { slot: usize, unit: usize, fx: Box<FxUnit> },
-    SetMasterFx { unit: usize, fx: Box<FxUnit> },
+    SetFx {
+        slot: usize,
+        unit: usize,
+        fx: Box<FxUnit>,
+    },
+    SetMasterFx {
+        unit: usize,
+        fx: Box<FxUnit>,
+    },
     /// Start copying the master output to a recorder (replacing any other).
     StartRecording(Box<RecordTap>),
     StopRecording,
@@ -91,7 +130,9 @@ impl Slot {
         inst.update(&params);
         let ctrl_rate = sample_rate / MAX_BLOCK as f32;
         let fx_base = kind.fx_base();
-        let fx = std::array::from_fn(|u| FxUnit::from_values(fx::unit_values(&params, fx_base, u), sample_rate));
+        let fx = std::array::from_fn(|u| {
+            FxUnit::from_values(fx::unit_values(&params, fx_base, u), sample_rate)
+        });
         Box::new(Slot {
             fx_base,
             fx,
@@ -222,10 +263,16 @@ impl Engine {
     fn handle(&mut self, cmd: Command) {
         match cmd {
             Command::Midi(m) => self.handle_midi(m),
-            Command::NoteOn { slot, note, velocity } => {
+            Command::NoteOn {
+                slot,
+                note,
+                velocity,
+            } => {
                 if let Some(s) = self.slots.get_mut(slot).and_then(|s| s.as_mut()) {
                     s.inst.note_on(note, velocity);
-                    self.telemetry.slots[slot].notes.fetch_add(1, Ordering::Relaxed);
+                    self.telemetry.slots[slot]
+                        .notes
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
             Command::NoteOff { slot, note } => {
@@ -300,7 +347,11 @@ impl Engine {
                     s.solo = on;
                 }
             }
-            Command::SetSample { slot, index, sample } => {
+            Command::SetSample {
+                slot,
+                index,
+                sample,
+            } => {
                 let old = match self.slots.get_mut(slot).and_then(|s| s.as_mut()) {
                     Some(s) => s.inst.set_sample(index, sample),
                     None => sample,
@@ -338,7 +389,9 @@ impl Engine {
             match m.kind {
                 MidiKind::NoteOn { note, velocity } => {
                     s.inst.note_on(note, velocity as f32 / 127.0);
-                    self.telemetry.slots[i].notes.fetch_add(1, Ordering::Relaxed);
+                    self.telemetry.slots[i]
+                        .notes
+                        .fetch_add(1, Ordering::Relaxed);
                 }
                 MidiKind::NoteOff { note } => s.inst.note_off(note),
                 MidiKind::Cc { cc: 1, value } => s.inst.set_modwheel(value as f32 / 127.0),
@@ -374,13 +427,17 @@ impl Engine {
         }
         for (i, slot) in self.slots.iter_mut().enumerate() {
             let voices = slot.as_mut().map_or(0, |s| s.inst.active_voices());
-            self.telemetry.slots[i].voices.store(voices as u32, Ordering::Relaxed);
+            self.telemetry.slots[i]
+                .voices
+                .store(voices as u32, Ordering::Relaxed);
         }
         if frames > 0 {
             let budget = frames as f32 / self.sample_rate;
             let load = started.elapsed().as_secs_f32() / budget;
             self.cpu_avg += (load - self.cpu_avg) * 0.1;
-            self.telemetry.cpu.store(self.cpu_avg.to_bits(), Ordering::Relaxed);
+            self.telemetry
+                .cpu
+                .store(self.cpu_avg.to_bits(), Ordering::Relaxed);
         }
     }
 
@@ -430,7 +487,8 @@ impl Engine {
             store_max(&self.telemetry.slots[idx].peak, peak);
         }
 
-        self.reverb.process(&mut self.send_l[..n], &mut self.send_r[..n]);
+        self.reverb
+            .process(&mut self.send_l[..n], &mut self.send_r[..n]);
         let ret = self.master[master::REVERB_RETURN];
         for i in 0..n {
             self.mix_l[i] += self.send_l[i] * ret;
@@ -502,16 +560,26 @@ mod tests {
         let garbage: GarbageQueue = Arc::new(ArrayQueue::new(64));
         let mut e = Engine::new(sr, cmds.clone(), garbage, Arc::new(Telemetry::default()));
         let slot = Slot::new(kind, kind.defaults(), Some(0), sr, &builtins, &[]);
-        cmds.push(Command::InstallSlot { slot: 0, data: slot }).ok();
+        cmds.push(Command::InstallSlot {
+            slot: 0,
+            data: slot,
+        })
+        .ok();
         cmds.push(Command::Midi(MidiMsg {
             channel: 0,
-            kind: MidiKind::NoteOn { note, velocity: 100 },
+            kind: MidiKind::NoteOn {
+                note,
+                velocity: 100,
+            },
         }))
         .ok();
         // Notes on other channels must not reach the slot.
         cmds.push(Command::Midi(MidiMsg {
             channel: 5,
-            kind: MidiKind::NoteOn { note: 72, velocity: 100 },
+            kind: MidiKind::NoteOn {
+                note: 72,
+                velocity: 100,
+            },
         }))
         .ok();
         let mut out = vec![0.0; 2 * 48_000];
@@ -567,13 +635,26 @@ mod tests {
         set(&mut values, "fx1_delay_time", 0.5);
         set(&mut values, "fx1_delay_feedback", 0.6);
         let slot = Slot::new(kind, values, Some(9), sr, &builtins, &[]);
-        cmds.push(Command::InstallSlot { slot: 0, data: slot }).ok();
-        cmds.push(Command::NoteOn { slot: 0, note: 37, velocity: 1.0 }).ok(); // short rimshot
+        cmds.push(Command::InstallSlot {
+            slot: 0,
+            data: slot,
+        })
+        .ok();
+        cmds.push(Command::NoteOn {
+            slot: 0,
+            note: 37,
+            velocity: 1.0,
+        })
+        .ok(); // short rimshot
         let mut out = vec![0.0; 2 * 48_000 * 2];
         e.process(&mut out, 2);
         // The rim is ~40 ms long; echoes should still be audible a second later.
         let window = |s: f32| &out[(s * 96_000.0) as usize..((s + 0.1) * 96_000.0) as usize];
-        assert!(rms(window(1.0)) > 0.005, "no echo tail: {}", rms(window(1.0)));
+        assert!(
+            rms(window(1.0)) > 0.005,
+            "no echo tail: {}",
+            rms(window(1.0))
+        );
         assert!(rms(window(0.2)) < 1e-4, "echo arrived early");
     }
 
@@ -585,20 +666,36 @@ mod tests {
         let sr = 48_000.0;
         let builtins = sample::builtins();
         let kinds = [SynthKind::Fm, SynthKind::Granular, SynthKind::Analog];
-        for p in crate::patch::factory_patches().into_iter().filter(|p| kinds.contains(&p.kind)) {
+        for p in crate::patch::factory_patches()
+            .into_iter()
+            .filter(|p| kinds.contains(&p.kind))
+        {
             let cmds: CommandQueue = Arc::new(ArrayQueue::new(256));
             let garbage: GarbageQueue = Arc::new(ArrayQueue::new(64));
             let mut e = Engine::new(sr, cmds.clone(), garbage, Arc::new(Telemetry::default()));
             let slot = Slot::new(p.kind, p.values(), Some(0), sr, &builtins, &[]);
-            cmds.push(Command::InstallSlot { slot: 0, data: slot }).ok();
+            cmds.push(Command::InstallSlot {
+                slot: 0,
+                data: slot,
+            })
+            .ok();
             for n in [48u8, 52, 55, 60] {
-                cmds.push(Command::NoteOn { slot: 0, note: n, velocity: 0.8 }).ok();
+                cmds.push(Command::NoteOn {
+                    slot: 0,
+                    note: n,
+                    velocity: 0.8,
+                })
+                .ok();
             }
             let mut out = vec![0.0; 2 * 72_000];
             e.process(&mut out, 2);
             let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
             assert!(out.iter().all(|v| v.is_finite()), "{}", p.name);
-            assert!((0.12..0.85).contains(&peak), "{}: chord peak {peak}", p.name);
+            assert!(
+                (0.12..0.85).contains(&peak),
+                "{}: chord peak {peak}",
+                p.name
+            );
         }
     }
 }

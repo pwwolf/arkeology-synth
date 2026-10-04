@@ -73,9 +73,15 @@ impl Reverb {
         let scale = |n: usize| ((n as f32) * sample_rate / 44_100.0) as usize;
         Reverb {
             combs_l: COMBS.iter().map(|&n| Comb::new(scale(n))).collect(),
-            combs_r: COMBS.iter().map(|&n| Comb::new(scale(n + SPREAD))).collect(),
+            combs_r: COMBS
+                .iter()
+                .map(|&n| Comb::new(scale(n + SPREAD)))
+                .collect(),
             ap_l: ALLPASSES.iter().map(|&n| Allpass::new(scale(n))).collect(),
-            ap_r: ALLPASSES.iter().map(|&n| Allpass::new(scale(n + SPREAD))).collect(),
+            ap_r: ALLPASSES
+                .iter()
+                .map(|&n| Allpass::new(scale(n + SPREAD)))
+                .collect(),
             feedback: 0.84,
             damp: 0.2,
             width: 1.0,

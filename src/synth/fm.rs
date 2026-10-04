@@ -58,19 +58,83 @@ pub const OP_VEL: usize = 7;
 macro_rules! op_params {
     ($n:literal, $ratio:expr, $level:expr, $decay:expr, $sustain:expr) => {
         [
-            P::float(concat!("op", $n, "_ratio"), "Ratio", concat!("Op ", $n), 0.5, 16.0, $ratio, Unit::Ratio)
-                .step(0.5),
-            P::float(concat!("op", $n, "_detune"), "Detune", concat!("Op ", $n), -50.0, 50.0, 0.0, Unit::Cents)
-                .step(1.0),
-            P::float(concat!("op", $n, "_level"), "Level", concat!("Op ", $n), 0.0, 1.0, $level, Unit::Percent),
-            P::float(concat!("op", $n, "_attack"), "Attack", concat!("Op ", $n), 0.001, 10.0, 0.002, Unit::Seconds)
-                .exp(),
-            P::float(concat!("op", $n, "_decay"), "Decay", concat!("Op ", $n), 0.005, 20.0, $decay, Unit::Seconds)
-                .exp(),
-            P::float(concat!("op", $n, "_sustain"), "Sustain", concat!("Op ", $n), 0.0, 1.0, $sustain, Unit::Percent),
-            P::float(concat!("op", $n, "_release"), "Release", concat!("Op ", $n), 0.005, 20.0, 0.3, Unit::Seconds)
-                .exp(),
-            P::float(concat!("op", $n, "_vel"), "Vel Sens", concat!("Op ", $n), 0.0, 1.0, 0.5, Unit::Percent),
+            P::float(
+                concat!("op", $n, "_ratio"),
+                "Ratio",
+                concat!("Op ", $n),
+                0.5,
+                16.0,
+                $ratio,
+                Unit::Ratio,
+            )
+            .step(0.5),
+            P::float(
+                concat!("op", $n, "_detune"),
+                "Detune",
+                concat!("Op ", $n),
+                -50.0,
+                50.0,
+                0.0,
+                Unit::Cents,
+            )
+            .step(1.0),
+            P::float(
+                concat!("op", $n, "_level"),
+                "Level",
+                concat!("Op ", $n),
+                0.0,
+                1.0,
+                $level,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("op", $n, "_attack"),
+                "Attack",
+                concat!("Op ", $n),
+                0.001,
+                10.0,
+                0.002,
+                Unit::Seconds,
+            )
+            .exp(),
+            P::float(
+                concat!("op", $n, "_decay"),
+                "Decay",
+                concat!("Op ", $n),
+                0.005,
+                20.0,
+                $decay,
+                Unit::Seconds,
+            )
+            .exp(),
+            P::float(
+                concat!("op", $n, "_sustain"),
+                "Sustain",
+                concat!("Op ", $n),
+                0.0,
+                1.0,
+                $sustain,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("op", $n, "_release"),
+                "Release",
+                concat!("Op ", $n),
+                0.005,
+                20.0,
+                0.3,
+                Unit::Seconds,
+            )
+            .exp(),
+            P::float(
+                concat!("op", $n, "_vel"),
+                "Vel Sens",
+                concat!("Op ", $n),
+                0.0,
+                1.0,
+                0.5,
+                Unit::Percent,
+            ),
         ]
     };
 }
@@ -81,10 +145,36 @@ const fn build_params() -> [P; OP_BASE + 4 * OP_STRIDE] {
         GLIDE_PARAM,
         P::choice("algorithm", "Algorithm", "FM", &ALGORITHMS, 0),
         P::float("feedback", "Feedback", "FM", 0.0, 1.0, 0.0, Unit::Percent),
-        P::float("brightness", "Brightness", "FM", 0.0, 2.0, 1.0, Unit::Percent),
+        P::float(
+            "brightness",
+            "Brightness",
+            "FM",
+            0.0,
+            2.0,
+            1.0,
+            Unit::Percent,
+        ),
         P::float("vib_rate", "Vibrato Rate", "FM", 0.1, 12.0, 5.0, Unit::Hz).exp(),
-        P::float("vib_depth", "Vibrato Depth", "FM", 0.0, 100.0, 0.0, Unit::Cents).step(1.0),
-        P::float("wheel_vib", "Wheel>Vibrato", "FM", 0.0, 100.0, 30.0, Unit::Cents).step(1.0),
+        P::float(
+            "vib_depth",
+            "Vibrato Depth",
+            "FM",
+            0.0,
+            100.0,
+            0.0,
+            Unit::Cents,
+        )
+        .step(1.0),
+        P::float(
+            "wheel_vib",
+            "Wheel>Vibrato",
+            "FM",
+            0.0,
+            100.0,
+            30.0,
+            Unit::Cents,
+        )
+        .step(1.0),
     ];
     let ops = [
         op_params!("1", 1.0, 0.8, 1.5, 0.6),

@@ -19,7 +19,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = out
         .ports()
         .into_iter()
-        .find(|p| out.port_name(p).is_ok_and(|n| n.contains("Arkeology Synth")))
+        .find(|p| {
+            out.port_name(p)
+                .is_ok_and(|n| n.contains("Arkeology Synth"))
+        })
         .ok_or("the 'Arkeology Synth' virtual port isn't open; start the synth first")?;
     let mut conn = out.connect(&port, "arkeology-midi-send")?;
     for &ch in &channels {

@@ -14,6 +14,7 @@ cargo test --release                       # full suite (~60 tests, <1 s in rele
 cargo test --release <name>                # one test or module, e.g. `physical`, `fx::tests::eq`
 cargo test <name> -- --nocapture           # see eprintln! output
 cargo clippy --all-targets                 # must stay warning-free
+cargo fmt                                  # default rustfmt settings; keep the tree formatted
 cargo run --release -- --render-demo out.wav   # offline render, no audio device or TUI
 cargo run --release -- --list-devices
 SHOW_UI=1 cargo test renders_and_navigates -- --nocapture   # print TUI screens rendered by tests

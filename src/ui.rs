@@ -4,7 +4,9 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+};
 
 use crate::app::{App, Focus, Popup, Target, channel_label};
 use crate::params::{Kind, ParamDesc};
@@ -35,7 +37,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     draw_header(f, app, header);
 
-    let [left, right] = Layout::horizontal([Constraint::Length(48), Constraint::Min(30)]).areas(body);
+    let [left, right] =
+        Layout::horizontal([Constraint::Length(48), Constraint::Min(30)]).areas(body);
     let [rack, monitor] = Layout::vertical([Constraint::Min(6), Constraint::Length(9)]).areas(left);
     draw_rack(f, app, rack);
     draw_monitor(f, app, monitor);
@@ -53,12 +56,19 @@ fn block(title: &str, focused: bool) -> Block<'_> {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(color))
-        .title(Span::styled(format!(" {title} "), Style::default().fg(color).bold()))
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::default().fg(color).bold(),
+        ))
 }
 
 fn meter_spans(level: f32, width: usize) -> Vec<Span<'static>> {
     const PARTS: [char; 8] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
-    let db = if level > 1e-6 { 20.0 * level.log10() } else { -120.0 };
+    let db = if level > 1e-6 {
+        20.0 * level.log10()
+    } else {
+        -120.0
+    };
     let norm = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
     let cells = norm * width as f32;
     let full = cells.floor() as usize;
@@ -98,28 +108,53 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let midi_txt = format!(
         "MIDI {} in{}",
         midi_count,
-        if app.midi.has_virtual() { " + virtual" } else { "" }
+        if app.midi.has_virtual() {
+            " + virtual"
+        } else {
+            ""
+        }
     );
-    let cpu_color = if app.cpu > 0.8 { HOT } else if app.cpu > 0.5 { WARN } else { FG_DIM };
+    let cpu_color = if app.cpu > 0.8 {
+        HOT
+    } else if app.cpu > 0.5 {
+        WARN
+    } else {
+        FG_DIM
+    };
     let mut spans = vec![
-        Span::styled(" ◢◤ ARKEOLOGY ", Style::default().fg(Color::Black).bg(ACCENT).bold()),
+        Span::styled(
+            " ◢◤ ARKEOLOGY ",
+            Style::default().fg(Color::Black).bg(ACCENT).bold(),
+        ),
         Span::raw("  "),
-        Span::styled(format!("{:.1} kHz", app.sample_rate / 1000.0), Style::default().fg(FG_DIM)),
+        Span::styled(
+            format!("{:.1} kHz", app.sample_rate / 1000.0),
+            Style::default().fg(FG_DIM),
+        ),
         Span::styled(" · ", Style::default().fg(BAR_EMPTY)),
         Span::styled(app.device_name.clone(), Style::default().fg(FG_DIM)),
         Span::styled(" · ", Style::default().fg(BAR_EMPTY)),
-        Span::styled(format!("CPU {:>3.0}%", app.cpu * 100.0), Style::default().fg(cpu_color)),
+        Span::styled(
+            format!("CPU {:>3.0}%", app.cpu * 100.0),
+            Style::default().fg(cpu_color),
+        ),
         Span::styled(" · ", Style::default().fg(BAR_EMPTY)),
         Span::styled(midi_txt, Style::default().fg(FG_DIM)),
     ];
     if let Some(addr) = app.mcp_addr {
         spans.push(Span::styled(" · ", Style::default().fg(BAR_EMPTY)));
-        spans.push(Span::styled(format!("MCP :{}", addr.port()), Style::default().fg(FG_DIM)));
+        spans.push(Span::styled(
+            format!("MCP :{}", addr.port()),
+            Style::default().fg(FG_DIM),
+        ));
     }
     if app.keyboard.enabled {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
-            format!(" ♪ KEYS oct {} vel {} ", app.keyboard.octave, app.keyboard.velocity),
+            format!(
+                " ♪ KEYS oct {} vel {} ",
+                app.keyboard.octave, app.keyboard.velocity
+            ),
             Style::default().fg(Color::Black).bg(LEARN).bold(),
         ));
     }
@@ -141,9 +176,13 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     }
     if app.learning.is_some() {
         spans.push(Span::raw("  "));
-        spans.push(Span::styled(" MIDI LEARN ", Style::default().fg(Color::Black).bg(LEARN).bold()));
+        spans.push(Span::styled(
+            " MIDI LEARN ",
+            Style::default().fg(Color::Black).bg(LEARN).bold(),
+        ));
     }
-    let [left, right] = Layout::horizontal([Constraint::Min(10), Constraint::Length(28)]).areas(inner);
+    let [left, right] =
+        Layout::horizontal([Constraint::Min(10), Constraint::Length(28)]).areas(inner);
     f.render_widget(Paragraph::new(Line::from(spans)), left);
 
     let mut m = vec![Span::styled("L ", Style::default().fg(FG_DIM))];
@@ -167,13 +206,20 @@ fn draw_rack(f: &mut Frame, app: &App, area: Rect) {
         .map(|(row, t)| {
             let selected = row == app.rack_cursor;
             let marker = if selected { "▶" } else { " " };
-            let base = if selected { Style::default().bg(SEL_BG) } else { Style::default() };
+            let base = if selected {
+                Style::default().bg(SEL_BG)
+            } else {
+                Style::default()
+            };
             let line = match t {
                 Target::Master => {
                     let peak = app.master_meter.0.max(app.master_meter.1);
                     let mut spans = vec![
                         Span::styled(format!("{marker}    "), Style::default().fg(ACCENT)),
-                        Span::styled(format!("{:<26}", "MASTER  · reverb · drive"), Style::default().bold()),
+                        Span::styled(
+                            format!("{:<26}", "MASTER  · reverb · drive"),
+                            Style::default().bold(),
+                        ),
                     ];
                     spans.extend(meter_spans(peak, 8));
                     Line::from(spans)
@@ -198,8 +244,14 @@ fn draw_rack(f: &mut Frame, app: &App, area: Rect) {
                     };
                     let name: String = s.name.chars().take(13).collect();
                     let mut spans = vec![
-                        Span::styled(format!("{marker}{:>2} ", i + 1), Style::default().fg(ACCENT)),
-                        Span::styled(format!("{:<4}", s.kind.label()), Style::default().fg(kind_color).bold()),
+                        Span::styled(
+                            format!("{marker}{:>2} ", i + 1),
+                            Style::default().fg(ACCENT),
+                        ),
+                        Span::styled(
+                            format!("{:<4}", s.kind.label()),
+                            Style::default().fg(kind_color).bold(),
+                        ),
                         Span::styled(format!("{:<5}", short_channel(s.channel)), ch_style),
                         Span::raw(" "),
                         Span::styled(
@@ -215,15 +267,26 @@ fn draw_rack(f: &mut Frame, app: &App, area: Rect) {
                         ),
                     ];
                     spans.extend(meter_spans(s.meter, 8));
-                    spans.push(Span::styled(format!("{:>3}", s.voices), Style::default().fg(FG_DIM)));
+                    spans.push(Span::styled(
+                        format!("{:>3}", s.voices),
+                        Style::default().fg(FG_DIM),
+                    ));
                     spans.push(Span::raw(" "));
                     spans.push(Span::styled(
                         "M",
-                        if s.mute { Style::default().fg(Color::Black).bg(WARN) } else { Style::default().fg(BAR_EMPTY) },
+                        if s.mute {
+                            Style::default().fg(Color::Black).bg(WARN)
+                        } else {
+                            Style::default().fg(BAR_EMPTY)
+                        },
                     ));
                     spans.push(Span::styled(
                         "S",
-                        if s.solo { Style::default().fg(Color::Black).bg(OK) } else { Style::default().fg(BAR_EMPTY) },
+                        if s.solo {
+                            Style::default().fg(Color::Black).bg(OK)
+                        } else {
+                            Style::default().fg(BAR_EMPTY)
+                        },
                     ));
                     Line::from(spans)
                 }
@@ -239,7 +302,14 @@ fn draw_rack(f: &mut Frame, app: &App, area: Rect) {
         let hint = Paragraph::new("No synths yet: press 'a' to add one.")
             .style(Style::default().fg(FG_DIM))
             .alignment(Alignment::Center);
-        f.render_widget(hint, Rect { y: inner.y + 2, height: 1, ..inner });
+        f.render_widget(
+            hint,
+            Rect {
+                y: inner.y + 2,
+                height: 1,
+                ..inner
+            },
+        );
     }
 }
 
@@ -257,7 +327,10 @@ fn draw_monitor(f: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = if app.midi_log.is_empty() {
         vec![
             Line::styled("waiting for MIDI…", Style::default().fg(FG_DIM)),
-            Line::styled("p: choose ports · k: play from keyboard", Style::default().fg(FG_DIM)),
+            Line::styled(
+                "p: choose ports · k: play from keyboard",
+                Style::default().fg(FG_DIM),
+            ),
         ]
     } else {
         app.midi_log
@@ -281,20 +354,35 @@ enum GridLine {
 }
 
 fn group_title(app: &App, target: Target, group: &str) -> String {
-    if let Some(n) = group.strip_prefix("FX ").and_then(|n| n.parse::<usize>().ok()) {
+    if let Some(n) = group
+        .strip_prefix("FX ")
+        .and_then(|n| n.parse::<usize>().ok())
+    {
         let i = app.fx_base(target) + (n - 1) * crate::fx::STRIDE + crate::fx::TYPE;
         let kind = crate::fx::FxKind::from_value(app.param_value(target, i));
-        let title = if target == Target::Master { format!("Master FX {n}") } else { group.to_string() };
+        let title = if target == Target::Master {
+            format!("Master FX {n}")
+        } else {
+            group.to_string()
+        };
         return format!("{title} · {}", kind.name());
     }
     if let Target::Slot(i) = target
         && let Some(s) = &app.slots[i]
         && s.kind == SynthKind::Fm
-        && let Some(n) = group.strip_prefix("Op ").and_then(|n| n.parse::<usize>().ok())
+        && let Some(n) = group
+            .strip_prefix("Op ")
+            .and_then(|n| n.parse::<usize>().ok())
     {
-        let algo_idx = SynthKind::Fm.index_of("algorithm").expect("algorithm param");
+        let algo_idx = SynthKind::Fm
+            .index_of("algorithm")
+            .expect("algorithm param");
         let algo = s.params[algo_idx].round() as usize;
-        let role = if fm::is_carrier(algo, n - 1) { "carrier" } else { "modulator" };
+        let role = if fm::is_carrier(algo, n - 1) {
+            "carrier"
+        } else {
+            "modulator"
+        };
         return format!("{group} · {role}");
     }
     if group == "Source"
@@ -308,9 +396,12 @@ fn group_title(app: &App, target: Target, group: &str) -> String {
     if let Target::Slot(i) = target
         && let Some(s) = &app.slots[i]
         && s.kind == SynthKind::Kit
-        && let Some(n) = group.strip_prefix("Pad ").and_then(|n| n.parse::<usize>().ok())
+        && let Some(n) = group
+            .strip_prefix("Pad ")
+            .and_then(|n| n.parse::<usize>().ok())
     {
-        let note = s.params[s.kind.index_of(&format!("pad{n}_note")).expect("pad note")].round() as u8;
+        let note =
+            s.params[s.kind.index_of(&format!("pad{n}_note")).expect("pad note")].round() as u8;
         let what = match s.sample(n - 1) {
             Some(l) => l.sample.name.clone(),
             None => format!("empty ({})", crate::synth::kit::PAD_ROLES[n - 1]),
@@ -327,7 +418,13 @@ fn draw_params(f: &mut Frame, app: &mut App, area: Rect) {
         Target::Master => "Master".to_string(),
         Target::Slot(i) => {
             let s = app.slots[i].as_ref().expect("slot");
-            format!("{} · {} · {} · slot {}", s.name, s.kind.long_name(), channel_label(s.channel), i + 1)
+            format!(
+                "{} · {} · {} · slot {}",
+                s.name,
+                s.kind.long_name(),
+                channel_label(s.channel),
+                i + 1
+            )
         }
     };
     let b = block(&title, focused);
@@ -336,10 +433,13 @@ fn draw_params(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Samplers get a waveform view above their parameters.
     if let Target::Slot(i) = target
-        && app.slots[i].as_ref().is_some_and(|s| s.kind == SynthKind::Sampler)
+        && app.slots[i]
+            .as_ref()
+            .is_some_and(|s| s.kind == SynthKind::Sampler)
         && inner.height >= 18
     {
-        let [wave, rest] = Layout::vertical([Constraint::Length(9), Constraint::Min(4)]).areas(inner);
+        let [wave, rest] =
+            Layout::vertical([Constraint::Length(9), Constraint::Min(4)]).areas(inner);
         draw_waveform(f, app, i, wave);
         inner = rest;
     }
@@ -350,7 +450,10 @@ fn draw_params(f: &mut Frame, app: &mut App, area: Rect) {
     }
     // Keep the cursor on a visible parameter (e.g. after an FX type change).
     if !visible.contains(&app.param_cursor) {
-        let pos = visible.iter().rposition(|&i| i <= app.param_cursor).unwrap_or(0);
+        let pos = visible
+            .iter()
+            .rposition(|&i| i <= app.param_cursor)
+            .unwrap_or(0);
         app.param_cursor = visible[pos];
     }
 
@@ -384,7 +487,10 @@ fn draw_params(f: &mut Frame, app: &mut App, area: Rect) {
     let height = inner.height as usize;
     let sel_row = cols
         .iter()
-        .find_map(|col| col.iter().position(|l| matches!(l, GridLine::Param(i) if *i == app.param_cursor)))
+        .find_map(|col| {
+            col.iter()
+                .position(|l| matches!(l, GridLine::Param(i) if *i == app.param_cursor))
+        })
         .unwrap_or(0);
     if sel_row < app.param_scroll + 1 {
         app.param_scroll = sel_row.saturating_sub(1);
@@ -396,7 +502,12 @@ fn draw_params(f: &mut Frame, app: &mut App, area: Rect) {
 
     for (c, col) in cols.iter().enumerate() {
         let x = inner.x + c as u16 * (col_w + 1);
-        let rect = Rect { x, y: inner.y, width: col_w.min(inner.right().saturating_sub(x)), height: inner.height };
+        let rect = Rect {
+            x,
+            y: inner.y,
+            width: col_w.min(inner.right().saturating_sub(x)),
+            height: inner.height,
+        };
         let lines: Vec<Line> = col
             .iter()
             .skip(app.param_scroll)
@@ -463,13 +574,21 @@ fn draw_waveform(f: &mut Frame, app: &App, slot: usize, area: Rect) {
     use ratatui::symbols::Marker;
     use ratatui::widgets::canvas::{Canvas, Line as CLine};
 
-    let Some(s) = app.slots[slot].as_ref() else { return };
-    let [info, canvas_area, _gap] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)]).areas(area);
+    let Some(s) = app.slots[slot].as_ref() else {
+        return;
+    };
+    let [info, canvas_area, _gap] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(3),
+        Constraint::Length(1),
+    ])
+    .areas(area);
     let Some(sample) = app.slot_sample(slot).filter(|x| !x.is_empty()) else {
         f.render_widget(
-            Paragraph::new("No sample loaded: press f to load a WAV or FLAC, or pick a built-in Source.")
-                .style(Style::default().fg(FG_DIM)),
+            Paragraph::new(
+                "No sample loaded: press f to load a WAV or FLAC, or pick a built-in Source.",
+            )
+            .style(Style::default().fg(FG_DIM)),
             info,
         );
         return;
@@ -492,7 +611,10 @@ fn draw_waveform(f: &mut Frame, app: &App, slot: usize, area: Rect) {
     };
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(sample.name.clone(), Style::default().fg(SAMPLER_COLOR).bold()),
+            Span::styled(
+                sample.name.clone(),
+                Style::default().fg(SAMPLER_COLOR).bold(),
+            ),
             Span::styled(
                 format!(
                     "  {:.2}s · {} · {:.1} kHz{} · {}{}",
@@ -502,7 +624,11 @@ fn draw_waveform(f: &mut Frame, app: &App, slot: usize, area: Rect) {
                     match sample.pitch {
                         Some(p) => {
                             let n = p.round().clamp(0.0, 127.0);
-                            format!(" · pitch {} {:+.0} ct", crate::midi::note_name(n as u8), (p - n) * 100.0)
+                            format!(
+                                " · pitch {} {:+.0} ct",
+                                crate::midi::note_name(n as u8),
+                                (p - n) * 100.0
+                            )
                         }
                         None => String::new(),
                     },
@@ -532,20 +658,39 @@ fn draw_waveform(f: &mut Frame, app: &App, slot: usize, area: Rect) {
                 } else {
                     SAMPLER_COLOR
                 };
-                ctx.draw(&CLine { x1: x, y1: lo as f64, x2: x, y2: hi.max(lo + 0.01) as f64, color });
+                ctx.draw(&CLine {
+                    x1: x,
+                    y1: lo as f64,
+                    x2: x,
+                    y2: hi.max(lo + 0.01) as f64,
+                    color,
+                });
             }
             ctx.layer();
             let vline = |ctx: &mut ratatui::widgets::canvas::Context, x: f64, color: Color| {
-                ctx.draw(&CLine { x1: x, y1: -1.0, x2: x, y2: 1.0, color });
+                ctx.draw(&CLine {
+                    x1: x,
+                    y1: -1.0,
+                    x2: x,
+                    y2: 1.0,
+                    color,
+                });
             };
             if layout.mode == Mode::Slice {
-                for (i, &p) in layout.slices.points[..=layout.slices.count].iter().enumerate() {
+                for (i, &p) in layout.slices.points[..=layout.slices.count]
+                    .iter()
+                    .enumerate()
+                {
                     vline(ctx, to_x(p), WARN);
                     // Label each slice with its note when there's room.
                     if let Some((a, z)) = layout.slices.range(i)
                         && (to_x(z) - to_x(a)) * chars_per_bucket >= 4.0
                     {
-                        ctx.print(to_x(a) + 1.0, 1.0, format!("{}", layout.base_note as usize + i).fg(WARN));
+                        ctx.print(
+                            to_x(a) + 1.0,
+                            1.0,
+                            format!("{}", layout.base_note as usize + i).fg(WARN),
+                        );
                     }
                 }
             } else {
@@ -579,36 +724,61 @@ fn param_line(app: &App, target: Target, i: usize, width: usize, focused: bool) 
         Style::default()
     };
     let mut spans = vec![
-        Span::styled(format!("{:<w$}", truncate(desc.name, name_w), w = name_w), name_style),
         Span::styled(
-            if learning { "?" } else if mapping.is_some() { "◆" } else { " " },
+            format!("{:<w$}", truncate(desc.name, name_w), w = name_w),
+            name_style,
+        ),
+        Span::styled(
+            if learning {
+                "?"
+            } else if mapping.is_some() {
+                "◆"
+            } else {
+                " "
+            },
             Style::default().fg(LEARN),
         ),
     ];
 
-    let bar_color = if selected { ACCENT } else { Color::Rgb(200, 140, 70) };
+    let bar_color = if selected {
+        ACCENT
+    } else {
+        Color::Rgb(200, 140, 70)
+    };
     match desc.kind {
         Kind::Enum(_) | Kind::Toggle => {
             let text = desc.format(value);
             let w = bar_w + 1 + value_w;
             spans.push(Span::styled(
                 format!(" {:>w$}", truncate(&text, w), w = w),
-                Style::default().fg(if selected { Color::White } else { Color::Rgb(200, 200, 210) }),
+                Style::default().fg(if selected {
+                    Color::White
+                } else {
+                    Color::Rgb(200, 200, 210)
+                }),
             ));
         }
         _ => {
             spans.push(Span::raw(" "));
             let norm = desc.normalize(value);
-            let bipolar = desc.min < 0.0 && desc.max > 0.0 && desc.scale == crate::params::Scale::Linear;
+            let bipolar =
+                desc.min < 0.0 && desc.max > 0.0 && desc.scale == crate::params::Scale::Linear;
             let mut bar = String::with_capacity(bar_w * 3);
             let mut on = Vec::with_capacity(bar_w);
             if bipolar {
                 let center = desc.normalize(0.0) * bar_w as f32;
                 let pos = norm * bar_w as f32;
-                let (a, b) = if pos < center { (pos, center) } else { (center, pos) };
+                let (a, b) = if pos < center {
+                    (pos, center)
+                } else {
+                    (center, pos)
+                };
                 for k in 0..bar_w {
                     let mid = k as f32 + 0.5;
-                    on.push(mid >= a && mid <= b.max(a + 0.01) || (k as f32 <= center && center < k as f32 + 1.0));
+                    on.push(
+                        mid >= a && mid <= b.max(a + 0.01)
+                            || (k as f32 <= center && center < k as f32 + 1.0),
+                    );
                 }
             } else {
                 let filled = (norm * bar_w as f32).round() as usize;
@@ -633,13 +803,25 @@ fn param_line(app: &App, target: Target, i: usize, width: usize, focused: bool) 
                 ));
             }
             spans.push(Span::styled(
-                format!(" {:>w$}", truncate(&desc.format(value), value_w), w = value_w),
-                Style::default().fg(if selected { Color::White } else { Color::Rgb(200, 200, 210) }),
+                format!(
+                    " {:>w$}",
+                    truncate(&desc.format(value), value_w),
+                    w = value_w
+                ),
+                Style::default().fg(if selected {
+                    Color::White
+                } else {
+                    Color::Rgb(200, 200, 210)
+                }),
             ));
         }
     }
     let line = Line::from(spans);
-    if selected && focused { line.style(Style::default().bg(SEL_BG)) } else { line }
+    if selected && focused {
+        line.style(Style::default().bg(SEL_BG))
+    } else {
+        line
+    }
 }
 
 fn truncate(s: &str, w: usize) -> String {
@@ -655,7 +837,10 @@ fn truncate(s: &str, w: usize) -> String {
 fn hint(keys: &[(&str, &str)]) -> Line<'static> {
     let mut spans = Vec::new();
     for (k, v) in keys {
-        spans.push(Span::styled(format!(" {k} "), Style::default().fg(Color::Black).bg(ACCENT_DIM)));
+        spans.push(Span::styled(
+            format!(" {k} "),
+            Style::default().fg(Color::Black).bg(ACCENT_DIM),
+        ));
         spans.push(Span::styled(format!(" {v}  "), Style::default().fg(FG_DIM)));
     }
     Line::from(spans)
@@ -673,7 +858,13 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         ),
     };
     let keys = if app.keyboard.enabled {
-        hint(&[("a-'", "notes"), ("z/x", "octave"), ("c/v", "velocity"), ("space", "panic"), ("esc", "exit keys")])
+        hint(&[
+            ("a-'", "notes"),
+            ("z/x", "octave"),
+            ("c/v", "velocity"),
+            ("space", "panic"),
+            ("esc", "exit keys"),
+        ])
     } else if app.focus == Focus::Rack {
         hint(&[
             ("↑↓", "select"),
@@ -714,16 +905,27 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
     }
 }
 
-fn list_popup(f: &mut Frame, area: Rect, title: &str, items: Vec<ListItem>, cursor: usize, footer: &str) {
+fn list_popup(
+    f: &mut Frame,
+    area: Rect,
+    title: &str,
+    items: Vec<ListItem>,
+    cursor: usize,
+    footer: &str,
+) {
     let h = (items.len() as u16 + 4).clamp(6, 24);
     let rect = centered(area, 64, h);
     f.render_widget(Clear, rect);
     let b = block(title, true);
     let inner = b.inner(rect);
     f.render_widget(b, rect);
-    let [list_area, foot] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    let [list_area, foot] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     if items.is_empty() {
-        f.render_widget(Paragraph::new("(nothing here)").style(Style::default().fg(FG_DIM)), list_area);
+        f.render_widget(
+            Paragraph::new("(nothing here)").style(Style::default().fg(FG_DIM)),
+            list_area,
+        );
     } else {
         let mut state = ListState::default().with_selected(Some(cursor));
         let list = List::new(items)
@@ -731,7 +933,10 @@ fn list_popup(f: &mut Frame, area: Rect, title: &str, items: Vec<ListItem>, curs
             .highlight_symbol("▶ ");
         f.render_stateful_widget(list, list_area, &mut state);
     }
-    f.render_widget(Paragraph::new(footer.to_string()).style(Style::default().fg(FG_DIM)), foot);
+    f.render_widget(
+        Paragraph::new(footer.to_string()).style(Style::default().fg(FG_DIM)),
+        foot,
+    );
 }
 
 fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
@@ -743,11 +948,21 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
                 ListItem::new("Starter rack: E.Piano, Choir Cloud, Acid Classic, 808 Kit"),
             ];
             let foot = if *save {
-                format!("[x] save current rack as \"{}\" first · s: toggle · enter · esc", App::timestamped_rack_name())
+                format!(
+                    "[x] save current rack as \"{}\" first · s: toggle · enter · esc",
+                    App::timestamped_rack_name()
+                )
             } else {
                 "[ ] don't save the current rack · s: toggle · enter · esc".to_string()
             };
-            list_popup(f, area, "New rack (replaces synths, master settings and MIDI mappings)", items, *cursor, &foot);
+            list_popup(
+                f,
+                area,
+                "New rack (replaces synths, master settings and MIDI mappings)",
+                items,
+                *cursor,
+                &foot,
+            );
         }
         Popup::AddSynth { cursor } => {
             let items = SynthKind::ALL
@@ -755,10 +970,19 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
                 .enumerate()
                 .map(|(i, k)| ListItem::new(format!("{}  {}", i + 1, k.long_name())))
                 .collect();
-            list_popup(f, area, "Add synth", items, *cursor, "enter: add · esc: cancel");
+            list_popup(
+                f,
+                area,
+                "Add synth",
+                items,
+                *cursor,
+                "enter: add · esc: cancel",
+            );
         }
         Popup::ConfirmRemove { slot } => {
-            let name = app.slots[*slot].as_ref().map_or("?".into(), |s| s.name.clone());
+            let name = app.slots[*slot]
+                .as_ref()
+                .map_or("?".into(), |s| s.name.clone());
             let rect = centered(area, 50, 5);
             f.render_widget(Clear, rect);
             let b = block("Remove synth", true);
@@ -767,12 +991,17 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
             f.render_widget(
                 Paragraph::new(vec![
                     Line::from(format!("Remove slot {} '{}'?", slot + 1, name)),
-                    Line::styled("y / enter: remove · any other key: cancel", Style::default().fg(FG_DIM)),
+                    Line::styled(
+                        "y / enter: remove · any other key: cancel",
+                        Style::default().fg(FG_DIM),
+                    ),
                 ]),
                 inner,
             );
         }
-        Popup::Text { title, hint, input, .. } => {
+        Popup::Text {
+            title, hint, input, ..
+        } => {
             let rect = centered(area, 64, 6);
             f.render_widget(Clear, rect);
             let b = block(title, true);
@@ -783,7 +1012,12 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
                     Line::from(vec![
                         Span::styled("> ", Style::default().fg(ACCENT)),
                         Span::raw(input.clone()),
-                        Span::styled("▏", Style::default().fg(ACCENT).add_modifier(Modifier::SLOW_BLINK)),
+                        Span::styled(
+                            "▏",
+                            Style::default()
+                                .fg(ACCENT)
+                                .add_modifier(Modifier::SLOW_BLINK),
+                        ),
                     ]),
                     Line::styled(hint.clone(), Style::default().fg(FG_DIM)),
                     Line::styled("enter: confirm · esc: cancel", Style::default().fg(FG_DIM)),
@@ -792,13 +1026,18 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
                 inner,
             );
         }
-        Popup::Patches { all, filter, cursor } => {
+        Popup::Patches {
+            all,
+            filter,
+            cursor,
+        } => {
             let list = crate::app::patch_view(all, *filter)
                 .into_iter()
                 .map(|e| {
                     let needs_download = e.is_factory()
                         && e.patch.sample_paths().iter().flatten().any(|p| {
-                            crate::vcsl::is_vcsl_path(p) && !app.storage.samples_dir().join(p).exists()
+                            crate::vcsl::is_vcsl_path(p)
+                                && !app.storage.samples_dir().join(p).exists()
                         });
                     let (tag, tag_color) = if needs_download {
                         ("download", WARN)
@@ -808,7 +1047,10 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
                         ("yours", OK)
                     };
                     ListItem::new(Line::from(vec![
-                        Span::styled(format!("{:<4}", e.patch.kind.label()), Style::default().fg(FG_DIM)),
+                        Span::styled(
+                            format!("{:<4}", e.patch.kind.label()),
+                            Style::default().fg(FG_DIM),
+                        ),
                         Span::raw(format!("{:<38}", truncate(&e.patch.name, 38))),
                         Span::styled(tag, Style::default().fg(tag_color)),
                     ]))
@@ -818,14 +1060,34 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
                 Some(k) => format!("Load patch · {}", k.long_name()),
                 None => "Load patch · all synths".to_string(),
             };
-            list_popup(f, area, &title, list, *cursor, "enter: load · space: audition · tab: synth type · esc");
+            list_popup(
+                f,
+                area,
+                &title,
+                list,
+                *cursor,
+                "enter: load · space: audition · tab: synth type · esc",
+            );
         }
         Popup::Sessions { items, cursor } => {
             let list = items
                 .iter()
-                .map(|p| ListItem::new(p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()))
+                .map(|p| {
+                    ListItem::new(
+                        p.file_stem()
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    )
+                })
                 .collect();
-            list_popup(f, area, "Load session", list, *cursor, "enter: load (replaces the rack) · esc: close");
+            list_popup(
+                f,
+                area,
+                "Load session",
+                list,
+                *cursor,
+                "enter: load (replaces the rack) · esc: close",
+            );
         }
         Popup::Ports { items, cursor } => {
             let list = items
@@ -833,7 +1095,10 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
                 .map(|name| {
                     let on = app.midi.is_connected(name);
                     ListItem::new(Line::from(vec![
-                        Span::styled(if on { "● " } else { "○ " }, Style::default().fg(if on { OK } else { FG_DIM })),
+                        Span::styled(
+                            if on { "● " } else { "○ " },
+                            Style::default().fg(if on { OK } else { FG_DIM }),
+                        ),
                         Span::raw(name.clone()),
                     ]))
                 })
@@ -845,18 +1110,29 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
             };
             list_popup(f, area, "MIDI inputs", list, *cursor, foot);
         }
-        Popup::Files { dir, entries, cursor } => {
+        Popup::Files {
+            dir,
+            entries,
+            cursor,
+        } => {
             let list = entries
                 .iter()
                 .map(|e| {
                     if e.is_dir {
-                        ListItem::new(Span::styled(format!("{}/", e.name), Style::default().fg(LEARN)))
+                        ListItem::new(Span::styled(
+                            format!("{}/", e.name),
+                            Style::default().fg(LEARN),
+                        ))
                     } else {
                         ListItem::new(e.name.clone())
                     }
                 })
                 .collect();
-            let kit_slot = app.selected_slot().filter(|&i| app.slots[i].as_ref().is_some_and(|s| s.kind == SynthKind::Kit));
+            let kit_slot = app.selected_slot().filter(|&i| {
+                app.slots[i]
+                    .as_ref()
+                    .is_some_and(|s| s.kind == SynthKind::Kit)
+            });
             let (title, foot) = match kit_slot {
                 Some(i) => {
                     let pad = app.current_pad(i);
@@ -865,7 +1141,10 @@ fn draw_popup(f: &mut Frame, app: &App, popup: &Popup, area: Rect) {
                         "enter: open/load into pad · K: load this whole folder as the kit · ⌫: up · esc".to_string(),
                     )
                 }
-                None => (format!("Load sample · {}", dir.display()), "enter: open/load · ⌫: up · esc: close".to_string()),
+                None => (
+                    format!("Load sample · {}", dir.display()),
+                    "enter: open/load · ⌫: up · esc: close".to_string(),
+                ),
             };
             list_popup(f, area, &title, list, *cursor, &foot);
         }
@@ -889,7 +1168,10 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         h("Rack"),
         k("↑ ↓", "select master / synth slot"),
         k("← → / - +", "change the slot's MIDI channel (omni, 1-16)"),
-        k("a", "add a synth: FM, Analog, Physical, Granular, 303, Drums, Kit, Sampler"),
+        k(
+            "a",
+            "add a synth: FM, Analog, Physical, Granular, 303, Drums, Kit, Sampler",
+        ),
         k("d / ⌫", "remove the selected synth"),
         k("r", "rename      m  mute      s  solo"),
         k("tab / enter", "edit parameters"),
@@ -899,17 +1181,29 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         k("enter", "type an exact value (e.g. 250ms, 2.5k, 40%)"),
         k("⌫", "reset to default"),
         k("c / C", "MIDI-learn a CC to this parameter / clear mapping"),
-        k("FX 1-3", "set an FX unit's Type (delay, reverb, chorus, drive, EQ…) to show its controls"),
+        k(
+            "FX 1-3",
+            "set an FX unit's Type (delay, reverb, chorus, drive, EQ…) to show its controls",
+        ),
         h("Patches & sessions"),
         k("l / w", "load / write the selected synth's patch"),
         k("L / W", "load / write the whole rack as a session"),
-        k("N", "new rack: empty or starter (saves the current one first by default)"),
-        k("f", "load a WAV or FLAC into a granular synth or sampler, or a kit pad (K in the browser: whole folder)"),
+        k(
+            "N",
+            "new rack: empty or starter (saves the current one first by default)",
+        ),
+        k(
+            "f",
+            "load a WAV or FLAC into a granular synth or sampler, or a kit pad (K in the browser: whole folder)",
+        ),
         h("Playing"),
         k("k", "play the selected synth from the computer keyboard"),
         k("p", "choose MIDI input ports"),
         k("space", "panic: all notes off"),
-        k("R", "start / stop recording the output to a WAV (in recordings/)"),
+        k(
+            "R",
+            "start / stop recording the output to a WAV (in recordings/)",
+        ),
         k("q / ctrl-c", "quit (the rack is autosaved)"),
         Line::raw(""),
         Line::styled(
@@ -920,7 +1214,10 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
             "are handled per slot. Several slots on one channel layer together.",
             Style::default().fg(FG_DIM),
         ),
-        Line::styled(format!("Files live in {}", app.storage.root.display()), Style::default().fg(FG_DIM)),
+        Line::styled(
+            format!("Files live in {}", app.storage.root.display()),
+            Style::default().fg(FG_DIM),
+        ),
         Line::styled("press any key to close", Style::default().fg(FG_DIM)),
     ];
     f.render_widget(Paragraph::new(lines), inner);

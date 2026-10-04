@@ -58,22 +58,123 @@ pub static PARAMS: [P; 26] = [
     P::float("end", "End", "Sample", 0.0, 1.0, 1.0, Unit::Percent).step(0.005),
     P::toggle("reverse", "Reverse", "Sample", false),
     P::toggle("loop", "Loop", "Loop (Classic)", true),
-    P::float("loop_start", "Loop Start", "Loop (Classic)", 0.0, 1.0, 0.2, Unit::Percent).step(0.005),
-    P::float("loop_end", "Loop End", "Loop (Classic)", 0.0, 1.0, 0.8, Unit::Percent).step(0.005),
-    P::float("crossfade", "Crossfade", "Loop (Classic)", 0.0, 0.5, 0.1, Unit::Percent),
-    P::int("slices", "Slices", "Slice", 2, MAX_SLICES as i32, 16, Unit::None),
+    P::float(
+        "loop_start",
+        "Loop Start",
+        "Loop (Classic)",
+        0.0,
+        1.0,
+        0.2,
+        Unit::Percent,
+    )
+    .step(0.005),
+    P::float(
+        "loop_end",
+        "Loop End",
+        "Loop (Classic)",
+        0.0,
+        1.0,
+        0.8,
+        Unit::Percent,
+    )
+    .step(0.005),
+    P::float(
+        "crossfade",
+        "Crossfade",
+        "Loop (Classic)",
+        0.0,
+        0.5,
+        0.1,
+        Unit::Percent,
+    ),
+    P::int(
+        "slices",
+        "Slices",
+        "Slice",
+        2,
+        MAX_SLICES as i32,
+        16,
+        Unit::None,
+    ),
     P::choice("slice_by", "Slice By", "Slice", &SLICE_BY, 0),
-    P::float("sensitivity", "Sensitivity", "Slice", 0.0, 1.0, 0.5, Unit::Percent),
+    P::float(
+        "sensitivity",
+        "Sensitivity",
+        "Slice",
+        0.0,
+        1.0,
+        0.5,
+        Unit::Percent,
+    ),
     P::int("base_note", "First Slice", "Slice", 0, 127, 36, Unit::Note),
-    P::float("attack", "Attack", "Amp Env", 0.001, 10.0, 0.002, Unit::Seconds).exp(),
+    P::float(
+        "attack",
+        "Attack",
+        "Amp Env",
+        0.001,
+        10.0,
+        0.002,
+        Unit::Seconds,
+    )
+    .exp(),
     P::float("decay", "Decay", "Amp Env", 0.005, 20.0, 1.0, Unit::Seconds).exp(),
-    P::float("sustain", "Sustain", "Amp Env", 0.0, 1.0, 1.0, Unit::Percent),
-    P::float("release", "Release", "Amp Env", 0.005, 20.0, 0.3, Unit::Seconds).exp(),
-    P::float("vel_amp", "Vel>Amp", "Amp Env", 0.0, 1.0, 0.7, Unit::Percent),
+    P::float(
+        "sustain",
+        "Sustain",
+        "Amp Env",
+        0.0,
+        1.0,
+        1.0,
+        Unit::Percent,
+    ),
+    P::float(
+        "release",
+        "Release",
+        "Amp Env",
+        0.005,
+        20.0,
+        0.3,
+        Unit::Seconds,
+    )
+    .exp(),
+    P::float(
+        "vel_amp",
+        "Vel>Amp",
+        "Amp Env",
+        0.0,
+        1.0,
+        0.7,
+        Unit::Percent,
+    ),
     P::choice("filter_type", "Type", "Filter", &granular::FILTERS, 0),
-    P::float("cutoff", "Cutoff", "Filter", 20.0, 20_000.0, 20_000.0, Unit::Hz).exp(),
-    P::float("resonance", "Resonance", "Filter", 0.0, 1.0, 0.0, Unit::Percent),
-    P::float("vel_cutoff", "Vel>Cutoff", "Filter", 0.0, 1.0, 0.0, Unit::Percent),
+    P::float(
+        "cutoff",
+        "Cutoff",
+        "Filter",
+        20.0,
+        20_000.0,
+        20_000.0,
+        Unit::Hz,
+    )
+    .exp(),
+    P::float(
+        "resonance",
+        "Resonance",
+        "Filter",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
+    P::float(
+        "vel_cutoff",
+        "Vel>Cutoff",
+        "Filter",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
 ];
 
 const VOICE_GAIN: f32 = 0.5;
@@ -99,7 +200,10 @@ pub struct Slices {
 
 impl Default for Slices {
     fn default() -> Self {
-        Slices { points: [0; MAX_SLICES + 1], count: 0 }
+        Slices {
+            points: [0; MAX_SLICES + 1],
+            count: 0,
+        }
     }
 }
 
@@ -160,7 +264,14 @@ impl Layout {
             }
         }
         let slices = if mode == Mode::Slice {
-            compute_slices(sample, start, end, p[SLICES].round() as usize, p[SLICE_MODE] >= 0.5, p[SENSITIVITY])
+            compute_slices(
+                sample,
+                start,
+                end,
+                p[SLICES].round() as usize,
+                p[SLICE_MODE] >= 0.5,
+                p[SENSITIVITY],
+            )
         } else {
             Slices::default()
         };
@@ -179,13 +290,22 @@ impl Layout {
     /// The region a note plays, or `None` if it maps to no slice.
     pub fn region_for(&self, note: u8) -> Option<(usize, usize)> {
         match self.mode {
-            Mode::Slice => self.slices.range((note as usize).checked_sub(self.base_note as usize)?),
+            Mode::Slice => self
+                .slices
+                .range((note as usize).checked_sub(self.base_note as usize)?),
             _ => Some((self.start, self.end)),
         }
     }
 }
 
-fn compute_slices(sample: &Sample, start: usize, end: usize, count: usize, transient: bool, sensitivity: f32) -> Slices {
+fn compute_slices(
+    sample: &Sample,
+    start: usize,
+    end: usize,
+    count: usize,
+    transient: bool,
+    sensitivity: f32,
+) -> Slices {
     let count = count.clamp(1, MAX_SLICES);
     let mut s = Slices::default();
     if !transient {
@@ -294,7 +414,11 @@ impl Voice for SamplerVoice {
         self.vel = velocity;
         self.region = (a as f64, b as f64);
         self.reverse = layout.reverse;
-        self.pos = if self.reverse { b as f64 - 1.0 } else { a as f64 };
+        self.pos = if self.reverse {
+            b as f64 - 1.0
+        } else {
+            a as f64
+        };
         self.oneshot = layout.mode != Mode::Classic;
         self.keytrack = layout.mode != Mode::Slice;
         self.killing = false;
@@ -324,8 +448,13 @@ impl Voice for SamplerVoice {
         };
         let n = l.len().min(MAX_BLOCK);
         self.pitch = glide(self.pitch, self.note as f32, ctl.glide_coef, n);
-        let semis = if self.keytrack { self.pitch - s.root + ctl.pitch } else { ctl.pitch };
-        let rate = (semitones_to_ratio(semis) * s.tune_ratio * src.sample_rate / s.sample_rate) as f64;
+        let semis = if self.keytrack {
+            self.pitch - s.root + ctl.pitch
+        } else {
+            ctl.pitch
+        };
+        let rate =
+            (semitones_to_ratio(semis) * s.tune_ratio * src.sample_rate / s.sample_rate) as f64;
         let inc = if self.reverse { -rate } else { rate };
 
         // Loop points are read live so they can be moved while a note plays.
@@ -342,7 +471,11 @@ impl Voice for SamplerVoice {
         for i in 0..n {
             let mut edge = 1.0f32;
             if looping.is_none() {
-                let remaining = if self.reverse { self.pos - ra } else { rb - self.pos };
+                let remaining = if self.reverse {
+                    self.pos - ra
+                } else {
+                    rb - self.pos
+                };
                 if remaining <= 0.0 {
                     self.active = false;
                     break;
@@ -356,10 +489,18 @@ impl Voice for SamplerVoice {
                 if xf > 0.0 {
                     // Fade into the material on the far side of the loop so
                     // the wrap point is seamless.
-                    let t = if self.reverse { (ls + xf - self.pos) / xf } else { (self.pos - (le - xf)) / xf };
+                    let t = if self.reverse {
+                        (ls + xf - self.pos) / xf
+                    } else {
+                        (self.pos - (le - xf)) / xf
+                    };
                     if t > 0.0 {
                         let t = t.min(1.0) as f32;
-                        let other = if self.reverse { self.pos + len } else { self.pos - len };
+                        let other = if self.reverse {
+                            self.pos + len
+                        } else {
+                            self.pos - len
+                        };
                         let (oa, ob) = src.read_stereo(other);
                         a = a * (1.0 - t) + oa * t;
                         b = b * (1.0 - t) + ob * t;
@@ -444,7 +585,12 @@ impl SamplerSynth {
 
     fn refresh_layout(&mut self) {
         let p = &self.params[COMMON.len()..];
-        self.shared.layout = self.shared.source.as_deref().filter(|s| !s.is_empty()).map(|s| Layout::new(p, s));
+        self.shared.layout = self
+            .shared
+            .source
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|s| Layout::new(p, s));
     }
 
     pub fn set_file_sample(&mut self, sample: Option<Arc<Sample>>) -> Option<Arc<Sample>> {
@@ -556,12 +702,20 @@ mod tests {
     #[test]
     fn transient_slices_find_the_plucks() {
         // The built-in Pluck source has a pluck at every whole second.
-        let s = synth_with(&[("source", 4.0), ("mode", 2.0), ("slice_by", 1.0), ("sensitivity", 0.8)]);
+        let s = synth_with(&[
+            ("source", 4.0),
+            ("mode", 2.0),
+            ("slice_by", 1.0),
+            ("sensitivity", 0.8),
+        ]);
         let layout = s.shared.layout.unwrap();
         assert_eq!(layout.slices.count, 4, "{:?}", &layout.slices.points[..5]);
         for (i, p) in layout.slices.points[1..4].iter().enumerate() {
             let expected = 48_000 * (i + 1);
-            assert!(p.abs_diff(expected) < 600, "slice {i} at {p}, expected ~{expected}");
+            assert!(
+                p.abs_diff(expected) < 600,
+                "slice {i} at {p}, expected ~{expected}"
+            );
         }
     }
 
