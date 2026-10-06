@@ -155,6 +155,9 @@ struct HeldKey {
     released: Option<Instant>,
 }
 
+/// How long the spectrum analyzer stays up after the sound stops.
+const SPECTRUM_HOLD: Duration = Duration::from_secs(2);
+
 /// Legacy terminals don't report key-up, so notes are released after this
 /// long without a key repeat. Longer than X11's default 660 ms repeat delay.
 const LEGACY_NOTE_HOLD: Duration = Duration::from_millis(750);
@@ -191,6 +194,13 @@ pub struct App {
     pub midi_log: VecDeque<String>,
     pub keyboard: Keyboard,
     pub master_meter: (f32, f32),
+    /// Spectrum analyzer of the master output (`v` toggles it).
+    pub spectrum: crate::spectrum::Analyzer,
+    pub spectrum_on: bool,
+    scope_buf: Vec<f32>,
+    /// When the master output was last above the analyzer's floor.
+    last_sound: Option<Instant>,
+    last_spectrum_update: Instant,
     pub cpu: f32,
     pub quit: bool,
     /// Tool calls from the embedded MCP server, and where it listens.
@@ -250,6 +260,11 @@ impl App {
                 held: HashMap::new(),
             },
             master_meter: (0.0, 0.0),
+            spectrum: crate::spectrum::Analyzer::new(init.sample_rate),
+            spectrum_on: true,
+            scope_buf: vec![0.0; crate::spectrum::FFT_SIZE],
+            last_sound: None,
+            last_spectrum_update: Instant::now(),
             cpu: 0.0,
             quit: false,
             mcp: None,
@@ -1259,6 +1274,27 @@ impl App {
     // Periodic work
     // -----------------------------------------------------------------------
 
+    /// The analyzer shows while sound is playing and for a moment after.
+    pub fn spectrum_visible(&self) -> bool {
+        self.spectrum_on && self.last_sound.is_some_and(|t| t.elapsed() < SPECTRUM_HOLD)
+    }
+
+    fn update_spectrum(&mut self) {
+        let now = Instant::now();
+        let dt = now
+            .duration_since(self.last_spectrum_update)
+            .as_secs_f32()
+            .min(0.25);
+        self.last_spectrum_update = now;
+        if self.master_meter.0.max(self.master_meter.1) > 0.001 {
+            self.last_sound = Some(now);
+        }
+        if self.spectrum_visible() {
+            self.telemetry.scope.read(&mut self.scope_buf);
+            self.spectrum.update(&self.scope_buf, dt);
+        }
+    }
+
     pub fn tick(&mut self) {
         self.poll_recordings();
         if let Some(rx) = &self.mcp {
@@ -1309,6 +1345,7 @@ impl App {
         let l = engine::take_peak(&self.telemetry.peak_l).max(self.master_meter.0 * decay);
         let r = engine::take_peak(&self.telemetry.peak_r).max(self.master_meter.1 * decay);
         self.master_meter = (l, r);
+        self.update_spectrum();
         self.cpu = f32::from_bits(self.telemetry.cpu.load(Ordering::Relaxed));
 
         self.release_keyboard_notes(Instant::now());
@@ -1649,6 +1686,14 @@ impl App {
                 if let Some(i) = slot {
                     self.toggle_solo(i)
                 }
+            }
+            KeyCode::Char('v') => {
+                self.spectrum_on = !self.spectrum_on;
+                self.info(if self.spectrum_on {
+                    "spectrum analyzer on: shows while sound plays"
+                } else {
+                    "spectrum analyzer off"
+                });
             }
             KeyCode::Char('P') => {
                 if let Some(i) = slot {
@@ -2403,6 +2448,61 @@ mod tests {
         app.on_key(repeat(KeyCode::Down));
         app.on_key(repeat(KeyCode::Down));
         assert_eq!(app.rack_cursor, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// End to end: an engine playing into the app's telemetry brings up the
+    /// analyzer, which hides again after the sound stops (or when turned off).
+    #[test]
+    fn spectrum_appears_while_sound_plays() {
+        let dir = temp_dir("spectrum");
+        let mut app = test_app(&dir);
+        app.default_rack();
+        let mut engine = crate::engine::Engine::new(
+            48_000.0,
+            app.commands.clone(),
+            Arc::new(ArrayQueue::new(64)),
+            app.telemetry.clone(),
+        );
+        let s = screen(&mut app, 120, 50);
+        assert!(!s.contains("Spectrum"), "hidden while silent");
+
+        for note in [36u8, 48, 55, 64, 72] {
+            app.commands
+                .push(Command::NoteOn {
+                    slot: 0,
+                    note,
+                    velocity: 1.0,
+                })
+                .ok();
+        }
+        let mut out = vec![0.0; 2 * 9_600];
+        engine.process(&mut out, 2);
+        app.tick();
+        let s = screen(&mut app, 120, 50);
+        if std::env::var("SHOW_UI").is_ok() {
+            eprintln!("{s}");
+        }
+        assert!(
+            s.contains("Spectrum") && s.contains("1k") && s.contains("█"),
+            "{s}"
+        );
+        let lit = (0..app.spectrum.bands())
+            .filter(|&b| app.spectrum.levels[b] > -40.0)
+            .count();
+        assert!(lit >= 4, "only {lit} bands lit");
+
+        // Gone a couple of seconds after the sound stops.
+        app.last_sound = Some(Instant::now() - SPECTRUM_HOLD);
+        assert!(!screen(&mut app, 120, 50).contains("Spectrum"));
+        // And never shown while switched off.
+        app.last_sound = Some(Instant::now());
+        app.rack_cursor = 1;
+        app.on_key(key(KeyCode::Char('v')));
+        assert!(!screen(&mut app, 120, 50).contains("Spectrum"));
+        // A short terminal keeps the rack instead.
+        app.on_key(key(KeyCode::Char('v')));
+        assert!(!screen(&mut app, 120, 24).contains("Spectrum"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

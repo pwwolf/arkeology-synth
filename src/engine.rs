@@ -267,6 +267,8 @@ pub struct Telemetry {
     pub peak_l: AtomicU32,
     pub peak_r: AtomicU32,
     pub cpu: AtomicU32,
+    /// The latest master output, for the spectrum analyzer.
+    pub scope: crate::spectrum::Scope,
 }
 
 /// Peak-hold store: for non-negative floats the bit pattern orders like the value.
@@ -624,6 +626,9 @@ impl Engine {
         }
         store_max(&self.telemetry.peak_l, peak_l);
         store_max(&self.telemetry.peak_r, peak_r);
+        self.telemetry
+            .scope
+            .write(&self.mix_l[..n], &self.mix_r[..n]);
         if let Some(rec) = &self.recorder {
             rec.write(&self.mix_l[..n], &self.mix_r[..n]);
         }

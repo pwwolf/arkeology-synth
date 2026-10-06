@@ -12,6 +12,7 @@ mod patch;
 mod recorder;
 mod reverb;
 mod sample;
+mod spectrum;
 mod synth;
 mod ui;
 mod vcsl;

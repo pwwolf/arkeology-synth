@@ -183,6 +183,10 @@ controller or a DAW/sequencer.
   value over about 20 ms (log-scaled ones like cutoff glide evenly in pitch), so knob
   sweeps from 7-bit CCs, key presses and MCP don't zipper. Switches, choices and
   whole-number settings change instantly.
+- A spectrum analyzer of the master output appears under the rack while sound plays
+  and hides a couple of seconds after it stops. It shows 30 Hz–16 kHz in log-spaced
+  bands with peak hold, tilted +3 dB/octave so a typical mix reads roughly flat. It
+  only appears if the rack still fits on screen. `v` turns it off and on.
 
 ## Running
 
@@ -254,6 +258,7 @@ instances) or `--no-mcp` to turn it off.
 | `N` | new rack: empty or starter (by default the current rack is saved as a session first) |
 | `f` | load a WAV or FLAC into a granular synth, sampler or kit pad (`K` in the browser loads a whole folder as a kit) |
 | `r` `m` `s` | rename, mute, solo |
+| `v` | spectrum analyzer on / off |
 | `P` | receive or ignore MIDI program change on this slot (a struck-out P means locked) |
 | `c` / `C` | MIDI-learn a CC for the selected parameter / clear it |
 | `p` | MIDI input ports |

@@ -39,9 +39,25 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     let [left, right] =
         Layout::horizontal([Constraint::Length(48), Constraint::Min(30)]).areas(body);
-    let [rack, monitor] = Layout::vertical([Constraint::Min(6), Constraint::Length(9)]).areas(left);
-    draw_rack(f, app, rack);
-    draw_monitor(f, app, monitor);
+    // The spectrum analyzer slots in between the rack and the MIDI monitor
+    // while sound plays, if the rack still fits.
+    let rack_needed = app.rack_rows().len() as u16 + 2;
+    if app.spectrum_visible() && left.height >= rack_needed + SPECTRUM_HEIGHT + 9 {
+        let [rack, spectrum, monitor] = Layout::vertical([
+            Constraint::Min(rack_needed),
+            Constraint::Length(SPECTRUM_HEIGHT),
+            Constraint::Length(9),
+        ])
+        .areas(left);
+        draw_rack(f, app, rack);
+        draw_spectrum(f, app, spectrum);
+        draw_monitor(f, app, monitor);
+    } else {
+        let [rack, monitor] =
+            Layout::vertical([Constraint::Min(6), Constraint::Length(9)]).areas(left);
+        draw_rack(f, app, rack);
+        draw_monitor(f, app, monitor);
+    }
     draw_params(f, app, right);
     draw_footer(f, app, footer);
 
@@ -328,6 +344,89 @@ fn short_channel(ch: Option<u8>) -> String {
         None => "omni".into(),
         Some(c) => format!("ch{}", c + 1),
     }
+}
+
+const SPECTRUM_HEIGHT: u16 = 10;
+
+/// Spectrum bars (one column plus a gap per band), green to red by height,
+/// with peak-hold ticks and a row of frequency labels.
+fn draw_spectrum(f: &mut Frame, app: &mut App, area: Rect) {
+    use crate::spectrum::Analyzer;
+    const EIGHTHS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let b = block("Spectrum", false);
+    let inner = b.inner(area);
+    f.render_widget(b, area);
+    if inner.height < 3 || inner.width < 8 {
+        return;
+    }
+    let bands = (inner.width as usize / 2).max(1);
+    app.spectrum.set_bands(bands);
+    let a = &app.spectrum;
+    let rows = inner.height as usize - 1;
+    let mut lines: Vec<Line> = (0..rows)
+        .map(|row| {
+            let cell = rows - 1 - row; // 0 = bottom
+            let frac = (cell as f32 + 0.5) / rows as f32;
+            let color = if frac > 0.85 {
+                HOT
+            } else if frac > 0.6 {
+                WARN
+            } else {
+                OK
+            };
+            let spans: Vec<Span> = (0..a.bands())
+                .map(|band| {
+                    let level = Analyzer::norm(a.levels[band]) * (rows * 8) as f32;
+                    let peak = (Analyzer::norm(a.peaks[band]) * rows as f32).floor() as usize;
+                    let fill = (level - (cell * 8) as f32).clamp(0.0, 8.0) as usize;
+                    if fill > 0 {
+                        Span::styled(
+                            format!("{} ", EIGHTHS[fill - 1]),
+                            Style::default().fg(color),
+                        )
+                    } else if peak == cell && a.peaks[band] > crate::spectrum::FLOOR_DB + 1.0 {
+                        Span::styled("▔ ", Style::default().fg(Color::White))
+                    } else {
+                        Span::raw("  ")
+                    }
+                })
+                .collect();
+            Line::from(spans)
+        })
+        .collect();
+    // Frequency labels under the bands they fall in.
+    let mut labels = vec![' '; inner.width as usize];
+    let mut next_free = 0;
+    for (hz, text) in [
+        (50.0, "50"),
+        (100.0, "100"),
+        (200.0, "200"),
+        (500.0, "500"),
+        (1_000.0, "1k"),
+        (2_000.0, "2k"),
+        (5_000.0, "5k"),
+        (10_000.0, "10k"),
+    ] {
+        let Some(band) = (0..a.bands()).min_by(|x, y| {
+            (a.centre(*x).ln() - f32::ln(hz))
+                .abs()
+                .total_cmp(&(a.centre(*y).ln() - f32::ln(hz)).abs())
+        }) else {
+            continue;
+        };
+        let x = band * 2;
+        if x >= next_free && x + text.len() <= labels.len() {
+            for (i, ch) in text.chars().enumerate() {
+                labels[x + i] = ch;
+            }
+            next_free = x + text.len() + 1;
+        }
+    }
+    lines.push(Line::styled(
+        labels.into_iter().collect::<String>(),
+        Style::default().fg(FG_DIM),
+    ));
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_monitor(f: &mut Frame, app: &App, area: Rect) {
@@ -1190,6 +1289,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         ),
         k("d / ⌫", "remove the selected synth"),
         k("r", "rename      m  mute      s  solo"),
+        k("v", "spectrum analyzer on / off (shows while sound plays)"),
         k("P", "receive / ignore MIDI program change (lock the sound)"),
         k("tab / enter", "edit parameters"),
         h("Parameters"),
