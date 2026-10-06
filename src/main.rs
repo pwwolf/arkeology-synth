@@ -1,3 +1,4 @@
+mod amp;
 mod app;
 mod audio;
 mod dsp;

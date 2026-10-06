@@ -139,6 +139,15 @@ controller or a DAW/sequencer.
   | Compressor | threshold, ratio, attack, release, makeup |
   | Crusher | bit depth and sample-rate reduction |
   | Tremolo | rate, depth, sine/square, auto-pan |
+  | Pedal | guitar stompbox: Overdrive (Tube Screamer-style mid-boosted soft clipping), Distortion (RAT-style hard clipping), Fuzz (asymmetric, Fuzz Face-style); drive, tone, level |
+  | Amp | guitar amp: Clean, Crunch, Lead or High Gain preamp (2–4 tube stages), Bass/Mid/Treble tone stack, power amp with sag, Presence, and a speaker cabinet (1×12 open, 2×12, 4×12 closed, or off); gain, level |
+
+  Put a Pedal before an Amp for a full rig, as on a pedalboard. The Pedal and Amp
+  clipping stages run 4× oversampled, so even bright synth sounds distort without
+  aliasing. The Gain knob mostly changes the amount of distortion, not the volume. The
+  factory patches **Electric Clean**, **Crunch Guitar**, **Distortion Guitar** and
+  **High Gain Rhythm** play the physical String model through the rig, and **Crunch
+  Organ** and **Fuzz Lead** do the same for the organ and an analog lead.
 
   Pick an effect with the unit's **Type**. Only that effect's controls are shown, and
   **Mix** sets dry/wet (it resets to a sensible amount when you change type). Synth FX are

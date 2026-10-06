@@ -219,7 +219,8 @@ fn tool_definitions() -> Value {
     mapped to it if any. For a synth slot it also describes how the instrument responds to MIDI (pitch bend, \
     mod wheel, sustain, velocity, note layout). Includes the 3 insert effects (fx1_*, fx2_*, fx3_*); \
     an effect's settings appear once its fxN_type is set (Delay, Reverb, Chorus, Flanger, Phaser, Drive, \
-    Filter, EQ, Compressor, Crusher, Tremolo).",
+    Filter, EQ, Compressor, Crusher, Tremolo, Pedal, Amp). Pedal + Amp in consecutive units form a \
+    guitar rig (stompbox into amp and cabinet).",
             "inputSchema": { "type": "object", "properties": { "slot": slot_or_master }, "required": ["slot"] },
             "annotations": read_only,
         },

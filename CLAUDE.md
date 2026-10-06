@@ -47,7 +47,7 @@ Adding a parameter means adding a table entry and reading it in `update`. Visibi
 - To add an engine: a `SynthKind` variant (label, long name, `ALL` order), a params table, an `Instrument` variant wired into every match in `synth/mod.rs`, a UI colour in `ui.rs`, factory patches in `patch.rs`, and the kind name in the MCP tool schema (`mcp.rs`) and in `app/tools.rs` errors.
 - Large engine structs are boxed in `Instrument` (clippy's `large_enum_variant`).
 
-**Shared DSP** lives in `dsp.rs`: sine table, ADSR, SVF, ZDF ladder, PolyBLEP, RBJ biquads. The reverb is in `reverb.rs`, and `sample.rs` handles WAV/FLAC loading plus load-time analysis (waveform overview, onsets for slicing, YIN pitch detection). Insert effects are in `fx.rs`. Rebuilding an FX unit when its type changes happens in `App::rebuild_fx`.
+**Shared DSP** lives in `dsp.rs`: sine table, ADSR, SVF, ZDF ladder, PolyBLEP, RBJ biquads. The reverb is in `reverb.rs`, and `sample.rs` handles WAV/FLAC loading plus load-time analysis (waveform overview, onsets for slicing, YIN pitch detection). Insert effects are in `fx.rs`; the guitar Pedal and Amp types' DSP (4× oversampled clipping, tone stack, cabinet filters) is in `amp.rs`. FX parameter blocks are `fx::STRIDE` wide with one segment per type: add new types at the end of `FxKind`, since patches store the type as its index. Rebuilding an FX unit when its type changes happens in `App::rebuild_fx`.
 
 **UI and control surfaces.**
 - `app.rs`: `App` state, keyboard and popup handling, patches and sessions.

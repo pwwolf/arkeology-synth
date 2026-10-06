@@ -384,6 +384,20 @@ impl Biquad {
         )
     }
 
+    /// 12 dB/oct low-pass.
+    pub fn low_pass(f0: f32, q: f32, sr: f32) -> Self {
+        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
+        let (c, alpha) = (w.cos(), w.sin() / (2.0 * q as f64));
+        Self::from_coefs(
+            (1.0 - c) / 2.0,
+            1.0 - c,
+            (1.0 - c) / 2.0,
+            1.0 + alpha,
+            -2.0 * c,
+            1.0 - alpha,
+        )
+    }
+
     /// 12 dB/oct high-pass.
     pub fn high_pass(f0: f32, q: f32, sr: f32) -> Self {
         let w = std::f64::consts::TAU * f0 as f64 / sr as f64;

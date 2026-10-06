@@ -6,13 +6,14 @@
 //! A unit's DSP state (delay lines etc.) is allocated when it is built, on the
 //! UI thread; the engine only swaps finished units in.
 
+use crate::amp::{AMP_MODELS, Amp, CABINETS, PEDAL_TYPES, Pedal};
 use crate::dsp::{Biquad, FilterMode, Svf, SvfCoefs, sin_cycles};
 use crate::params::{ParamDesc as P, Unit};
 use crate::reverb::Reverb;
 use crate::synth::MAX_BLOCK;
 
 pub const FX_UNITS: usize = 3;
-pub const STRIDE: usize = 42;
+pub const STRIDE: usize = 54;
 pub const TYPE: usize = 0;
 pub const MIX: usize = 1;
 
@@ -30,9 +31,11 @@ pub enum FxKind {
     Compressor,
     Crusher,
     Tremolo,
+    Pedal,
+    Amp,
 }
 
-pub const KIND_NAMES: [&str; 12] = [
+pub const KIND_NAMES: [&str; 14] = [
     "Off",
     "Delay",
     "Reverb",
@@ -45,8 +48,10 @@ pub const KIND_NAMES: [&str; 12] = [
     "Compressor",
     "Crusher",
     "Tremolo",
+    "Pedal",
+    "Amp",
 ];
-const KINDS: [FxKind; 12] = [
+const KINDS: [FxKind; 14] = [
     FxKind::Off,
     FxKind::Delay,
     FxKind::Reverb,
@@ -59,9 +64,11 @@ const KINDS: [FxKind; 12] = [
     FxKind::Compressor,
     FxKind::Crusher,
     FxKind::Tremolo,
+    FxKind::Pedal,
+    FxKind::Amp,
 ];
 /// (offset within the unit, length) of each kind's parameter segment.
-const SEGMENTS: [(usize, usize); 12] = [
+const SEGMENTS: [(usize, usize); 14] = [
     (2, 0),
     (2, 4),
     (6, 4),
@@ -74,10 +81,14 @@ const SEGMENTS: [(usize, usize); 12] = [
     (31, 5),
     (36, 2),
     (38, 4),
+    (42, 4),
+    (46, 8),
 ];
 /// Mix to apply when a unit switches to each kind: time effects blend,
 /// processors replace the signal.
-const DEFAULT_MIX: [f32; 12] = [0.5, 0.3, 0.3, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+const DEFAULT_MIX: [f32; 14] = [
+    0.5, 0.3, 0.3, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+];
 
 pub const DRIVE_MODES: [&str; 4] = ["Soft", "Hard", "Fold", "Tube"];
 pub const FILTER_TYPES: [&str; 5] = [
@@ -480,6 +491,100 @@ macro_rules! fx_unit {
                 0,
             ),
             P::toggle(concat!("fx", $n, "_trem_pan"), "Auto-Pan", G, false),
+            // Pedal
+            P::choice(
+                concat!("fx", $n, "_pedal_type"),
+                "Pedal",
+                G,
+                &PEDAL_TYPES,
+                0,
+            ),
+            P::float(
+                concat!("fx", $n, "_pedal_drive"),
+                "Drive",
+                G,
+                0.0,
+                1.0,
+                0.5,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_pedal_tone"),
+                "Tone",
+                G,
+                0.0,
+                1.0,
+                0.5,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_pedal_level"),
+                "Level",
+                G,
+                -24.0,
+                12.0,
+                0.0,
+                Unit::Decibels,
+            )
+            .step(0.5),
+            // Amp
+            P::choice(concat!("fx", $n, "_amp_model"), "Amp", G, &AMP_MODELS, 1),
+            P::float(
+                concat!("fx", $n, "_amp_gain"),
+                "Gain",
+                G,
+                0.0,
+                1.0,
+                0.5,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_amp_bass"),
+                "Bass",
+                G,
+                0.0,
+                1.0,
+                0.5,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_amp_mid"),
+                "Mid",
+                G,
+                0.0,
+                1.0,
+                0.5,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_amp_treble"),
+                "Treble",
+                G,
+                0.0,
+                1.0,
+                0.5,
+                Unit::Percent,
+            ),
+            P::float(
+                concat!("fx", $n, "_amp_presence"),
+                "Presence",
+                G,
+                0.0,
+                1.0,
+                0.3,
+                Unit::Percent,
+            ),
+            P::choice(concat!("fx", $n, "_amp_cab"), "Cabinet", G, &CABINETS, 3),
+            P::float(
+                concat!("fx", $n, "_amp_level"),
+                "Level",
+                G,
+                -24.0,
+                12.0,
+                0.0,
+                Unit::Decibels,
+            )
+            .step(0.5),
         ]
     }};
 }
@@ -1039,6 +1144,8 @@ enum Dsp {
     Compressor(Compressor),
     Crusher(Crusher),
     Tremolo(Tremolo),
+    Pedal(Box<Pedal>),
+    Amp(Box<Amp>),
 }
 
 /// One insert effect: its DSP plus a dry/wet mix.
@@ -1088,6 +1195,8 @@ impl FxUnit {
             FxKind::Compressor => Dsp::Compressor(Compressor::default()),
             FxKind::Crusher => Dsp::Crusher(Crusher::default()),
             FxKind::Tremolo => Dsp::Tremolo(Tremolo::default()),
+            FxKind::Pedal => Dsp::Pedal(Box::new(Pedal::new(sr))),
+            FxKind::Amp => Dsp::Amp(Box::new(Amp::new(sr))),
         };
         let mut unit = Box::new(FxUnit {
             mix: 1.0,
@@ -1127,6 +1236,8 @@ impl FxUnit {
             Dsp::Compressor(d) => d.set(seg(FxKind::Compressor), sr),
             Dsp::Crusher(d) => d.set(seg(FxKind::Crusher)),
             Dsp::Tremolo(d) => d.set(seg(FxKind::Tremolo), sr),
+            Dsp::Pedal(d) => d.set(seg(FxKind::Pedal), sr),
+            Dsp::Amp(d) => d.set(seg(FxKind::Amp), sr),
         }
     }
 
@@ -1151,6 +1262,8 @@ impl FxUnit {
             Dsp::Compressor(d) => d.process(l, r),
             Dsp::Crusher(d) => d.process(l, r),
             Dsp::Tremolo(d) => d.process(l, r),
+            Dsp::Pedal(d) => d.process(l, r),
+            Dsp::Amp(d) => d.process(l, r),
         }
         let (wet, dry) = (self.mix, 1.0 - self.mix);
         for i in 0..n {
@@ -1326,5 +1439,135 @@ mod tests {
             assert!(l.iter().chain(&r).all(|v| v.is_finite()), "{:?}", KINDS[k]);
             assert!(peak < 8.0, "{:?} peak {peak}", KINDS[k]);
         }
+    }
+
+    fn tone(f: f32, amp: f32) -> Vec<f32> {
+        (0..48_000)
+            .map(|n| amp * (std::f32::consts::TAU * f * n as f32 / 48_000.0).sin())
+            .collect()
+    }
+
+    fn run_mono(u: &mut FxUnit, input: &[f32]) -> Vec<f32> {
+        let mut out = Vec::with_capacity(input.len());
+        for c in input.chunks(MAX_BLOCK) {
+            let (mut l, mut r) = (c.to_vec(), c.to_vec());
+            u.process(&mut l, &mut r);
+            out.extend(l);
+        }
+        out
+    }
+
+    /// Amplitude at `f` (Hz) over a window holding whole cycles of it.
+    fn magnitude(x: &[f32], f: f32) -> f32 {
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (n, v) in x.iter().enumerate() {
+            let ph = std::f64::consts::TAU * f as f64 * n as f64 / 48_000.0;
+            re += *v as f64 * ph.cos();
+            im += *v as f64 * ph.sin();
+        }
+        ((re * re + im * im).sqrt() * 2.0 / x.len() as f64) as f32
+    }
+
+    fn thd(u: &mut FxUnit) -> f32 {
+        let out = run_mono(u, &tone(200.0, 0.25));
+        let s = &out[9_600..];
+        let harmonics: f32 = (2..=10)
+            .map(|k| magnitude(s, 200.0 * k as f32).powi(2))
+            .sum();
+        harmonics.sqrt() / magnitude(s, 200.0)
+    }
+
+    /// Every pedal and amp setting stays near unity loudness on a synth-level
+    /// saw, without peaks that would hit the master clipper.
+    #[test]
+    fn guitar_rig_levels_are_calibrated() {
+        let saw: Vec<f32> = (0..48_000)
+            .map(|n| 0.25 * (2.0 * (n as f32 * 220.0 / 48_000.0).fract() - 1.0))
+            .collect();
+        let input = rms(&saw[4_800..]);
+        let mut units = Vec::new();
+        for t in 0..PEDAL_TYPES.len() {
+            for d in [0.0, 0.5, 1.0] {
+                units.push(unit(
+                    FxKind::Pedal,
+                    &[("pedal_type", t as f32), ("pedal_drive", d)],
+                ));
+            }
+        }
+        for m in 0..AMP_MODELS.len() {
+            for g in [0.0, 0.5, 1.0] {
+                units.push(unit(
+                    FxKind::Amp,
+                    &[("amp_model", m as f32), ("amp_gain", g)],
+                ));
+            }
+        }
+        for (i, u) in units.iter_mut().enumerate() {
+            let out = run_mono(u, &saw);
+            let db = 20.0 * (rms(&out[4_800..]) / input).log10();
+            let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            assert!(
+                db.abs() < 7.0 && peak < 0.9,
+                "unit {i}: {db:.1} dB, peak {peak:.2}"
+            );
+        }
+    }
+
+    #[test]
+    fn amp_models_range_from_clean_to_saturated() {
+        let clean = thd(&mut unit(
+            FxKind::Amp,
+            &[("amp_model", 0.0), ("amp_gain", 0.5)],
+        ));
+        let crunch = thd(&mut unit(
+            FxKind::Amp,
+            &[("amp_model", 1.0), ("amp_gain", 0.5)],
+        ));
+        let high = thd(&mut unit(
+            FxKind::Amp,
+            &[("amp_model", 3.0), ("amp_gain", 1.0)],
+        ));
+        assert!(clean < 0.05, "clean THD {clean}");
+        assert!(
+            crunch > 0.1 && high > crunch,
+            "crunch {crunch}, high gain {high}"
+        );
+        let od = thd(&mut unit(FxKind::Pedal, &[("pedal_drive", 0.0)]));
+        let od_max = thd(&mut unit(FxKind::Pedal, &[("pedal_drive", 1.0)]));
+        assert!(od < 0.05 && od_max > 0.25, "overdrive {od} -> {od_max}");
+    }
+
+    /// Worst case for aliasing: a 5 kHz tone through the high-gain amp with
+    /// the cabinet off. Its harmonics fold back onto 1-4 kHz; oversampling
+    /// keeps them far down (without it they'd be only ~22 dB down).
+    #[test]
+    fn amp_distortion_does_not_alias() {
+        let mut u = unit(
+            FxKind::Amp,
+            &[
+                ("amp_model", 3.0),
+                ("amp_gain", 1.0),
+                ("amp_cab", 0.0),
+                ("amp_treble", 1.0),
+            ],
+        );
+        let out = run_mono(&mut u, &tone(5_000.0, 0.25));
+        let s = &out[9_600..19_200];
+        let fundamental = magnitude(s, 5_000.0);
+        for f in [1_000.0, 2_000.0, 3_000.0, 4_000.0] {
+            let db = 20.0 * (fundamental / magnitude(s, f)).log10();
+            assert!(db > 40.0, "alias at {f} Hz only {db:.1} dB down");
+        }
+    }
+
+    #[test]
+    fn cabinet_rolls_off_fizz() {
+        let hf = |cab: f32| {
+            let mut u = unit(FxKind::Amp, &[("amp_model", 3.0), ("amp_cab", cab)]);
+            let out = run_mono(&mut u, &tone(10_000.0, 0.1));
+            magnitude(&out[9_600..], 10_000.0)
+        };
+        let db = 20.0 * (hf(0.0) / hf(3.0)).log10();
+        assert!(db > 20.0, "4x12 only {db:.1} dB down at 10 kHz");
     }
 }
