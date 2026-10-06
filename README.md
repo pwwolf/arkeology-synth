@@ -29,6 +29,12 @@ controller or a DAW/sequencer.
       or a modal Dreadnought, Classical or Parlor body. Each modal body has 14
       resonances: the sound-hole air mode, the top plate's breathing modes and
       higher plate modes. **Body** sets how much of it you hear.
+    - **Sympathetic** adds six open strings in standard tuning (E2 to E4). The notes
+      you play drive them through the bridge, and they ring on at matching pitches: a
+      quiet halo that keeps a guitar resonating after a note is damped.
+    - For long sustain, turn **Decay** up: it's the time to fall 60 dB, so a real
+      steel string's low notes need 12–20 s. Lower **Release Damp** lets short key
+      presses ring on instead of muting them.
     - New controls default to the earlier sound, so existing patches are unchanged. The
       Steel, Nylon and Parlor Guitar patches use them all; Harp, Koto and the electric
       guitars use the decay features.

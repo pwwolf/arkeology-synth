@@ -852,6 +852,59 @@ mod tests {
         assert_eq!(e.master[master::DRIVE], 1.0);
     }
 
+    /// Held notes on the acoustic guitar patches keep ringing: a gentle
+    /// first-second drop and a clearly audible tail at four seconds.
+    #[test]
+    fn acoustic_guitars_sustain() {
+        crate::dsp::init_tables();
+        let sr = 48_000.0;
+        let builtins = sample::builtins();
+        for name in ["Steel Guitar", "Nylon Guitar", "Parlor Guitar"] {
+            let p = crate::patch::factory_patches()
+                .into_iter()
+                .find(|p| p.name == name)
+                .unwrap();
+            let cmds: CommandQueue = Arc::new(ArrayQueue::new(256));
+            let mut e = Engine::new(
+                sr,
+                cmds.clone(),
+                Arc::new(ArrayQueue::new(64)),
+                Arc::new(Telemetry::default()),
+            );
+            let slot = Slot::new(p.kind, p.values(), Some(0), sr, &builtins, &[]);
+            cmds.push(Command::InstallSlot {
+                slot: 0,
+                data: slot,
+            })
+            .ok();
+            cmds.push(Command::NoteOn {
+                slot: 0,
+                note: 52,
+                velocity: 0.8,
+            })
+            .ok();
+            let mut out = vec![0.0; 2 * 48_000 * 5];
+            e.process(&mut out, 2);
+            let db = |t: f32| {
+                let i = (t * sr) as usize * 2;
+                let w = &out[i..i + 9_600];
+                20.0 * ((w.iter().map(|v| v * v).sum::<f32>() / w.len() as f32).sqrt() + 1e-9)
+                    .log10()
+            };
+            let start = db(0.05);
+            assert!(
+                db(1.0) - start > -10.0,
+                "{name}: {:.1} dB after 1 s",
+                db(1.0) - start
+            );
+            assert!(
+                db(4.0) - start > -30.0,
+                "{name}: {:.1} dB after 4 s",
+                db(4.0) - start
+            );
+        }
+    }
+
     /// Factory patches for the melodic engines must neither vanish nor slam
     /// the master clipper when playing a chord.
     #[test]

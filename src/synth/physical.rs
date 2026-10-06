@@ -57,8 +57,9 @@ pub const WIDTH: usize = 19;
 pub const DECAY_TRACK: usize = 20;
 pub const TWO_STAGE: usize = 21;
 pub const BODY_TYPE: usize = 22;
+pub const SYMPATHETIC: usize = 23;
 
-pub static PARAMS: [P; 23] = [
+pub static PARAMS: [P; 24] = [
     VOICES_PARAM,
     P::choice("model", "Model", "Model", &MODELS, 0),
     P::float(
@@ -216,6 +217,15 @@ pub static PARAMS: [P; 23] = [
         Unit::Percent,
     ),
     P::choice("body_type", "Body Type", "Response", &BODY_TYPES, 0),
+    P::float(
+        "sympathetic",
+        "Sympathetic",
+        "Response",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
 ];
 
 /// Which of this synth's own parameters apply to the selected model.
@@ -230,7 +240,7 @@ pub fn param_visible(p: &[f32], local: usize) -> bool {
             model == Model::Bowed
         }
         UNISON => model == Model::Piano,
-        DECAY_TRACK | TWO_STAGE | BODY_TYPE => model == Model::String,
+        DECAY_TRACK | TWO_STAGE | BODY_TYPE | SYMPATHETIC => model == Model::String,
         MATERIAL => model == Model::Mallet,
         _ => true,
     }
@@ -464,6 +474,13 @@ impl WaveString {
 
     #[inline]
     fn tick(&mut self) -> f32 {
+        self.tick_in(0.0)
+    }
+
+    /// One sample, with `input` driving the string where the loop closes
+    /// (the bridge): energy builds only at the string's own resonances.
+    #[inline]
+    fn tick_in(&mut self, input: f32) -> f32 {
         let mask = DELAY_LEN - 1;
         let x = self.buf[(self.w + DELAY_LEN - self.n_int) & mask];
         let a = self.ap_a;
@@ -482,7 +499,7 @@ impl WaveString {
         let sd = self.damp_s;
         let z = (1.0 - sd) * y + sd * self.lp_x1;
         self.lp_x1 = y;
-        self.buf[self.w] = z * self.loop_gain;
+        self.buf[self.w] = z * self.loop_gain + input;
         self.w = (self.w + 1) & mask;
         z
     }
@@ -749,7 +766,7 @@ impl PhysicalVoice {
             f0,
             s.hf_damp,
             s.stiffness,
-            t60 * (1.0 - 0.7 * p),
+            t60 * (1.0 - 0.45 * p),
         );
         let f1 = f0 * (0.6 * p / 1200.0).exp2();
         self.strings[1].tune(
@@ -1150,6 +1167,12 @@ impl Voice for PhysicalVoice {
     }
 }
 
+/// Open strings that ring in sympathy (standard guitar tuning, E2 to E4).
+const OPEN_STRINGS: [u8; 6] = [40, 45, 50, 55, 59, 64];
+/// How hard the played notes drive the open strings, and how loud they ring.
+const SYMPATHETIC_DRIVE: f32 = 0.0025;
+const SYMPATHETIC_LEVEL: f32 = 1.0;
+
 const BODY_MODES: usize = 14;
 /// Output level of the modal bodies relative to the dry string.
 const MODAL_BODY_GAIN: f32 = 4.5;
@@ -1224,6 +1247,10 @@ pub struct PhysicalSynth {
     /// 0 = the generic box; otherwise an index into `GUITAR_BODIES` + 1.
     body_type: usize,
     body_modes: [[Biquad; BODY_MODES]; 2],
+    sympathetic: f32,
+    open_strings: [WaveString; OPEN_STRINGS.len()],
+    /// (decay, hf damping, decay track) the open strings were tuned for.
+    open_tuned_for: (f32, f32, f32),
     tone: SvfCoefs,
     tone_bypass: bool,
     tone_filters: [Svf; 2],
@@ -1243,6 +1270,9 @@ impl PhysicalSynth {
             body_coefs: [SvfCoefs::default(); 3],
             body_type: 0,
             body_modes: [[Biquad::default(); BODY_MODES]; 2],
+            sympathetic: 0.0,
+            open_strings: std::array::from_fn(|_| WaveString::new()),
+            open_tuned_for: (f32::NAN, f32::NAN, f32::NAN),
             tone: SvfCoefs::default(),
             tone_bypass: true,
             tone_filters: [Svf::default(); 2],
@@ -1280,6 +1310,22 @@ impl PhysicalSynth {
         s.width = p[WIDTH];
         s.decay_track = p[DECAY_TRACK];
         s.two_stage = p[TWO_STAGE];
+        self.sympathetic = if s.model == Model::String {
+            p[SYMPATHETIC]
+        } else {
+            0.0
+        };
+        let key = (s.decay, s.hf_damp, s.decay_track);
+        if self.sympathetic > 0.0 && key != self.open_tuned_for {
+            self.open_tuned_for = key;
+            for (st, &note) in self.open_strings.iter_mut().zip(&OPEN_STRINGS) {
+                // Undamped open strings follow the same register decay as
+                // played ones.
+                let track = ((60.0 - note as f32) / 12.0 * s.decay_track).exp2();
+                let t60 = (s.decay * track).clamp(0.05, 40.0);
+                st.tune(sr, midi_to_freq(note as f32), s.hf_damp, 0.0, t60);
+            }
+        }
         self.body = p[BODY];
         let body_type = if s.model == Model::String {
             (p[BODY_TYPE].round().max(0.0) as usize).min(BODY_TYPES.len() - 1)
@@ -1348,9 +1394,19 @@ impl PhysicalSynth {
         } else {
             self.body
         };
+        let drive = self.sympathetic * SYMPATHETIC_DRIVE;
         for i in 0..n {
-            l[i] += self.respond(0, self.tmp_l[i], body);
-            r[i] += self.respond(1, self.tmp_r[i], body);
+            let (mut a, mut b) = (self.tmp_l[i], self.tmp_r[i]);
+            if drive > 0.0 {
+                // The played strings shake the bridge, which drives the open
+                // strings; they radiate through the body like the rest.
+                let x = 0.5 * (a + b) * drive;
+                let ring: f32 = self.open_strings.iter_mut().map(|st| st.tick_in(x)).sum();
+                a += ring * SYMPATHETIC_LEVEL;
+                b += ring * SYMPATHETIC_LEVEL;
+            }
+            l[i] += self.respond(0, a, body);
+            r[i] += self.respond(1, b, body);
         }
     }
 }
@@ -1753,6 +1809,45 @@ mod tests {
             let valley = db((m[0].0 * m[1].0).sqrt());
             assert!(db(m[0].0) > valley + 8.0, "{}: air mode", BODY_TYPES[bt]);
             assert!(db(m[1].0) > valley + 10.0, "{}: top mode", BODY_TYPES[bt]);
+        }
+    }
+
+    /// Open strings ring on in sympathy: a damped note leaves a tail, and a
+    /// held note never swells.
+    #[test]
+    fn sympathetic_strings_ring_but_never_swell() {
+        let tail = |symp: f32| {
+            let mut o = GUITAR.to_vec();
+            o.extend([("sympathetic", symp), ("release_damp", 0.9)]);
+            let mut s = synth_with(&o);
+            s.poly.note_on(57, 0.8, &s.shared);
+            render(&mut s, 4_800);
+            s.poly.note_off(57);
+            let out = render(&mut s, 48_000 * 2);
+            20.0 * (rms(&out[48_000..72_000]) + 1e-9).log10()
+        };
+        let (dry, wet) = (tail(0.0), tail(1.0));
+        assert!(wet > dry + 20.0, "tail {dry:.1} -> {wet:.1} dB");
+
+        let mut o = GUITAR.to_vec();
+        o.push(("sympathetic", 1.0));
+        let mut s = synth_with(&o);
+        for n in [40u8, 47, 52, 56, 59, 64] {
+            s.poly.note_on(n, 0.8, &s.shared);
+        }
+        // Quarter-second windows: chords beat (equal-tempered thirds) on a
+        // shorter scale even without sympathetic strings.
+        let c: Vec<f32> = render(&mut s, 48_000 * 4)
+            .chunks(12_000)
+            .map(|c| 20.0 * (rms(c) + 1e-9).log10())
+            .collect();
+        for w in c.windows(2) {
+            assert!(
+                w[1] < w[0] + 0.5,
+                "level rose: {:.1} -> {:.1} dB",
+                w[0],
+                w[1]
+            );
         }
     }
 }
