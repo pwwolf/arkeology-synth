@@ -30,6 +30,9 @@ pub const MATERIALS: [&str; 7] = [
     "Wood", "Metal", "Glass", "Free Bar", "Bell", "Membrane", "Tine",
 ];
 pub const BOWED_BODIES: [&str; 4] = ["Violin", "Viola", "Cello", "Bass"];
+/// "Box" is the original generic three-resonance body; the others are modal
+/// guitar bodies.
+pub const BODY_TYPES: [&str; 4] = ["Box", "Dreadnought", "Classical", "Parlor"];
 
 pub const VOICES: usize = 0;
 pub const MODEL: usize = 1;
@@ -51,8 +54,11 @@ pub const BODY: usize = 16;
 pub const RELEASE_DAMP: usize = 17;
 pub const TONE: usize = 18;
 pub const WIDTH: usize = 19;
+pub const DECAY_TRACK: usize = 20;
+pub const TWO_STAGE: usize = 21;
+pub const BODY_TYPE: usize = 22;
 
-pub static PARAMS: [P; 20] = [
+pub static PARAMS: [P; 23] = [
     VOICES_PARAM,
     P::choice("model", "Model", "Model", &MODELS, 0),
     P::float(
@@ -189,6 +195,27 @@ pub static PARAMS: [P; 20] = [
         0.4,
         Unit::Percent,
     ),
+    // Appended so older patches keep their layout; the defaults reproduce
+    // the earlier sound.
+    P::float(
+        "decay_track",
+        "Decay Track",
+        "Resonator",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
+    P::float(
+        "two_stage",
+        "Two-Stage Decay",
+        "Resonator",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
+    P::choice("body_type", "Body Type", "Response", &BODY_TYPES, 0),
 ];
 
 /// Which of this synth's own parameters apply to the selected model.
@@ -203,6 +230,7 @@ pub fn param_visible(p: &[f32], local: usize) -> bool {
             model == Model::Bowed
         }
         UNISON => model == Model::Piano,
+        DECAY_TRACK | TWO_STAGE | BODY_TYPE => model == Model::String,
         MATERIAL => model == Model::Mallet,
         _ => true,
     }
@@ -264,6 +292,9 @@ const MAX_STRINGS: usize = 3;
 const DELAY_LEN: usize = 4096;
 const DISPERSION_STAGES: usize = 4;
 const STRING_GAIN: f32 = 0.45;
+/// Extra level of the slow polarization: it starts quieter but outlasts the
+/// first, which is what makes the decay two-stage.
+const TWO_STAGE_TAIL: f32 = 1.4;
 const PIANO_GAIN: f32 = 0.16;
 const MALLET_GAIN: f32 = 0.32;
 const BOWED_GAIN: f32 = 0.4;
@@ -312,6 +343,8 @@ pub struct PhysicalShared {
     body: f32,
     release_damp: f32,
     width: f32,
+    decay_track: f32,
+    two_stage: f32,
 }
 
 /// Phase delay in samples of H(e^{jw}) given its value at `w`.
@@ -697,9 +730,35 @@ impl PhysicalVoice {
     }
 
     fn tune_string(&mut self, s: &PhysicalShared, f0: f32) {
-        let t60 = self.decay_time(s);
-        self.string_count = 1;
-        self.strings[0].tune(s.sample_rate, f0, s.hf_damp, s.stiffness, t60);
+        // Decay Track: high notes ring shorter, as on a real guitar (1 = half
+        // as long per octave above middle C, twice as long per octave below).
+        let track = ((60.0 - self.note as f32) / 12.0 * s.decay_track).exp2();
+        let t60 = (self.decay_time(s) * track).clamp(0.01, 40.0);
+        if s.two_stage <= 0.0 {
+            self.string_count = 1;
+            self.strings[0].tune(s.sample_rate, f0, s.hf_damp, s.stiffness, t60);
+            return;
+        }
+        // Two polarizations: the plane that drives the bridge hard (and so
+        // radiates most) loses energy quickly; the other, slightly detuned,
+        // rings on. Together: a prompt attack, then a long, gently beating tail.
+        let p = s.two_stage;
+        self.string_count = 2;
+        self.strings[0].tune(
+            s.sample_rate,
+            f0,
+            s.hf_damp,
+            s.stiffness,
+            t60 * (1.0 - 0.7 * p),
+        );
+        let f1 = f0 * (0.6 * p / 1200.0).exp2();
+        self.strings[1].tune(
+            s.sample_rate,
+            f1,
+            s.hf_damp,
+            s.stiffness,
+            t60 * (1.0 + 0.6 * p),
+        );
     }
 
     /// Strings per note and their detune (cents), like a real piano.
@@ -754,8 +813,20 @@ impl PhysicalVoice {
             self.exc[i] -= self.exc[i - pick];
         }
         let amp = self.vel / (2.0 * peak);
-        let (exc, string) = (&self.exc[..n], &mut self.strings[0]);
-        string.inject(exc, amp);
+        if self.string_count == 2 {
+            // Split the pluck between the two planes (the sound is heard
+            // mostly through the first, see `render`).
+            let p = s.two_stage;
+            let (a0, a1) = ((1.0 - 0.5 * p).sqrt(), (0.5 * p).sqrt() * TWO_STAGE_TAIL);
+            // Both planes start in phase, so their outputs add: keep the
+            // attack at the single-plane level and let only the tail change.
+            let norm = amp / (a0 + a1);
+            self.strings[0].inject(&self.exc[..n], norm * a0);
+            self.strings[1].inject(&self.exc[..n], norm * a1);
+        } else {
+            let (exc, string) = (&self.exc[..n], &mut self.strings[0]);
+            string.inject(exc, amp);
+        }
     }
 
     fn excite_piano(&mut self, s: &PhysicalShared) {
@@ -1079,6 +1150,69 @@ impl Voice for PhysicalVoice {
     }
 }
 
+const BODY_MODES: usize = 14;
+/// Output level of the modal bodies relative to the dry string.
+const MODAL_BODY_GAIN: f32 = 4.5;
+
+/// Guitar body modes: (frequency Hz, Q, level). The lowest is the air
+/// (Helmholtz) resonance of the sound hole, then the top plate's main
+/// breathing mode and its couplings, cross-dipole and higher plate modes,
+/// thinning out towards the treble. Values follow published modal analyses
+/// of real instruments in outline, not any one guitar.
+const GUITAR_BODIES: [[(f32, f32, f32); BODY_MODES]; 3] = [
+    // Dreadnought (steel string): deep air resonance, strong low mids.
+    [
+        (98.0, 18.0, 1.0),
+        (196.0, 24.0, 1.1),
+        (238.0, 22.0, 0.55),
+        (290.0, 28.0, 0.45),
+        (372.0, 30.0, 0.5),
+        (450.0, 30.0, 0.45),
+        (560.0, 32.0, 0.35),
+        (690.0, 34.0, 0.3),
+        (840.0, 36.0, 0.28),
+        (1_050.0, 38.0, 0.25),
+        (1_320.0, 40.0, 0.2),
+        (1_680.0, 40.0, 0.18),
+        (2_150.0, 36.0, 0.15),
+        (2_900.0, 30.0, 0.12),
+    ],
+    // Classical (fan-braced, lighter top): warm and round, softer treble.
+    [
+        (92.0, 16.0, 1.0),
+        (185.0, 20.0, 1.2),
+        (225.0, 20.0, 0.6),
+        (270.0, 24.0, 0.5),
+        (340.0, 26.0, 0.45),
+        (420.0, 28.0, 0.4),
+        (520.0, 30.0, 0.3),
+        (640.0, 30.0, 0.25),
+        (790.0, 32.0, 0.2),
+        (980.0, 32.0, 0.16),
+        (1_240.0, 34.0, 0.12),
+        (1_600.0, 34.0, 0.1),
+        (2_050.0, 30.0, 0.08),
+        (2_700.0, 28.0, 0.06),
+    ],
+    // Parlor (small body): higher air resonance, less bass, focused mids.
+    [
+        (122.0, 16.0, 0.6),
+        (232.0, 22.0, 1.1),
+        (275.0, 22.0, 0.6),
+        (340.0, 26.0, 0.55),
+        (430.0, 28.0, 0.55),
+        (520.0, 30.0, 0.45),
+        (640.0, 32.0, 0.4),
+        (780.0, 34.0, 0.32),
+        (950.0, 36.0, 0.3),
+        (1_180.0, 38.0, 0.25),
+        (1_450.0, 38.0, 0.2),
+        (1_850.0, 38.0, 0.17),
+        (2_350.0, 34.0, 0.14),
+        (3_100.0, 30.0, 0.11),
+    ],
+];
+
 pub struct PhysicalSynth {
     pub poly: Poly<PhysicalVoice>,
     pub shared: PhysicalShared,
@@ -1087,6 +1221,9 @@ pub struct PhysicalSynth {
     body_model: Option<Model>,
     body_filters: [[Svf; 3]; 2],
     body_coefs: [SvfCoefs; 3],
+    /// 0 = the generic box; otherwise an index into `GUITAR_BODIES` + 1.
+    body_type: usize,
+    body_modes: [[Biquad; BODY_MODES]; 2],
     tone: SvfCoefs,
     tone_bypass: bool,
     tone_filters: [Svf; 2],
@@ -1104,6 +1241,8 @@ impl PhysicalSynth {
             body_model: None,
             body_filters: [[Svf::default(); 3]; 2],
             body_coefs: [SvfCoefs::default(); 3],
+            body_type: 0,
+            body_modes: [[Biquad::default(); BODY_MODES]; 2],
             tone: SvfCoefs::default(),
             tone_bypass: true,
             tone_filters: [Svf::default(); 2],
@@ -1139,7 +1278,28 @@ impl PhysicalSynth {
         s.body = p[BODY];
         s.release_damp = p[RELEASE_DAMP];
         s.width = p[WIDTH];
+        s.decay_track = p[DECAY_TRACK];
+        s.two_stage = p[TWO_STAGE];
         self.body = p[BODY];
+        let body_type = if s.model == Model::String {
+            (p[BODY_TYPE].round().max(0.0) as usize).min(BODY_TYPES.len() - 1)
+        } else {
+            0
+        };
+        if body_type != self.body_type {
+            self.body_type = body_type;
+            if body_type > 0 {
+                let modes = GUITAR_BODIES[body_type - 1];
+                for (ch, bank) in self.body_modes.iter_mut().enumerate() {
+                    // The right channel's modes sit ~1% higher: a body radiates
+                    // differently in each direction, which widens the image.
+                    let spread = if ch == 0 { 1.0 } else { 1.012 };
+                    for (b, (f, q, _)) in bank.iter_mut().zip(modes) {
+                        *b = Biquad::band_pass(f * spread, q, sr);
+                    }
+                }
+            }
+        }
         // Body resonances: a guitar-like box for strings and mallets, a broader
         // soundboard for the piano. Bowed voices carry their own body.
         if self.body_model != Some(s.model) {
@@ -1154,36 +1314,43 @@ impl PhysicalSynth {
         self.tone = SvfCoefs::new(FilterMode::LowPass, p[TONE], 0.0, sr);
     }
 
+    /// Body resonance and tone filter for one output sample of channel `ch`.
+    fn respond(&mut self, ch: usize, x: f32, body: f32) -> f32 {
+        let mut y = x;
+        if body > 0.0 && self.body_type > 0 {
+            let modes = GUITAR_BODIES[self.body_type - 1];
+            let mut res = 0.0;
+            for (b, (_, _, gain)) in self.body_modes[ch].iter_mut().zip(modes) {
+                res += b.process(y) * gain;
+            }
+            y = y * (1.0 - 0.4 * body) + res * body * MODAL_BODY_GAIN;
+        } else if body > 0.0 {
+            let f = &mut self.body_filters[ch];
+            let res = f[0].process(&self.body_coefs[0], y) * 1.4
+                + f[1].process(&self.body_coefs[1], y) * 1.1
+                + f[2].process(&self.body_coefs[2], y) * 0.8;
+            y = y * (1.0 - 0.4 * body) + res * body;
+        }
+        if !self.tone_bypass {
+            y = self.tone_filters[ch].process(&self.tone, y);
+        }
+        y
+    }
+
     pub fn render(&mut self, l: &mut [f32], r: &mut [f32]) {
         let n = l.len().min(MAX_BLOCK);
-        let (tl, tr) = (&mut self.tmp_l[..n], &mut self.tmp_r[..n]);
-        tl.fill(0.0);
-        tr.fill(0.0);
-        self.poly.render(&self.shared, tl, tr);
+        self.tmp_l[..n].fill(0.0);
+        self.tmp_r[..n].fill(0.0);
+        self.poly
+            .render(&self.shared, &mut self.tmp_l[..n], &mut self.tmp_r[..n]);
         let body = if self.shared.model == Model::Bowed {
             0.0
         } else {
             self.body
         };
-        for (ch, buf) in [&mut *tl, &mut *tr].into_iter().enumerate() {
-            for x in buf.iter_mut() {
-                let mut y = *x;
-                if body > 0.0 {
-                    let f = &mut self.body_filters[ch];
-                    let res = f[0].process(&self.body_coefs[0], y) * 1.4
-                        + f[1].process(&self.body_coefs[1], y) * 1.1
-                        + f[2].process(&self.body_coefs[2], y) * 0.8;
-                    y = y * (1.0 - 0.4 * body) + res * body;
-                }
-                if !self.tone_bypass {
-                    y = self.tone_filters[ch].process(&self.tone, y);
-                }
-                *x = y;
-            }
-        }
         for i in 0..n {
-            l[i] += tl[i];
-            r[i] += tr[i];
+            l[i] += self.respond(0, self.tmp_l[i], body);
+            r[i] += self.respond(1, self.tmp_r[i], body);
         }
     }
 }
@@ -1490,6 +1657,102 @@ mod tests {
                 patch.name,
                 peak(&out)
             );
+        }
+    }
+
+    fn db_curve(out: &[f32]) -> Vec<f32> {
+        out.chunks(2_400)
+            .map(|c| 20.0 * (rms(c) + 1e-9).log10())
+            .collect()
+    }
+
+    const GUITAR: [(&str, f32); 5] = [
+        ("hardness", 0.7),
+        ("position", 0.12),
+        ("decay", 6.0),
+        ("hf_damp", 0.25),
+        ("body", 0.0),
+    ];
+
+    /// Seconds until a note has fallen 40 dB from its start.
+    fn time_to_minus_40(extra: &[(&str, f32)], note: u8) -> f32 {
+        let mut o = GUITAR.to_vec();
+        o.extend_from_slice(extra);
+        let mut s = synth_with(&o);
+        s.poly.note_on(note, 0.8, &s.shared);
+        let c = db_curve(&render(&mut s, 48_000 * 10));
+        let top = c[..4].iter().cloned().fold(-200.0, f32::max);
+        c.iter().position(|d| *d < top - 40.0).unwrap_or(c.len()) as f32 * 0.05
+    }
+
+    #[test]
+    fn decay_track_shortens_high_notes() {
+        let flat: Vec<f32> = [40, 60, 88].map(|n| time_to_minus_40(&[], n)).to_vec();
+        assert!(
+            flat.iter().all(|t| (t / flat[1] - 1.0).abs() < 0.3),
+            "{flat:?}"
+        );
+        let tracked: Vec<f32> = [40, 60, 88]
+            .map(|n| time_to_minus_40(&[("decay_track", 0.67)], n))
+            .to_vec();
+        assert!(
+            tracked[0] > 1.8 * tracked[1] && tracked[1] > 1.8 * tracked[2],
+            "{tracked:?}"
+        );
+    }
+
+    /// Two polarizations: a quick first decay, then a slower tail; same
+    /// attack level, still in tune.
+    #[test]
+    fn two_stage_decay_bends_the_envelope() {
+        let shape = |two: f32| {
+            let mut o = GUITAR.to_vec();
+            o.push(("two_stage", two));
+            let mut s = synth_with(&o);
+            s.poly.note_on(48, 0.8, &s.shared);
+            let out = render(&mut s, 48_000 * 4);
+            let c = db_curve(&out);
+            let (early, late) = ((c[1] - c[8]) / 0.35, (c[30] - c[70]) / 2.0);
+            (early / late, rms(&out[..4_800]))
+        };
+        let (single, single_level) = shape(0.0);
+        let (double, double_level) = shape(0.8);
+        assert!(
+            double > 1.4 * single,
+            "early/late decay ratio {single:.2} -> {double:.2}"
+        );
+        let db = 20.0 * (double_level / single_level).log10();
+        assert!(db.abs() < 1.5, "attack level changed by {db:.1} dB");
+        for note in [40u8, 52, 64, 76] {
+            let mut o = GUITAR.to_vec();
+            o.push(("two_stage", 1.0));
+            let p = measured_pitch(&mut synth_with(&o), note);
+            assert!((p - note as f32).abs() < 0.02, "note {note}: {p}");
+        }
+    }
+
+    /// Each guitar body rings at its air and main top-plate modes, well
+    /// above the valley between them.
+    #[test]
+    fn guitar_bodies_resonate_at_their_modes() {
+        for bt in 1..BODY_TYPES.len() {
+            let mut s = synth_with(&[("body", 0.5), ("body_type", bt as f32)]);
+            let ir: Vec<f32> = (0..48_000)
+                .map(|i| s.respond(0, if i == 0 { 1.0 } else { 0.0 }, 0.5))
+                .collect();
+            let db = |f: f32| {
+                let (mut re, mut im) = (0.0f64, 0.0f64);
+                for (n, v) in ir.iter().enumerate() {
+                    let ph = std::f64::consts::TAU * f as f64 * n as f64 / 48_000.0;
+                    re += *v as f64 * ph.cos();
+                    im -= *v as f64 * ph.sin();
+                }
+                20.0 * (re * re + im * im).sqrt().log10() as f32
+            };
+            let m = GUITAR_BODIES[bt - 1];
+            let valley = db((m[0].0 * m[1].0).sqrt());
+            assert!(db(m[0].0) > valley + 8.0, "{}: air mode", BODY_TYPES[bt]);
+            assert!(db(m[1].0) > valley + 10.0, "{}: top mode", BODY_TYPES[bt]);
         }
     }
 }

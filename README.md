@@ -19,7 +19,19 @@ controller or a DAW/sequencer.
   model's controls are shown.
   - **String** is an extended Karplus-Strong plucked string. A fractional all-pass keeps it
     in tune, and it has damping for brightness and dispersion for stiffness. Pick
-    position shapes the excitation.
+    position shapes the excitation. For guitars:
+    - **Decay Track** makes high notes ring shorter than low ones, as on a real guitar
+      (at 100%, each octave up halves the decay).
+    - **Two-Stage Decay** models the string's two vibration planes. One drives the
+      bridge hard and dies quickly, the other rings on, slightly detuned. The result is
+      a prompt attack, then a long, gently beating tail.
+    - **Body Type** picks the resonating body: Box (a generic three-resonance box),
+      or a modal Dreadnought, Classical or Parlor body. Each modal body has 14
+      resonances: the sound-hole air mode, the top plate's breathing modes and
+      higher plate modes. **Body** sets how much of it you hear.
+    - New controls default to the earlier sound, so existing patches are unchanged. The
+      Steel, Nylon and Parlor Guitar patches use them all; Harp, Koto and the electric
+      guitars use the decay features.
   - **Mallet** is modal synthesis: a strike rings up to 8 resonators tuned to a material's
     partials (wood/marimba, metal/vibraphone, glass, free bar, bell, membrane, tine).
   - **Piano** uses 1–3 detuned stiff strings per note, as on a real piano, so notes beat

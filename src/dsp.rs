@@ -398,6 +398,13 @@ impl Biquad {
         )
     }
 
+    /// Band-pass with 0 dB gain at `f0`.
+    pub fn band_pass(f0: f32, q: f32, sr: f32) -> Self {
+        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
+        let (c, alpha) = (w.cos(), w.sin() / (2.0 * q as f64));
+        Self::from_coefs(alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * c, 1.0 - alpha)
+    }
+
     /// 12 dB/oct high-pass.
     pub fn high_pass(f0: f32, q: f32, sr: f32) -> Self {
         let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
