@@ -246,6 +246,13 @@ cargo run --release -- --help          # all options
 cargo run --release -- --list-devices  # audio outputs and MIDI inputs
 ```
 
+To audition every factory patch without the TUI, run `mise run render-patches` (or
+`--render-patches DIR`, optionally with `--only TEXT` to filter by name or synth type).
+Each patch plays a phrase that suits it into its own WAV: chords and a melody, a bass
+riff, a 303 line, a drum groove, or every kit pad in turn. Then `levels.tsv` lists
+every patch's peak and RMS level and flags any that are silent, very quiet or close
+to clipping. All ~115 patches render in a few seconds.
+
 On startup the synth connects to every MIDI input it finds. On macOS and Linux it also opens
 a virtual input called **Arkeology Synth**: point DAW tracks at it, one MIDI channel per
 synth, to sequence a song.

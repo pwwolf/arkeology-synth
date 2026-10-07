@@ -1,6 +1,7 @@
 mod amp;
 mod app;
 mod audio;
+mod audition;
 mod dsp;
 mod engine;
 mod fx;
@@ -86,6 +87,13 @@ struct Args {
     /// Render a short demo to a WAV file without opening audio or the TUI.
     #[arg(long, value_name = "WAV")]
     render_demo: Option<PathBuf>,
+    /// Render every factory patch through a short phrase into DIR (one WAV
+    /// each, plus levels.tsv flagging silent, quiet or clipping patches).
+    #[arg(long, value_name = "DIR")]
+    render_patches: Option<PathBuf>,
+    /// With --render-patches: only patches whose name or synth type contains this.
+    #[arg(long, value_name = "TEXT", requires = "render_patches")]
+    only: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -119,6 +127,37 @@ fn main() -> Result<()> {
             kitgen::kits_dir(&storage.samples_dir()).display()
         );
         println!("Load them with the \"VCSL Acoustic Kit\" and \"VCSL Percussion\" patches.");
+        return Ok(());
+    }
+    if let Some(dir) = &args.render_patches {
+        // Kit patches play the rendered kits: make sure they exist.
+        kitgen::ensure(&storage.samples_dir(), &builtins, false)?;
+        let started = std::time::Instant::now();
+        let results =
+            audition::render_patches(dir, args.only.as_deref(), &storage.samples_dir(), &builtins)?;
+        let rendered = results.iter().filter(|r| r.file.is_some()).count();
+        println!(
+            "rendered {rendered} patches into {} in {:.1}s",
+            dir.display(),
+            started.elapsed().as_secs_f32()
+        );
+        for r in &results {
+            if let Some(flag) = r.flag() {
+                println!("  {flag:<20} {} {}", r.kind.label(), r.name);
+            } else if r.file.is_none() {
+                println!(
+                    "  {:<20} {} {}: {}",
+                    "SKIPPED",
+                    r.kind.label(),
+                    r.name,
+                    r.note
+                );
+            }
+        }
+        println!(
+            "levels for every patch: {}",
+            dir.join("levels.tsv").display()
+        );
         return Ok(());
     }
     if args.render_kits {

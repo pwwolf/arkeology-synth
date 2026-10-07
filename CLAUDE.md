@@ -16,6 +16,7 @@ cargo test <name> -- --nocapture           # see eprintln! output
 cargo clippy --all-targets                 # must stay warning-free
 cargo fmt                                  # default rustfmt settings; keep the tree formatted
 cargo run --release -- --render-demo out.wav   # offline render, no audio device or TUI
+cargo run --release -- --data-dir /tmp/x --render-patches /tmp/renders [--only organ]   # every factory patch to WAV + levels.tsv
 cargo run --release -- --list-devices
 SHOW_UI=1 cargo test renders_and_navigates -- --nocapture   # print TUI screens rendered by tests
 ```

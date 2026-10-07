@@ -21,3 +21,7 @@ run = "cargo run --release --example midi_send --"
 [tasks.fetch-kits]
 description = "Download the acoustic VCSL drum and percussion kits (CC0, ~10 MB)"
 run = "cargo run --release -- --fetch-kits"
+
+[tasks.render-patches]
+description = "Render every factory patch to WAV for auditioning (into ./patch-renders)"
+run = "cargo run --release -- --render-patches patch-renders"

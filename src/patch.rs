@@ -748,7 +748,7 @@ pub fn factory_patches() -> Vec<Patch> {
                 ("reverb_send", 0.15),
             ],
         ),
-        make("Drums Init", Drums, &[]),
+        make("Drums Init", Drums, &[("volume", 0.55)]),
         make("Kit Init", Kit, &[]),
         make(
             "808 Kit",
@@ -773,6 +773,7 @@ pub fn factory_patches() -> Vec<Patch> {
             "909 Kit",
             Drums,
             &[
+                ("volume", 0.55),
                 ("fx1_type", 9.0),
                 ("fx1_mix", 1.0),
                 ("fx1_comp_threshold", -20.0),
@@ -862,6 +863,7 @@ pub fn factory_patches() -> Vec<Patch> {
             "Reverse Glass",
             Sampler,
             &[
+                ("volume", 0.5),
                 ("source", 2.0),
                 ("mode", 1.0),
                 ("reverse", 1.0),
@@ -1187,6 +1189,7 @@ pub fn factory_patches() -> Vec<Patch> {
             "Church Bell",
             Physical,
             &[
+                ("volume", 0.5),
                 ("model", 1.0),
                 ("material", 4.0),
                 ("transpose", -12.0),

@@ -476,7 +476,11 @@ fn render_layer(l: &Layer, frames: usize, builtins: &Builtins) -> Result<(Vec<f3
                 .into_iter()
                 .find(|p| p.name == name)
                 .with_context(|| format!("no patch {name}"))?;
-            (p.kind, p.values())
+            // Layers are balanced by their recipe gains, not by the patch's
+            // rack volume, so trimming a patch's level never changes a kit.
+            let mut values = p.values();
+            values[crate::synth::VOLUME] = crate::synth::COMMON[crate::synth::VOLUME].default;
+            (p.kind, values)
         }
         Base::Kind(k) => (k, k.defaults()),
     };
