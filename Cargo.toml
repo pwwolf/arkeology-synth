@@ -1,6 +1,7 @@
 [package]
 name = "arkeology-synth"
 version = "0.1.0"
+description = "A multitimbral MIDI synth for the terminal: FM, analog, physical modelling, organ, granular, drums and samplers"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/pwwolf/arkeology-synth"

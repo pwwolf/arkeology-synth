@@ -39,7 +39,12 @@ use crate::patch::{Session, Storage, read_json};
 #[derive(Parser, Debug)]
 #[command(
     version,
-    about = "Arkeology: a multitimbral FM + granular synth for the terminal, played over MIDI"
+    about = "Arkeology: a multitimbral MIDI synth for the terminal",
+    long_about = "Arkeology: a multitimbral MIDI synth for the terminal. Run up to 16 synths at \
+once, one per MIDI channel: FM, analog, physical models (guitar, piano, strings, mallets), a \
+tonewheel organ, granular, a 303-style bass, drum machines, sample kits and a sampler, with \
+insert effects (including guitar pedals and amps), recording and an MCP server for AI \
+assistants."
 )]
 struct Args {
     /// Audio output device (substring match; see --list-devices).
