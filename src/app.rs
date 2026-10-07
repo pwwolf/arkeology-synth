@@ -2871,12 +2871,7 @@ mod tests {
         let started = app
             .run_tool("start_recording", &serde_json::json!({ "name": "take" }))
             .unwrap();
-        assert!(
-            started["recording"]
-                .as_str()
-                .unwrap()
-                .ends_with("recordings/take.wav")
-        );
+        assert!(Path::new(started["recording"].as_str().unwrap()).ends_with("recordings/take.wav"));
         app.send(Command::NoteOn {
             slot: 0,
             note: 60,
@@ -2983,9 +2978,7 @@ mod tests {
             .unwrap();
         assert!(r["slots"].as_array().unwrap().is_empty());
         assert!(
-            r["previous_rack_saved_as"]
-                .as_str()
-                .unwrap()
+            Path::new(r["previous_rack_saved_as"].as_str().unwrap())
                 .ends_with("sessions/before.json")
         );
         assert!(

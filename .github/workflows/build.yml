@@ -70,6 +70,8 @@ jobs:
       - name: Build (macOS universal)
         if: runner.os == 'macOS'
         run: |
+          # Add the targets to the toolchain rust-toolchain.toml selects here.
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
           cargo build --locked --release --target aarch64-apple-darwin
           cargo build --locked --release --target x86_64-apple-darwin
           mkdir -p dist
