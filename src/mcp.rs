@@ -197,7 +197,7 @@ fn tool_definitions() -> Value {
     });
     let kind = json!({
         "type": "string",
-        "enum": ["fm", "analog", "physical", "tonewheel", "granular", "acid", "drums", "kit", "sampler"],
+        "enum": ["fm", "analog", "physical", "tonewheel", "vocal", "granular", "acid", "drums", "kit", "sampler"],
         "description": "fm: 4-op FM · analog: poly subtractive (pads, brass, leads) · \
     physical: modelled plucked strings, mallets/bells, piano and bowed strings (violin family) · granular: grain clouds · \
     acid: 303-style mono bass · drums: synthesized 808/909 kit on the GM drum map · \

@@ -25,7 +25,7 @@ fn kind_name(kind: SynthKind) -> Value {
 
 fn parse_kind(v: &Value) -> Result<SynthKind, String> {
     serde_json::from_value(v.clone()).map_err(|_| {
-        format!("unknown synth type {v}; use one of fm, analog, physical, tonewheel, granular, acid, drums, kit, sampler")
+        format!("unknown synth type {v}; use one of fm, analog, physical, tonewheel, vocal, granular, acid, drums, kit, sampler")
     })
 }
 
@@ -72,6 +72,7 @@ fn describe_param(d: &ParamDesc) -> Value {
         Unit::Pan => "pan (-1 left .. 1 right)",
         Unit::Note => "MIDI note",
         Unit::Decibels => "dB",
+        Unit::Vowel => "vowel position (0 a, 1 e, 2 i, 3 o, 4 u; fractions morph between them)",
     };
     let mut p = json!({
         "key": d.key,
@@ -158,6 +159,10 @@ fn midi_behaviour(kind: SynthKind, values: &[f32]) -> Value {
         SynthKind::Tonewheel => {
             "rotary speaker fast while above halfway (slow below, unless Speed is Fast)".to_string()
         }
+        SynthKind::Vocal => format!(
+            "moves the vowel by up to {:+.1} steps along a-e-i-o-u (Wheel>Vowel), for talkbox effects",
+            get("wheel_vowel")
+        ),
         _ => "no effect".to_string(),
     };
     let velocity = match kind {
@@ -174,6 +179,9 @@ fn midi_behaviour(kind: SynthKind, values: &[f32]) -> Value {
         SynthKind::Physical if model == "Bowed" => "bow speed: louder notes with the same tone".to_string(),
         SynthKind::Physical => "level and brightness (Vel>Bright: harder strikes/plucks are brighter)".to_string(),
         SynthKind::Tonewheel => "ignored, like a real organ (MIDI-learn a CC to Volume for a swell pedal)".to_string(),
+        SynthKind::Vocal => {
+            "level and brightness (Vel>Bright: louder notes close the vocal folds faster)".to_string()
+        }
     };
     let sustain = match kind {
         SynthKind::Drums | SynthKind::Kit => "ignored (drums are one-shots)",

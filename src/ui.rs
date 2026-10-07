@@ -258,6 +258,7 @@ fn draw_rack(f: &mut Frame, app: &App, area: Rect) {
                         SynthKind::Analog => Color::Rgb(255, 150, 90),
                         SynthKind::Physical => Color::Rgb(205, 170, 120),
                         SynthKind::Tonewheel => Color::Rgb(200, 140, 255),
+                        SynthKind::Vocal => Color::Rgb(140, 190, 255),
                     };
                     let name: String = s.name.chars().take(13).collect();
                     let mut spans = vec![
@@ -1285,7 +1286,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         k("← → / - +", "change the slot's MIDI channel (omni, 1-16)"),
         k(
             "a",
-            "add a synth: FM, Analog, Physical, Granular, 303, Drums, Kit, Sampler",
+            "add a synth: FM, Analog, Physical, Organ, Vocal, Granular, 303, Drums, Kit, Sampler",
         ),
         k("d / ⌫", "remove the selected synth"),
         k("r", "rename      m  mute      s  solo"),

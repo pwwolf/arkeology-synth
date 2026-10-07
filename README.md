@@ -65,6 +65,20 @@ controller or a DAW/sequencer.
     drum takes a few. **The mod wheel switches it to fast**, or set Speed to Fast.
   - Velocity is ignored, as on a real organ. For a swell pedal, MIDI-learn a CC to Volume.
   - Factory patches: Jazz, Gospel, Rock, Ballad, Full and Church Organ.
+- **Vocal**: a formant voice for choirs, solo voices and talkbox leads.
+  - Each note is one to six **singers**. Each has a glottal pulse (or a saw or buzz
+    for talkbox and robot sounds), breath noise, vibrato that fades in after a delay,
+    and slow random drift in pitch and level. Ensemble singers are detuned, spread
+    across the stereo field and come in at slightly different moments.
+  - Five formant resonators in series shape the vowel, from the classic soprano,
+    alto, tenor and bass vowel tables. **Vowel** morphs smoothly through a → e → i →
+    o → u, **Hum** closes the mouth to "mmm", and **Formant Shift** makes the voice
+    sound bigger or smaller without changing pitch.
+  - **The mod wheel moves the vowel** (Wheel>Vowel sets how far), so a controller can
+    make it talk. Velocity sets level and brightness.
+  - It sings vowels, not words.
+  - Factory patches: Choir Aah, Choir Ooh (the wheel opens it to "aah"), Soprano Solo,
+    Bass Monks, Talkbox Lead, Robot Voice and Hum Pad.
 - **Granular**: a grain cloud per voice over a WAV/FLAC file or one of five built-in sources
   (Choir, Glass, Saw, Pluck, Noise). Controls for position, spray, scan speed, size,
   density, jitter, pitch spray, stereo spread, reverse probability and window shape, plus
@@ -351,7 +365,7 @@ tables, and those tables also drive the generic TUI editor and patch serialisati
 |------|----------|
 | `src/engine.rs` | slots, MIDI routing, mixer, telemetry |
 | `src/synth/mod.rs` | `SynthKind`, common params, the `Poly`/`Voice` voice allocator (stealing, sustain, glide) |
-| `src/synth/fm.rs`, `analog.rs`, `physical.rs`, `tonewheel.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `kit.rs`, `sampler.rs` | the nine engines |
+| `src/synth/fm.rs`, `analog.rs`, `physical.rs`, `tonewheel.rs`, `vocal.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `kit.rs`, `sampler.rs` | the ten engines |
 | `src/sample.rs` | WAV/FLAC loading, built-in sources, waveform overview and onset detection |
 | `src/dsp.rs`, `src/reverb.rs` | oscillator table, ADSR, SVF filter, Freeverb |
 | `src/app.rs`, `src/ui.rs` | TUI state, input and rendering |

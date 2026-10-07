@@ -42,7 +42,7 @@ use crate::patch::{Session, Storage, read_json};
     about = "Arkeology: a multitimbral MIDI synth for the terminal",
     long_about = "Arkeology: a multitimbral MIDI synth for the terminal. Run up to 16 synths at \
 once, one per MIDI channel: FM, analog, physical models (guitar, piano, strings, mallets), a \
-tonewheel organ, granular, a 303-style bass, drum machines, sample kits and a sampler, with \
+tonewheel organ, a vocal choir/talkbox, granular, a 303-style bass, drum machines, sample kits and a sampler, with \
 insert effects (including guitar pedals and amps), recording and an MCP server for AI \
 assistants."
 )]

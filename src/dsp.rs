@@ -398,6 +398,16 @@ impl Biquad {
         )
     }
 
+    /// Two-pole resonator at `f0` with bandwidth `bw` (Hz) and unity gain at
+    /// DC: below its frequency it passes the signal, at it it rings. Several
+    /// in series model a vocal tract (cascade formant synthesis).
+    pub fn resonator(f0: f32, bw: f32, sr: f32) -> Self {
+        let r = (-std::f64::consts::PI * bw as f64 / sr as f64).exp();
+        let a1 = -2.0 * r * (std::f64::consts::TAU * f0 as f64 / sr as f64).cos();
+        let a2 = r * r;
+        Self::from_coefs(1.0 + a1 + a2, 0.0, 0.0, 1.0, a1, a2)
+    }
+
     /// Band-pass with 0 dB gain at `f0`.
     pub fn band_pass(f0: f32, q: f32, sr: f32) -> Self {
         let w = std::f64::consts::TAU * f0 as f64 / sr as f64;

@@ -30,7 +30,11 @@ pub enum Unit {
     /// MIDI note number, shown with its name.
     Note,
     Decibels,
+    /// Position along a → e → i → o → u (0..=4).
+    Vowel,
 }
+
+pub const VOWELS: [&str; 5] = ["a", "e", "i", "o", "u"];
 
 #[derive(Clone, Copy, Debug)]
 pub struct ParamDesc {
@@ -247,6 +251,17 @@ impl ParamDesc {
             Unit::Pan if v.abs() < 0.005 => "C".into(),
             Unit::Pan if v < 0.0 => format!("L{:.0}", -v * 100.0),
             Unit::Pan => format!("R{:.0}", v * 100.0),
+            Unit::Vowel => {
+                let i = (v.max(0.0) as usize).min(3);
+                let frac = v - i as f32;
+                if frac < 0.05 {
+                    VOWELS[i].into()
+                } else if frac > 0.95 {
+                    VOWELS[i + 1].into()
+                } else {
+                    format!("{}→{} {:.0}%", VOWELS[i], VOWELS[i + 1], frac * 100.0)
+                }
+            }
         }
     }
 
@@ -261,6 +276,9 @@ impl ParamDesc {
                 {
                     return Some(i as f32);
                 }
+            }
+            _ if self.unit == Unit::Vowel && VOWELS.contains(&t.as_str()) => {
+                return VOWELS.iter().position(|v| *v == t).map(|i| i as f32);
             }
             _ if self.unit == Unit::Note && t.starts_with(|c: char| c.is_ascii_alphabetic()) => {
                 return parse_note_name(&t).map(|n| self.clamp(n as f32));
@@ -408,6 +426,17 @@ mod tests {
         let p = ParamDesc::float("x", "X", "G", 20.0, 20_000.0, 1000.0, Unit::Hz).exp();
         let n = p.normalize(1000.0);
         assert!((p.denormalize(n) - 1000.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn vowels_display_and_parse() {
+        let v = ParamDesc::float("v", "V", "G", 0.0, 4.0, 0.0, Unit::Vowel);
+        assert_eq!(v.format(0.0), "a");
+        assert_eq!(v.format(2.0), "i");
+        assert_eq!(v.format(4.0), "u");
+        assert_eq!(v.format(3.7), "o→u 70%");
+        assert_eq!(v.parse("o"), Some(3.0));
+        assert_eq!(v.parse("1.5"), Some(1.5));
     }
 
     #[test]

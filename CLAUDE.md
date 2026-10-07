@@ -42,7 +42,7 @@ Anything heap-allocated (a whole `engine::Slot`, an `fx::FxUnit` with its delay 
 Adding a parameter means adding a table entry and reading it in `update`. Visibility is computed, not stored: `SynthKind::param_visible` hides parameters of inactive FX types and of other physical-synth models. The UI, MCP `get_params` and patch saving all respect it.
 
 **Synth engines** (`src/synth/`), dispatched statically through `synth::Instrument`:
-- Polyphonic engines (`fm`, `analog`, `granular`, `sampler`, `physical`) implement `synth::Voice` and reuse `synth::Poly`, which handles allocation, stealing, sustain, glide and bend.
+- Polyphonic engines (`fm`, `analog`, `granular`, `sampler`, `physical`, `vocal`) implement `synth::Voice` and reuse `synth::Poly`, which handles allocation, stealing, sustain, glide and bend.
 - Mono or one-shot engines (`acid`, `drums`, `kit`) handle notes themselves and implement the private `PolyControl` trait. `tonewheel` is in between: it uses `Poly` for voices but wraps it to track held keys (single-trigger percussion) and runs a shared post-chain (vibrato scanner, overdrive, rotary speaker).
 - To add an engine: a `SynthKind` variant (label, long name, `ALL` order), a params table, an `Instrument` variant wired into every match in `synth/mod.rs`, a UI colour in `ui.rs`, factory patches in `patch.rs`, and the kind name in the MCP tool schema (`mcp.rs`) and in `app/tools.rs` errors.
 - Large engine structs are boxed in `Instrument` (clippy's `large_enum_variant`).

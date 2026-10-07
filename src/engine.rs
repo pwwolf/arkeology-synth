@@ -917,6 +917,7 @@ mod tests {
             SynthKind::Granular,
             SynthKind::Analog,
             SynthKind::Tonewheel,
+            SynthKind::Vocal,
         ];
         for p in crate::patch::factory_patches()
             .into_iter()
