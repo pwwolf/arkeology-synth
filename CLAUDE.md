@@ -29,7 +29,7 @@ The TUI can't be driven interactively from a tool call. To check UI changes, use
 
 **Threads and real-time rules.** Three threads talk through lock-free queues (`crossbeam_queue::ArrayQueue`):
 - The audio callback owns `engine::Engine`. It must never lock, allocate or free.
-- The MIDI thread (midir callbacks) pushes `Command::Midi` to the engine and a copy to the UI queue.
+- The MIDI thread (midir callbacks) pushes `Command::MidiAt` (stamped with its arrival `Instant`) to the engine and a copy to the UI queue. `Engine::process_at` places stamped MIDI at the matching sample of the next buffer (offset = arrival − previous callback), rendering in sub-blocks that stop at each event; `Command::Midi` (unstamped, e.g. offline renders) applies at the buffer start.
 - The UI thread owns `app::App`: the model, input handling and all persistence.
 
 Anything heap-allocated (a whole `engine::Slot`, an `fx::FxUnit` with its delay lines, an `Arc<Sample>`) is built on the UI thread and moved in with a `Command`. Whatever the engine replaces goes back through the garbage queue (`engine::Garbage`) so the UI thread drops it. Meters, voice counts and CPU load come back via atomics in `engine::Telemetry`, as does the master output itself (`spectrum::Scope`, a ring of atomic samples) for the UI-side FFT analyzer in `spectrum.rs`. Keep this discipline in any new feature.

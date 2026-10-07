@@ -21,6 +21,9 @@ use crate::sample::{Builtins, Sample};
 use crate::synth::{self, Instrument, MAX_BLOCK, SynthKind};
 
 pub const MAX_SLOTS: usize = 16;
+/// Timestamped MIDI events one buffer can hold; beyond this they apply at
+/// the buffer's start.
+const MAX_PENDING_MIDI: usize = 1024;
 
 /// Gain staging: volume parameters map through a square law times these.
 const SLOT_GAIN: f32 = 1.5;
@@ -30,6 +33,11 @@ const GLIDE_TIME: f32 = 0.02;
 
 pub enum Command {
     Midi(MidiMsg),
+    /// MIDI stamped with its arrival time on the MIDI thread. The engine
+    /// places it at the matching sample of the next buffer, so timing is
+    /// exact (at a constant one-buffer delay) instead of snapping to the
+    /// start of whichever buffer it lands in.
+    MidiAt(MidiMsg, Instant),
     NoteOn {
         slot: usize,
         note: u8,
@@ -303,6 +311,10 @@ pub struct Engine {
     send_l: [f32; MAX_BLOCK],
     send_r: [f32; MAX_BLOCK],
     cpu_avg: f32,
+    /// Timestamped MIDI for the current buffer: (sample offset, message).
+    /// Preallocated; never grows on the audio thread.
+    pending: Vec<(usize, MidiMsg)>,
+    last_callback: Option<Instant>,
 }
 
 impl Engine {
@@ -332,6 +344,8 @@ impl Engine {
             send_l: [0.0; MAX_BLOCK],
             send_r: [0.0; MAX_BLOCK],
             cpu_avg: 0.0,
+            pending: Vec::with_capacity(MAX_PENDING_MIDI),
+            last_callback: None,
             master_fx: std::array::from_fn(|_| FxUnit::off(sample_rate)),
             master_glide: ParamGlide::new(master::PARAMS.iter(), &master_vals),
             master_dirty: false,
@@ -355,15 +369,9 @@ impl Engine {
         );
     }
 
-    fn drain_commands(&mut self) {
-        while let Some(cmd) = self.commands.pop() {
-            self.handle(cmd);
-        }
-    }
-
     fn handle(&mut self, cmd: Command) {
         match cmd {
-            Command::Midi(m) => self.handle_midi(m),
+            Command::Midi(m) | Command::MidiAt(m, _) => self.handle_midi(m),
             Command::NoteOn {
                 slot,
                 note,
@@ -503,13 +511,49 @@ impl Engine {
 
     /// Render interleaved output. Called from the audio callback.
     pub fn process(&mut self, out: &mut [f32], channels: usize) {
+        self.process_at(out, channels, Instant::now());
+    }
+
+    /// `process` with the callback time passed in (so tests control the clock).
+    pub fn process_at(&mut self, out: &mut [f32], channels: usize, now: Instant) {
         let started = Instant::now();
-        self.drain_commands();
         let channels = channels.max(1);
         let frames = out.len() / channels;
+
+        // Timestamped MIDI that arrived since the previous callback lands at
+        // the same distance into this buffer; everything else applies now.
+        let prev = self.last_callback.replace(now);
+        self.pending.clear();
+        while let Some(cmd) = self.commands.pop() {
+            match cmd {
+                Command::MidiAt(m, at) if self.pending.len() < self.pending.capacity() => {
+                    let offset = match prev {
+                        Some(p) if at > p => {
+                            let samples = (at - p).as_secs_f64() * self.sample_rate as f64;
+                            (samples as usize).min(frames.saturating_sub(1))
+                        }
+                        _ => 0,
+                    };
+                    // Arrival order is time order: keep offsets non-decreasing.
+                    let offset = offset.max(self.pending.last().map_or(0, |e| e.0));
+                    self.pending.push((offset, m));
+                }
+                other => self.handle(other),
+            }
+        }
+
         let mut done = 0;
+        let mut next = 0;
         while done < frames {
-            let n = (frames - done).min(MAX_BLOCK);
+            while let Some(&(offset, m)) = self.pending.get(next) {
+                if offset > done {
+                    break;
+                }
+                self.handle_midi(m);
+                next += 1;
+            }
+            let until = self.pending.get(next).map_or(frames, |e| e.0).min(frames);
+            let n = (until - done).clamp(1, MAX_BLOCK);
             self.render_block(n);
             for i in 0..n {
                 let frame = &mut out[(done + i) * channels..(done + i + 1) * channels];
@@ -522,6 +566,11 @@ impl Engine {
                 }
             }
             done += n;
+        }
+        // (Only reachable for an empty buffer.)
+        while let Some(&(_, m)) = self.pending.get(next) {
+            self.handle_midi(m);
+            next += 1;
         }
         for (i, slot) in self.slots.iter_mut().enumerate() {
             let voices = slot.as_mut().map_or(0, |s| s.inst.active_voices());
@@ -904,6 +953,144 @@ mod tests {
                 db(4.0) - start
             );
         }
+    }
+
+    /// Timestamped MIDI starts at its exact sample in the next buffer.
+    #[test]
+    fn timestamped_midi_is_sample_accurate() {
+        use std::time::Duration;
+        crate::dsp::init_tables();
+        let sr = 48_000.0;
+        let ms = |x: f64| Duration::from_secs_f64(x / 1000.0);
+        // First sample index where the output (left channel) becomes audible.
+        let onsets = |out: &[f32]| -> Vec<usize> {
+            let mut found = Vec::new();
+            let mut quiet = 0;
+            for (i, v) in out.chunks(2).map(|f| f[0].abs()).enumerate() {
+                if v > 1e-3 {
+                    if quiet > 24 || found.is_empty() && quiet == i {
+                        found.push(i);
+                    }
+                    quiet = 0;
+                } else {
+                    quiet += 1;
+                }
+            }
+            found
+        };
+        let engine = || {
+            let cmds: CommandQueue = Arc::new(ArrayQueue::new(256));
+            let e = Engine::new(
+                sr,
+                cmds.clone(),
+                Arc::new(ArrayQueue::new(64)),
+                Arc::new(Telemetry::default()),
+            );
+            let kind = SynthKind::Drums;
+            let mut v = kind.defaults();
+            v[synth::REVERB_SEND] = 0.0;
+            let slot = Slot::new(kind, v, None, sr, &sample::builtins(), &[]);
+            cmds.push(Command::InstallSlot {
+                slot: 0,
+                data: slot,
+            })
+            .ok();
+            (e, cmds)
+        };
+        let hat = |at| {
+            Command::MidiAt(
+                MidiMsg {
+                    channel: 9,
+                    kind: MidiKind::NoteOn {
+                        note: 42,
+                        velocity: 120,
+                    },
+                },
+                at,
+            )
+        };
+
+        // A note 4 ms into the interval starts 192 samples into the buffer.
+        let (mut e, cmds) = engine();
+        let t0 = Instant::now();
+        let mut out = vec![0.0; 2 * 1024];
+        e.process_at(&mut out, 2, t0);
+        cmds.push(hat(t0 + ms(4.0))).ok();
+        e.process_at(&mut out, 2, t0 + ms(21.33));
+        assert_eq!(onsets(&out).first(), Some(&192), "{:?}", onsets(&out));
+
+        // Two hits 1.5 ms apart stay exactly 72 samples apart.
+        let (mut e, cmds) = engine();
+        e.process_at(&mut out, 2, t0);
+        cmds.push(Command::MidiAt(
+            MidiMsg {
+                channel: 9,
+                kind: MidiKind::NoteOn {
+                    note: 36,
+                    velocity: 120,
+                },
+            },
+            t0 + ms(2.0),
+        ))
+        .ok();
+        cmds.push(Command::MidiAt(
+            MidiMsg {
+                channel: 9,
+                kind: MidiKind::NoteOn {
+                    note: 39,
+                    velocity: 120,
+                },
+            },
+            t0 + ms(3.5),
+        ))
+        .ok();
+        e.process_at(&mut out, 2, t0 + ms(21.33));
+        let first = onsets(&out)[0];
+        assert_eq!(first, 96);
+        let mut alone = vec![0.0; 2 * 1024];
+        let (mut e2, cmds2) = engine();
+        e2.process_at(&mut alone, 2, t0);
+        cmds2
+            .push(Command::MidiAt(
+                MidiMsg {
+                    channel: 9,
+                    kind: MidiKind::NoteOn {
+                        note: 36,
+                        velocity: 120,
+                    },
+                },
+                t0 + ms(2.0),
+            ))
+            .ok();
+        e2.process_at(&mut alone, 2, t0 + ms(21.33));
+        let diverge = out
+            .chunks(2)
+            .zip(alone.chunks(2))
+            .position(|(a, b)| (a[0] - b[0]).abs() > 1e-6);
+        assert_eq!(
+            diverge,
+            Some(96 + 72),
+            "the second hit starts 72 samples after the first"
+        );
+
+        // Late (before the previous callback) and unstamped MIDI apply at once.
+        let (mut e, cmds) = engine();
+        e.process_at(&mut out, 2, t0 + ms(10.0));
+        cmds.push(hat(t0)).ok();
+        e.process_at(&mut out, 2, t0 + ms(31.33));
+        assert_eq!(onsets(&out).first(), Some(&0));
+        let (mut e, cmds) = engine();
+        e.process_at(&mut out, 2, t0);
+        cmds.push(Command::Midi(MidiMsg {
+            channel: 9,
+            kind: MidiKind::NoteOn {
+                note: 42,
+                velocity: 120,
+            },
+        }))
+        .ok();
+        e.process_at(&mut out, 2, t0 + ms(21.33));
+        assert_eq!(onsets(&out).first(), Some(&0));
     }
 
     /// Factory patches for the melodic engines must neither vanish nor slam

@@ -37,6 +37,12 @@ use crate::engine::{Command, CommandQueue, Engine, GarbageQueue, Telemetry};
 use crate::midi::{MidiManager, MidiMsg, Sink};
 use crate::patch::{Session, Storage, read_json};
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum MidiTiming {
+    Tight,
+    Immediate,
+}
+
 #[derive(Parser, Debug)]
 #[command(
     version,
@@ -75,6 +81,11 @@ struct Args {
     /// Don't start the embedded MCP server.
     #[arg(long)]
     no_mcp: bool,
+    /// MIDI timing: `tight` places each note at its exact sample (with a
+    /// constant one-buffer delay); `immediate` applies notes at the start of
+    /// the next buffer (lowest latency, but jitter of up to one buffer).
+    #[arg(long, value_enum, default_value_t = MidiTiming::Tight)]
+    midi_timing: MidiTiming,
     /// Don't create the "Arkeology Synth" virtual MIDI input.
     #[arg(long)]
     no_virtual: bool,
@@ -197,6 +208,7 @@ fn main() -> Result<()> {
     let mut midi = MidiManager::new(Sink {
         engine: commands.clone(),
         ui: midi_ui.clone(),
+        stamp: args.midi_timing == MidiTiming::Tight,
     });
     let mut startup_notes = Vec::new();
     if !args.no_virtual

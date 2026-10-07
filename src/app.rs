@@ -2169,6 +2169,7 @@ pub(crate) mod tests_support {
         let midi = MidiManager::new(Sink {
             engine: commands.clone(),
             ui: midi_in.clone(),
+            stamp: true,
         });
         App::new(AppInit {
             sample_rate: 48_000.0,

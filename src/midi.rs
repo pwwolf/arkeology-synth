@@ -94,12 +94,20 @@ impl std::fmt::Display for MidiMsg {
 pub struct Sink {
     pub engine: CommandQueue,
     pub ui: Arc<ArrayQueue<MidiMsg>>,
+    /// Stamp messages with their arrival time for sample-accurate timing
+    /// (otherwise they apply at the start of the next audio buffer).
+    pub stamp: bool,
 }
 
 impl Sink {
     fn deliver(&self, bytes: &[u8]) {
         if let Some(msg) = parse(bytes) {
-            let _ = self.engine.push(Command::Midi(msg));
+            let cmd = if self.stamp {
+                Command::MidiAt(msg, std::time::Instant::now())
+            } else {
+                Command::Midi(msg)
+            };
+            let _ = self.engine.push(cmd);
             let _ = self.ui.push(msg);
         }
     }

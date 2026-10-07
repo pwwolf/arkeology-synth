@@ -355,6 +355,13 @@ the same channel layer together. Per slot, the synth handles note on/off with ve
 pitch bend, CC1 (mod wheel), CC64 (sustain) and CC120/123 (all notes off). Any other CC
 can be mapped with MIDI learn.
 
+MIDI timing is sample-accurate by default. Each message is stamped when it arrives and
+placed at the matching sample of the next audio buffer, so notes from a DAW or
+sequencer keep their exact spacing, at a constant delay of one buffer (about 5 ms at 256
+frames). `--midi-timing immediate` applies notes at the start of the next buffer
+instead. That's the lowest latency for live playing, but timing can drift by up to a
+buffer.
+
 ## Files
 
 Data lives in `~/Library/Application Support/arkeology-synth` (macOS) or
