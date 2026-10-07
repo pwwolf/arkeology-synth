@@ -222,6 +222,26 @@ With no MIDI hardware attached, press `k` to play the selected synth from the co
 keyboard. To send a test phrase to the virtual port, run
 `cargo run --release --example midi_send`.
 
+### Prebuilt binaries
+
+GitHub Actions (`.github/workflows/build.yml`) tests and builds every push to `main` and
+every pull request on Linux (x86_64), macOS (one universal binary for Apple Silicon and
+Intel) and Windows (x86_64). Download the builds from a workflow run's **Artifacts**.
+Pushing a version tag publishes them as a GitHub Release:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The binaries aren't code-signed:
+
+- **macOS** quarantines downloaded binaries. After unpacking, run
+  `xattr -d com.apple.quarantine arkeology-synth`.
+- **Windows** SmartScreen may warn on first launch: choose **More info → Run anyway**.
+  Virtual MIDI ports don't exist on Windows, so connect a hardware port, or a loopback
+  driver such as loopMIDI, for DAW input.
+- **Linux** needs ALSA at runtime (`libasound2`, installed on almost every desktop distro).
+
 ### Recording
 
 Press `R` to record what you hear: the master output after FX, volume and drive. The

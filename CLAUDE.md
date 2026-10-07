@@ -64,4 +64,5 @@ Adding a parameter means adding a table entry and reading it in `update`. Visibi
 - Physical models must stay in tune. Tests use the YIN detector (`Sample::detect_pitch`) to assert pitch within a few cents. Loop filters' phase delay is compensated at the fundamental, and HF damping is capped in the treble (`WaveString::tune`).
 - The bowed-string model is regime-sensitive (Helmholtz vs multi-slip/sticking). `bow_slope` and `bowed_loss_pole` were tuned against a grid of pressure × position × velocity × note, and `bowed_strings_find_helmholtz_motion` guards the defaults. Re-run a similar grid before changing them.
 - Key repeat: terminals with the kitty keyboard protocol report `KeyEventKind::Repeat` separately. Only keys allowed by `repeatable()` in `app.rs` act on repeats.
+- CI (`.github/workflows/build.yml`) runs `cargo fmt --check`, `clippy -D warnings` and the tests on Linux, macOS and Windows; keep code portable (Unix-only bits such as virtual MIDI ports sit behind `#[cfg(unix)]`). `v*` tags publish a release.
 - Commit each finished, tested change on `main`; the remote is `origin` (github.com/pwwolf/arkeology-synth). Push only when asked.

@@ -1,0 +1,122 @@
+# Test and build Arkeology Synth for Linux, macOS and Windows.
+#
+# Every push to main and every pull request runs clippy and the test suite
+# on all three platforms and uploads the release binaries as workflow
+# artifacts. Pushing a version tag (e.g. `git tag v0.1.0 && git push --tags`)
+# also publishes them as a GitHub Release.
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 22.04's older glibc keeps the binary runnable on older distros.
+          - name: linux-x86_64
+            os: ubuntu-22.04
+          - name: macos-universal
+            os: macos-latest
+          - name: windows-x86_64
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ALSA headers (audio and MIDI)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --release
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo build --locked --release
+          mkdir -p dist && cp target/release/arkeology-synth dist/
+
+      # One binary for both Apple Silicon and Intel Macs.
+      - name: Build (macOS universal)
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --locked --release --target aarch64-apple-darwin
+          cargo build --locked --release --target x86_64-apple-darwin
+          mkdir -p dist
+          lipo -create -output dist/arkeology-synth \
+            target/aarch64-apple-darwin/release/arkeology-synth \
+            target/x86_64-apple-darwin/release/arkeology-synth
+          lipo -info dist/arkeology-synth
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo build --locked --release
+          mkdir -p dist && cp target/release/arkeology-synth.exe dist/
+
+      - name: Package
+        shell: bash
+        run: |
+          cp README.md LICENSE dist/
+          name="arkeology-synth-${{ matrix.name }}"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            (cd dist && 7z a "../$name.zip" .)
+            echo "ASSET=$name.zip" >> "$GITHUB_ENV"
+          else
+            tar -czf "$name.tar.gz" -C dist .
+            echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arkeology-synth-${{ matrix.name }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          generate_release_notes: true
