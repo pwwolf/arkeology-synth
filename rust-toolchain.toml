@@ -1,0 +1,5 @@
+# Pinned so local builds and CI use the same compiler and clippy lints.
+# To upgrade: change the version here and in .github/workflows/build.yml.
+[toolchain]
+channel = "1.99"
+components = ["clippy", "rustfmt"]

@@ -36,13 +36,14 @@ jobs:
           - name: windows-x86_64
             os: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install ALSA headers (audio and MIDI)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Keep in step with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@1.99
         with:
           components: clippy, rustfmt
           targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}

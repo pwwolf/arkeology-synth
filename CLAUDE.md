@@ -6,7 +6,7 @@ Arkeology Synth is a multitimbral MIDI synth engine for the terminal (Rust, rata
 
 ## Commands
 
-Rust comes from mise (`mise.toml`); if `cargo` isn't on PATH, it's in `~/.cargo/bin`.
+Rust comes from mise (`mise.toml`); if `cargo` isn't on PATH, it's in `~/.cargo/bin`. The compiler version is pinned in `rust-toolchain.toml` (and in the CI workflow): new Rust releases add clippy lints, and CI treats warnings as errors.
 
 ```sh
 cargo build --release
