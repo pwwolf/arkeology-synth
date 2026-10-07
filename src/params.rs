@@ -347,17 +347,25 @@ pub mod master {
     use super::{ParamDesc as P, Unit};
 
     pub const VOLUME: usize = 0;
-    pub const REVERB_SIZE: usize = 1;
-    pub const REVERB_DAMP: usize = 2;
-    pub const REVERB_WIDTH: usize = 3;
-    pub const REVERB_RETURN: usize = 4;
-    pub const DRIVE: usize = 5;
+    pub const REVERB_TYPE: usize = 1;
+    pub const REVERB_SIZE: usize = 2;
+    pub const REVERB_DAMP: usize = 3;
+    pub const REVERB_WIDTH: usize = 4;
+    pub const REVERB_RETURN: usize = 5;
+    pub const DRIVE: usize = 6;
 
     /// Where the master FX chain's parameters start.
-    pub const FX_BASE: usize = 6;
+    pub const FX_BASE: usize = 7;
 
     const BASE: [P; FX_BASE] = [
         P::float("volume", "Volume", "Master", 0.0, 1.0, 0.8, Unit::Percent),
+        P::choice(
+            "reverb_type",
+            "Type",
+            "Reverb Send",
+            &crate::reverb::REVERB_TYPES,
+            0,
+        ),
         P::float(
             "reverb_size",
             "Size",

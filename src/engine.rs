@@ -348,6 +348,7 @@ impl Engine {
 
     fn apply_reverb_params(&mut self) {
         self.reverb.set(
+            self.master[master::REVERB_TYPE].round().max(0.0) as usize,
             self.master[master::REVERB_SIZE],
             self.master[master::REVERB_DAMP],
             self.master[master::REVERB_WIDTH],

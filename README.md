@@ -161,7 +161,7 @@ controller or a DAW/sequencer.
   | Effect | Controls |
   |--------|----------|
   | Delay | time up to 2 s, feedback, ping-pong, feedback tone |
-  | Reverb | size, damping, width, pre-delay |
+  | Reverb | room type (see below), size, damping, width, pre-delay |
   | Chorus | rate, depth |
   | Flanger | rate, depth, feedback (±) |
   | Phaser | 6-stage; rate, depth, feedback |
@@ -188,6 +188,24 @@ controller or a DAW/sequencer.
 - Every slot has volume, pan, reverb send, transpose and bend range. The polyphonic synths
   also have voice count and glide.
   The master bus has a stereo reverb and a soft-clipping drive stage.
+- Reverb types, on the master reverb (**Type**) and the Reverb insert (**Room**):
+
+  | Type | Character | Decay at default Size |
+  |---|---|---|
+  | Classic | the original Freeverb-style reverb (older sessions keep it) | ~2 s |
+  | Room | fast, dense early reflections, short and darker | ~0.7 s |
+  | Chamber | thick, smooth build-up | ~1.5 s |
+  | Hall | sparse early reflections after a pre-delay, long smooth tail | ~3 s |
+  | Cathedral | very long, dark, slow to build | ~7 s |
+  | Plate | no early reflections, an instant bright wash | ~2.2 s |
+  | Spring | a guitar-amp spring tank: thin, with the chirpy "boing" | ~2.5 s |
+
+  Size scales the space and its decay within each type's range, and Damping sets how
+  much faster the treble dies (specified at 4 kHz). All types except Classic and
+  Spring use one design: an eight-line modulated feedback delay network with
+  per-type early reflections, pre-delay and tone. Spring is a separate dispersive
+  all-pass model. The types are level-matched, so switching type doesn't change the
+  send level. New starter racks use Hall.
 - Built-in patches for every engine. FM: E.Piano, Bright EP, DX Bass, FM Strings, Tubular
   Bells, Glass Bell, Steel Pan, Harpsichord, FM Clav, Saw Lead, FM Flute, Ice Pad, Log Drum,
   Marimba, Organ, Brass. Granular: Frozen Choir, Vowel Morph, Glass Shimmer, Bowed Glass, Saw
@@ -367,7 +385,7 @@ tables, and those tables also drive the generic TUI editor and patch serialisati
 | `src/synth/mod.rs` | `SynthKind`, common params, the `Poly`/`Voice` voice allocator (stealing, sustain, glide) |
 | `src/synth/fm.rs`, `analog.rs`, `physical.rs`, `tonewheel.rs`, `vocal.rs`, `granular.rs`, `acid.rs`, `drums.rs`, `kit.rs`, `sampler.rs` | the ten engines |
 | `src/sample.rs` | WAV/FLAC loading, built-in sources, waveform overview and onset detection |
-| `src/dsp.rs`, `src/reverb.rs` | oscillator table, ADSR, SVF filter, Freeverb |
+| `src/dsp.rs`, `src/reverb.rs` | oscillator table, ADSR, SVF filter, biquads; reverb types (Freeverb, FDN, spring) |
 | `src/app.rs`, `src/ui.rs` | TUI state, input and rendering |
 | `src/patch.rs` | patches, sessions, factory presets |
 | `src/fx.rs` | insert effects (delay, reverb, modulation, drive, filter, EQ, dynamics, crusher, tremolo) |

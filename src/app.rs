@@ -1083,6 +1083,12 @@ impl App {
                 );
             }
         }
+        // The starter rack's shared reverb is a hall (older sessions keep Classic).
+        let hall = crate::reverb::REVERB_TYPES
+            .iter()
+            .position(|t| *t == "Hall")
+            .unwrap_or(0);
+        self.set_param(Target::Master, master::REVERB_TYPE, hall as f32);
         self.rack_cursor = 1;
     }
 

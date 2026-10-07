@@ -13,7 +13,7 @@ use crate::reverb::Reverb;
 use crate::synth::MAX_BLOCK;
 
 pub const FX_UNITS: usize = 3;
-pub const STRIDE: usize = 54;
+pub const STRIDE: usize = 55;
 pub const TYPE: usize = 0;
 pub const MIX: usize = 1;
 
@@ -71,18 +71,18 @@ const KINDS: [FxKind; 14] = [
 const SEGMENTS: [(usize, usize); 14] = [
     (2, 0),
     (2, 4),
-    (6, 4),
-    (10, 2),
-    (12, 3),
-    (15, 3),
-    (18, 4),
-    (22, 5),
-    (27, 4),
-    (31, 5),
-    (36, 2),
-    (38, 4),
-    (42, 4),
-    (46, 8),
+    (6, 5),
+    (11, 2),
+    (13, 3),
+    (16, 3),
+    (19, 4),
+    (23, 5),
+    (28, 4),
+    (32, 5),
+    (37, 2),
+    (39, 4),
+    (43, 4),
+    (47, 8),
 ];
 /// Mix to apply when a unit switches to each kind: time effects blend,
 /// processors replace the signal.
@@ -160,6 +160,13 @@ macro_rules! fx_unit {
             )
             .exp(),
             // Reverb
+            P::choice(
+                concat!("fx", $n, "_reverb_type"),
+                "Room",
+                G,
+                &crate::reverb::REVERB_TYPES,
+                0,
+            ),
             P::float(
                 concat!("fx", $n, "_reverb_size"),
                 "Size",
@@ -744,9 +751,11 @@ impl ReverbFx {
         }
     }
 
+    /// `p`: type, size, damping, width, pre-delay.
     fn set(&mut self, p: &[f32], sr: f32) {
-        self.reverb.set(p[0], p[1], p[2]);
-        self.predelay = ((p[3] * sr) as usize).min(self.pre[0].len() - 1);
+        self.reverb
+            .set(p[0].round().max(0.0) as usize, p[1], p[2], p[3]);
+        self.predelay = ((p[4] * sr) as usize).min(self.pre[0].len() - 1);
     }
 
     fn process(&mut self, l: &mut [f32], r: &mut [f32]) {
@@ -1134,7 +1143,7 @@ impl Tremolo {
 enum Dsp {
     Off,
     Delay(Delay),
-    Reverb(ReverbFx),
+    Reverb(Box<ReverbFx>),
     Chorus(ModDelay),
     Flanger(ModDelay),
     Phaser(Phaser),
@@ -1165,7 +1174,7 @@ impl FxUnit {
         let dsp = match kind {
             FxKind::Off => Dsp::Off,
             FxKind::Delay => Dsp::Delay(Delay::new(sr)),
-            FxKind::Reverb => Dsp::Reverb(ReverbFx::new(sr)),
+            FxKind::Reverb => Dsp::Reverb(Box::new(ReverbFx::new(sr))),
             FxKind::Chorus => Dsp::Chorus(ModDelay::new(sr)),
             FxKind::Flanger => Dsp::Flanger(ModDelay::new(sr)),
             FxKind::Phaser => Dsp::Phaser(Phaser::new(sr)),
