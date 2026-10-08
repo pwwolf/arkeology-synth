@@ -1093,6 +1093,66 @@ mod tests {
         assert_eq!(onsets(&out).first(), Some(&0));
     }
 
+    /// Playing softly is clearly quieter on velocity-sensitive patches (the
+    /// velocity curve reaches about -12 dB at 64 and -24 dB at 32 at full
+    /// sensitivity), while the organ ignores velocity as a real one does.
+    #[test]
+    fn velocity_is_audible() {
+        crate::dsp::init_tables();
+        let sr = 48_000.0;
+        let builtins = sample::builtins();
+        let soft_minus_hard = |name: &str| {
+            let p = crate::patch::factory_patches()
+                .into_iter()
+                .find(|p| p.name == name)
+                .unwrap();
+            let note = if p.kind == SynthKind::Drums { 38 } else { 60 };
+            let level = |velocity: u8| {
+                let cmds: CommandQueue = Arc::new(ArrayQueue::new(256));
+                let mut e = Engine::new(
+                    sr,
+                    cmds.clone(),
+                    Arc::new(ArrayQueue::new(64)),
+                    Arc::new(Telemetry::default()),
+                );
+                let mut v = p.values();
+                v[synth::REVERB_SEND] = 0.0;
+                let slot = Slot::new(p.kind, v, Some(0), sr, &builtins, &[]);
+                cmds.push(Command::InstallSlot {
+                    slot: 0,
+                    data: slot,
+                })
+                .ok();
+                cmds.push(Command::Midi(MidiMsg {
+                    channel: 0,
+                    kind: MidiKind::NoteOn { note, velocity },
+                }))
+                .ok();
+                let mut out = vec![0.0; 2 * 48_000];
+                e.process(&mut out, 2);
+                20.0 * ((out.iter().map(|x| x * x).sum::<f32>() / out.len() as f32).sqrt() + 1e-9)
+                    .log10()
+            };
+            level(32) - level(127)
+        };
+        for name in [
+            "E.Piano",
+            "Analog Init",
+            "909 Kit",
+            "Sampler Init",
+            "Choir Aah",
+            "Grand Piano",
+            "Choir Cloud",
+        ] {
+            let db = soft_minus_hard(name);
+            assert!(db < -11.0, "{name}: velocity 32 only {db:.1} dB below 127");
+        }
+        assert!(
+            soft_minus_hard("Jazz Organ").abs() < 0.5,
+            "organs ignore velocity"
+        );
+    }
+
     /// Factory patches for the melodic engines must neither vanish nor slam
     /// the master clipper when playing a chord.
     #[test]

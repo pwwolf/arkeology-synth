@@ -319,7 +319,7 @@ impl DrumsSynth {
         let k = self.kit[d];
         let sr = self.sample_rate;
         let ratio = k.ratio * semitones_to_ratio(self.transpose + self.bend * self.bend_range);
-        let gain = k.level * (1.0 - self.vel_sens * (1.0 - velocity));
+        let gain = k.level * crate::dsp::velocity_gain(velocity, self.vel_sens);
 
         // Closed and pedal hats choke a ringing open hat.
         if drum == Drum::ClosedHat {

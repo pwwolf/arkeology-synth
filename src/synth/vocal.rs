@@ -146,6 +146,8 @@ pub static PARAMS: [P; 20] = [
 const MAX_SINGERS: usize = 6;
 const FORMANTS: usize = 5;
 const OUTPUT_GAIN: f32 = 1.5;
+/// How much velocity sets a singer's level (see `dsp::velocity_gain`).
+const VELOCITY_SENS: f32 = 0.6;
 
 /// One vowel: formant frequencies (Hz), levels (dB) and bandwidths (Hz).
 /// The cascade derives the relative formant levels from frequencies and
@@ -351,6 +353,8 @@ pub struct VocalVoice {
     note: u8,
     pitch: f32,
     vel: f32,
+    /// Level from velocity, set at note start.
+    vel_gain: f32,
     env: Env,
     age: u32,
     singers: [Singer; MAX_SINGERS],
@@ -365,6 +369,7 @@ impl VocalVoice {
             note: 60,
             pitch: 60.0,
             vel: 1.0,
+            vel_gain: 1.0,
             env: Env::default(),
             age: 0,
             singers: [Singer::default(); MAX_SINGERS],
@@ -435,6 +440,7 @@ impl Voice for VocalVoice {
         }
         self.note = note;
         self.vel = velocity;
+        self.vel_gain = crate::dsp::velocity_gain(velocity, VELOCITY_SENS);
         self.active = true;
         self.env.trigger();
     }
@@ -474,7 +480,7 @@ impl Voice for VocalVoice {
 
         let mut level = 0.0f32;
         for i in 0..n {
-            let amp = self.env.next(&s.env) * self.vel * norm;
+            let amp = self.env.next(&s.env) * self.vel_gain * norm;
             level = level.max(amp);
             let (mut ol, mut or) = (0.0, 0.0);
             for g in &mut self.singers[..self.count] {

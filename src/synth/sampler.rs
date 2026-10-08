@@ -460,7 +460,7 @@ impl Voice for SamplerVoice {
         // Loop points are read live so they can be moved while a note plays.
         let looping = if self.oneshot { None } else { layout.looping };
         let xf = layout.crossfade as f64;
-        let amp = VOICE_GAIN * (1.0 - s.vel_amp * (1.0 - self.vel));
+        let amp = VOICE_GAIN * crate::dsp::velocity_gain(self.vel, s.vel_amp);
         let filter = (!s.filter_bypass).then(|| {
             let fc = s.cutoff * (s.vel_cutoff * 3.0 * (self.vel - 1.0)).exp2();
             SvfCoefs::new(s.filter_mode, fc, s.resonance, s.sample_rate)

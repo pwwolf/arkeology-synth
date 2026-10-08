@@ -312,7 +312,7 @@ impl KitSynth {
             });
         let semis = p.tune + self.transpose + self.bend * self.bend_range;
         let rate = semitones_to_ratio(semis) as f64 * (src_rate / sr) as f64;
-        let vel_gain = 1.0 - self.vel_sens * (1.0 - velocity);
+        let vel_gain = crate::dsp::velocity_gain(velocity, self.vel_sens);
         let (l, r) = pan_gains(p.pan);
         let g = p.level * p.level * 1.5 * vel_gain * OUTPUT_GAIN * std::f32::consts::SQRT_2;
         let fc = p.cutoff * (self.vel_cutoff * 3.0 * (velocity - 1.0)).exp2();

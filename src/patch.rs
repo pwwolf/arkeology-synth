@@ -369,6 +369,8 @@ pub fn factory_patches() -> Vec<Patch> {
                 ("op4_sustain", 0.1),
                 ("op4_vel", 0.8),
                 ("reverb_send", 0.25),
+                ("op1_vel", 0.85),
+                ("op3_vel", 0.85),
             ],
         ),
         make(
@@ -1533,6 +1535,8 @@ pub fn factory_patches() -> Vec<Patch> {
                 ("op4_decay", 1.0),
                 ("op4_sustain", 0.1),
                 ("op4_vel", 0.85),
+                ("op1_vel", 0.85),
+                ("op3_vel", 0.85),
             ],
         ),
         make(

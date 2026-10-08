@@ -17,7 +17,7 @@ use crate::sample::Builtins;
 use crate::synth::{Instrument, MAX_BLOCK, SynthKind, kit};
 
 /// Bump when any recipe changes so installs re-render their kits.
-pub const KIT_VERSION: u32 = 1;
+pub const KIT_VERSION: u32 = 2;
 const SR: f32 = 48_000.0;
 const MARKER: &str = ".arkeology-kits-version";
 /// Peak level each one-shot is normalised to (-1 dBFS).

@@ -302,6 +302,8 @@ const MAX_STRINGS: usize = 3;
 const DELAY_LEN: usize = 4096;
 const DISPERSION_STAGES: usize = 4;
 const STRING_GAIN: f32 = 0.45;
+/// How much velocity sets strike strength (see `dsp::velocity_gain`).
+const VELOCITY_SENS: f32 = 0.65;
 /// Extra level of the slow polarization: it starts quieter but outlasts the
 /// first, which is what makes the decay two-stage.
 const TWO_STAGE_TAIL: f32 = 1.4;
@@ -728,6 +730,12 @@ impl PhysicalVoice {
         }
     }
 
+    /// Strike/pluck strength from velocity (brightness follows `vel` too,
+    /// through `effective_hardness`).
+    fn vel_gain(&self) -> f32 {
+        crate::dsp::velocity_gain(self.vel, VELOCITY_SENS)
+    }
+
     fn effective_hardness(&self, s: &PhysicalShared) -> f32 {
         (s.hardness + s.vel_bright * (self.vel - 0.7)).clamp(0.0, 1.0)
     }
@@ -829,7 +837,7 @@ impl PhysicalVoice {
         for i in (pick..n).rev() {
             self.exc[i] -= self.exc[i - pick];
         }
-        let amp = self.vel / (2.0 * peak);
+        let amp = self.vel_gain() / (2.0 * peak);
         if self.string_count == 2 {
             // Split the pluck between the two planes (the sound is heard
             // mostly through the first, see `render`).
@@ -877,12 +885,12 @@ impl PhysicalVoice {
                 self.exc[i] -= self.exc[i - strike];
             }
         }
-        let amp = self.vel * 1.2;
+        let amp = self.vel_gain() * 1.2;
         for k in 0..self.string_count {
             self.strings[k].inject(&self.exc[..len], amp);
         }
         // Key and hammer "thump": a short low burst.
-        self.thump = self.vel * 0.15;
+        self.thump = self.vel_gain() * 0.15;
         self.thump_coef = (-1.0 / (0.012 * sr)).exp();
     }
 
@@ -931,7 +939,7 @@ impl PhysicalVoice {
         let len = (s.sample_rate * contact).max(2.0);
         self.pulse_len = len as u32;
         // Unit-area pulse: low-frequency response is independent of hardness.
-        self.pulse_amp = self.vel * 2.0 / len;
+        self.pulse_amp = self.vel_gain() * 2.0 / len;
         self.age = 0;
     }
 

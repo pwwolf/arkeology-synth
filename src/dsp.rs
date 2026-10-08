@@ -38,6 +38,15 @@ pub fn semitones_to_ratio(semis: f32) -> f32 {
     (semis * (1.0 / 12.0)).exp2()
 }
 
+/// Velocity (0..=1) to gain. `sens` 0 ignores velocity; 1 is the General
+/// MIDI curve, gain = v²: about -12 dB at velocity 64 and -24 dB at 32,
+/// while hard playing (90-127) stays near full level. In between,
+/// gain = v^(2·sens).
+#[inline]
+pub fn velocity_gain(v: f32, sens: f32) -> f32 {
+    v.clamp(1e-3, 1.0).powf(2.0 * sens.clamp(0.0, 1.0))
+}
+
 /// Equal-power pan law; `pan` in -1..=1. Returns (left, right) gains.
 #[inline]
 pub fn pan_gains(pan: f32) -> (f32, f32) {

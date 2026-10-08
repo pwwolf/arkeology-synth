@@ -283,7 +283,7 @@ impl Voice for FmVoice {
         for op in 0..4 {
             let o = &s.ops[op];
             inc[op] = freq * o.ratio / s.sample_rate;
-            let vel = 1.0 - o.vel_sens * (1.0 - self.vel);
+            let vel = crate::dsp::velocity_gain(self.vel, o.vel_sens);
             amp[op] = if carriers & (1 << op) != 0 {
                 o.level * vel / carrier_count.sqrt()
             } else {

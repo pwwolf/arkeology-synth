@@ -469,7 +469,7 @@ impl Voice for AnalogVoice {
         let uni_norm = 1.0 / (uni as f32).sqrt();
         let (g1, g2) = ((1.0 - s.mix) * uni_norm, s.mix * uni_norm);
 
-        let amp_scale = VOICE_GAIN * (1.0 - s.vel_amp * (1.0 - self.vel));
+        let amp_scale = VOICE_GAIN * crate::dsp::velocity_gain(self.vel, s.vel_amp);
         let k_ladder = s.resonance * 3.9;
         let comp = 1.0 + 0.5 * k_ladder;
         // The state-variable filter's resonant peak grows as 1/k; trim its

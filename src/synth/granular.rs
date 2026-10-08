@@ -170,7 +170,11 @@ pub static PARAMS: [P; 23] = [
 
 const MAX_GRAINS: usize = 64;
 
+/// How much velocity sets a grain cloud's level (see `dsp::velocity_gain`).
+const VELOCITY_SENS: f32 = 0.6;
+
 #[derive(Default)]
+
 pub struct GranularShared {
     sample_rate: f32,
     source: Option<Arc<Sample>>,
@@ -391,7 +395,7 @@ impl Voice for GranularVoice {
             }
         }
 
-        let amp = 0.25 + 0.75 * self.vel;
+        let amp = crate::dsp::velocity_gain(self.vel, VELOCITY_SENS);
         for i in 0..n {
             let e = self.env.next(&s.env) * amp;
             let (mut a, mut b) = (self.buf_l[i] * e, self.buf_r[i] * e);

@@ -355,6 +355,12 @@ the same channel layer together. Per slot, the synth handles note on/off with ve
 pitch bend, CC1 (mod wheel), CC64 (sustain) and CC120/123 (all notes off). Any other CC
 can be mapped with MIDI learn.
 
+Velocity follows a curve shared by every engine: at 100% sensitivity (Vel Sens or
+Vel>Amp) it's the General MIDI curve, so a note played at velocity 64 is about 12 dB
+quieter than a full-force one, and at 32 about 24 dB quieter. Hard playing (90–127)
+stays near full level. Lower sensitivity narrows the range. The organ ignores
+velocity, as a real one does, and the 303 uses it only for accents.
+
 MIDI timing is sample-accurate by default. Each message is stamped when it arrives and
 placed at the matching sample of the next audio buffer, so notes from a DAW or
 sequencer keep their exact spacing, at a constant delay of one buffer (about 5 ms at 256

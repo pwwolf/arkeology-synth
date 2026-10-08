@@ -166,16 +166,16 @@ fn midi_behaviour(kind: SynthKind, values: &[f32]) -> Value {
         _ => "no effect".to_string(),
     };
     let velocity = match kind {
-        SynthKind::Fm => "level of each operator, scaled by its Vel Sens (on modulators this also changes brightness)".to_string(),
-        SynthKind::Analog => "level (Vel>Amp) and filter cutoff (Vel>Cutoff)".to_string(),
-        SynthKind::Granular => "level".to_string(),
+        SynthKind::Fm => "level of each operator by its Vel Sens (100% = the GM curve: about -12 dB at velocity 64, -24 dB at 32; on modulators this also changes brightness)".to_string(),
+        SynthKind::Analog => "level (Vel>Amp; 100% = the GM curve, about -12 dB at velocity 64, -24 dB at 32) and filter cutoff (Vel>Cutoff)".to_string(),
+        SynthKind::Granular => "level (about -7 dB at velocity 64, -14 dB at 32)".to_string(),
         SynthKind::Acid => format!(
             "accent only: notes at or above {:.0} (Accent Vel) are accented; others play at normal level",
             get("accent_vel")
         ),
-        SynthKind::Drums => "level, scaled by Vel Sens".to_string(),
-        SynthKind::Kit => "level (Vel Sens) and brightness (Vel>Cutoff)".to_string(),
-        SynthKind::Sampler => "level (Vel>Amp) and filter cutoff (Vel>Cutoff)".to_string(),
+        SynthKind::Drums => "level by Vel Sens (100% = the GM curve, about -12 dB at velocity 64, -24 dB at 32)".to_string(),
+        SynthKind::Kit => "level (Vel Sens; 100% = the GM curve, about -12 dB at velocity 64, -24 dB at 32) and brightness (Vel>Cutoff)".to_string(),
+        SynthKind::Sampler => "level (Vel>Amp; 100% = the GM curve, about -12 dB at velocity 64, -24 dB at 32) and filter cutoff (Vel>Cutoff)".to_string(),
         SynthKind::Physical if model == "Bowed" => "bow speed: louder notes with the same tone".to_string(),
         SynthKind::Physical => "level and brightness (Vel>Bright: harder strikes/plucks are brighter)".to_string(),
         SynthKind::Tonewheel => "ignored, like a real organ (MIDI-learn a CC to Volume for a swell pedal)".to_string(),
