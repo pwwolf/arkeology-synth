@@ -1106,7 +1106,12 @@ mod tests {
                 .into_iter()
                 .find(|p| p.name == name)
                 .unwrap();
-            let note = if p.kind == SynthKind::Drums { 38 } else { 60 };
+            let note = match p.kind {
+                SynthKind::Drums => 38,
+                // Slices start at note 36.
+                _ if name.contains("Slices") => 36,
+                _ => 60,
+            };
             let level = |velocity: u8| {
                 let cmds: CommandQueue = Arc::new(ArrayQueue::new(256));
                 let mut e = Engine::new(
@@ -1140,6 +1145,7 @@ mod tests {
             "Analog Init",
             "909 Kit",
             "Sampler Init",
+            "Pluck Slices",
             "Choir Aah",
             "Grand Piano",
             "Choir Cloud",

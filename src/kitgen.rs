@@ -688,4 +688,28 @@ mod tests {
         assert!(hat.duration() < kick.duration());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// Re-rendering after a version bump only rewrites the generated kits:
+    /// other folders in samples/kits (the downloaded VCSL kits) survive.
+    #[test]
+    fn rerender_keeps_downloaded_kits() {
+        crate::dsp::init_tables();
+        let samples =
+            std::env::temp_dir().join(format!("arkeology-kitgen-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&samples);
+        let vcsl = kits_dir(&samples).join("VCSL Acoustic");
+        std::fs::create_dir_all(&vcsl).unwrap();
+        std::fs::write(vcsl.join("Kick.wav"), b"downloaded").unwrap();
+        std::fs::write(
+            kits_dir(&samples).join(MARKER),
+            (KIT_VERSION - 1).to_string(),
+        )
+        .unwrap();
+        assert!(
+            ensure(&samples, &crate::sample::builtins(), false).unwrap() > 0,
+            "stale kits re-render"
+        );
+        assert_eq!(std::fs::read(vcsl.join("Kick.wav")).unwrap(), b"downloaded");
+        let _ = std::fs::remove_dir_all(&samples);
+    }
 }
