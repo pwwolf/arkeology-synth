@@ -24,9 +24,17 @@ controller or a DAW/sequencer.
     - **Ext FM** bends both oscillators' pitch with it at audio rate (fixed tones
       turn metallic and clangy).
     - **Ext Ring** ring-modulates oscillator 1 with it.
-    - **Ext Gain** sets how hard the input drives all three, and it's soft-limited.
+    - **Ext>Cutoff** sweeps the filter with the input's *loudness* (an envelope
+      follower): a 303 line or a drum groove opens a held note's filter in rhythm.
+      Negative amounts close it instead (ducking). **Ext Follow** sets how quickly it
+      lets go.
+    - **Ext Gain** sets how hard the input drives all of these: louder in means
+      deeper modulation and a wider filter sweep. The waveform used by Ext In,
+      Ext FM and Ext Ring is soft-limited.
       The default puts Ext In near a saw's level.
 
+    The editor's **Ext Input** header names the source ("Slot 3: Acid Classic") and
+    warns when a slot listens to itself (feedback) or to an empty slot.
     The input runs one 64-sample block (~1.3 ms) behind the source, so any slot can
     feed any other, even itself. Ext Source names a slot number, not a sound: a patch
     that uses it picks up whatever is in that slot of the rack it's loaded into.

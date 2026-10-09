@@ -1135,6 +1135,10 @@ mod tests {
         /// Slot 0: Analog target with `over` applied; slot 1: an FM source
         /// on channel 2, muted so the master carries only the target.
         fn rack(over: &[(&str, f32)]) -> (Engine, CommandQueue) {
+            rack_with(SynthKind::Fm, over)
+        }
+
+        fn rack_with(source: SynthKind, over: &[(&str, f32)]) -> (Engine, CommandQueue) {
             crate::dsp::init_tables();
             let cmds: CommandQueue = Arc::new(ArrayQueue::new(256));
             let e = Engine::new(
@@ -1166,12 +1170,11 @@ mod tests {
                 data: Slot::new(kind, v, Some(0), SR, &b, &[]),
             })
             .ok();
-            let fm = SynthKind::Fm;
-            let mut sv = fm.defaults();
+            let mut sv = source.defaults();
             sv[synth::REVERB_SEND] = 0.0;
             cmds.push(Command::InstallSlot {
                 slot: 1,
-                data: Slot::new(fm, sv, Some(1), SR, &b, &[]),
+                data: Slot::new(source, sv, Some(1), SR, &b, &[]),
             })
             .ok();
             cmds.push(Command::SetMute { slot: 1, on: true }).ok();
@@ -1262,6 +1265,49 @@ mod tests {
             assert!(fm > 10.0 * dry.max(1e-6), "fm: {fm} vs {dry}");
             let (_, wild) = sidebands(&[("ext_fm", 1.0), ("ext_gain", 30.0)]);
             assert!(wild.iter().all(|v| v.is_finite()) && rms(&wild) > 1e-3);
+        }
+
+        /// The user's rig: a 303 line on its own channel opens the filter of
+        /// a held saw note while it plays, and closes it in the gaps.
+        #[test]
+        fn ext_filter_follows_the_input_level() {
+            let on_vs_off = |amount: f32| {
+                let (mut e, cmds) = rack_with(
+                    SynthKind::Acid,
+                    &[
+                        ("osc1_wave", 0.0),
+                        ("cutoff", 400.0),
+                        ("resonance", 0.3),
+                        ("ext_source", 2.0),
+                        ("ext_filter", amount),
+                        ("ext_gain", 16.0),
+                    ],
+                );
+                on(&cmds, 0, 48);
+                let mut out = run(&mut e, 0.2);
+                let mut windows = Vec::new(); // (start, len, playing)
+                for _ in 0..4 {
+                    on(&cmds, 1, 45);
+                    windows.push((out.len() + 2_400, 9_600, true));
+                    out.extend(run(&mut e, 0.25));
+                    cmds.push(Command::NoteOff { slot: 1, note: 45 }).ok();
+                    windows.push((out.len() + 4_800, 7_200, false));
+                    out.extend(run(&mut e, 0.25));
+                }
+                // One continuous high-pass, so no window carries a filter start-up.
+                let mut hp = crate::dsp::Biquad::high_pass(2_000.0, 0.7, SR);
+                let treble: Vec<f32> = out.iter().map(|v| hp.process(*v)).collect();
+                let (mut playing, mut gaps) = (0.0, 0.0);
+                for (start, len, is_on) in windows {
+                    let r = rms(&treble[start..start + len]);
+                    if is_on { playing += r } else { gaps += r }
+                }
+                playing / gaps
+            };
+            let (up, none, down) = (on_vs_off(0.7), on_vs_off(0.0), on_vs_off(-0.7));
+            assert!(up > 3.0, "the 303 should open the filter: x{up:.2}");
+            assert!((none - 1.0).abs() < 0.3, "no amount, no change: x{none:.2}");
+            assert!(down < 0.7, "a negative amount closes it: x{down:.2}");
         }
 
         #[test]

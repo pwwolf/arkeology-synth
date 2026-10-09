@@ -502,6 +502,25 @@ fn group_title(app: &App, target: Target, group: &str) -> String {
     {
         return format!("Source · file: {}", loaded.sample.name);
     }
+    // Analog's external input: say which slot it listens to (what's there,
+    // or that it's itself or empty), not just a number.
+    if group == "Ext Input"
+        && let Target::Slot(i) = target
+        && let Some(s) = &app.slots[i]
+        && s.kind == SynthKind::Analog
+    {
+        let idx = SynthKind::Analog
+            .index_of("ext_source")
+            .expect("ext_source param");
+        return match s.params[idx].round() as usize {
+            0 => "Ext Input · off".to_string(),
+            n if n - 1 == i => format!("Ext Input · Slot {n}: this slot (feedback)"),
+            n => match app.slots.get(n - 1).and_then(|s| s.as_ref()) {
+                Some(src) => format!("Ext Input · Slot {n}: {}", src.name),
+                None => format!("Ext Input · Slot {n} is empty"),
+            },
+        };
+    }
     // Kit pads: "Pad 3 · 42 F#2 · hat.wav" (or the pad's default role if empty).
     if let Target::Slot(i) = target
         && let Some(s) = &app.slots[i]

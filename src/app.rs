@@ -2513,6 +2513,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The Ext Input header says what the Analog is listening to.
+    #[test]
+    fn ext_input_header_names_the_source() {
+        let dir = temp_dir("ext-header");
+        let mut app = test_app(&dir);
+        app.default_rack(); // slots 1-4: E.Piano, Choir Cloud, Acid Classic, 808 Kit
+        app.add_synth(SynthKind::Analog);
+        let i = app.selected_slot().unwrap();
+        let src = SynthKind::Analog.index_of("ext_source").unwrap();
+        app.on_key(key(KeyCode::Tab));
+        let header = |app: &mut App, v: f32| {
+            app.set_param(Target::Slot(i), src, v);
+            let s = screen(app, 160, 70);
+            s.lines()
+                .find(|l| l.contains("Ext Input"))
+                .unwrap_or_default()
+                .to_string()
+        };
+        assert!(header(&mut app, 0.0).contains("Ext Input · off"));
+        assert!(header(&mut app, 3.0).contains("Ext Input · Slot 3: Acid Classic"));
+        let own = (i + 1) as f32;
+        assert!(header(&mut app, own).contains("this slot (feedback)"));
+        assert!(header(&mut app, 12.0).contains("Slot 12 is empty"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// W offers the session the rack came from, even after a restart, so
     /// W + Enter saves back to it.
     #[test]

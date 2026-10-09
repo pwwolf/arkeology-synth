@@ -67,10 +67,12 @@ pub const EXT_SOURCE: usize = 36;
 pub const EXT_GAIN: usize = 37;
 pub const EXT_FM: usize = 38;
 pub const EXT_RING: usize = 39;
+pub const EXT_FILTER: usize = 40;
+pub const EXT_FOLLOW: usize = 41;
 
 pub const MAX_UNISON: usize = 7;
 
-pub static PARAMS: [P; 40] = [
+pub static PARAMS: [P; 42] = [
     VOICES_PARAM,
     GLIDE_PARAM,
     P::choice("osc1_wave", "Osc 1 Wave", "Oscillators", &WAVES, 0),
@@ -353,9 +355,34 @@ pub static PARAMS: [P; 40] = [
         0.0,
         Unit::Percent,
     ),
+    P::float(
+        "ext_filter",
+        "Ext>Cutoff",
+        "Ext Input",
+        -1.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
+    P::float(
+        "ext_follow",
+        "Ext Follow",
+        "Ext Input",
+        0.02,
+        1.0,
+        0.04,
+        Unit::Seconds,
+    )
+    .exp(),
 ];
 
 const VOICE_GAIN: f32 = 0.28;
+/// How far Ext>Cutoff at 100% moves the filter with a full-scale input.
+const EXT_FILTER_OCTAVES: f32 = 5.0;
+/// The follower's attack, and the extra smoothing after it that keeps a
+/// bass input's ripple out of the filter.
+const FOLLOW_ATTACK_S: f32 = 0.002;
+const FOLLOW_SMOOTH_S: f32 = 0.008;
 /// Filter coefficients are recomputed every this many samples.
 const CONTROL_STEP: usize = 8;
 
@@ -391,8 +418,12 @@ pub struct AnalogShared {
     ext_gain: f32,
     ext_fm: f32,
     ext_ring: f32,
+    /// Filter sweep from the input's level (Ext>Cutoff, -1..1).
+    ext_filter: f32,
     /// This block's external input (another slot's audio), soft-limited.
     ext: ExtBlock,
+    /// The input's level per sample (0..1), from the envelope follower.
+    ext_env: ExtBlock,
 }
 
 /// One block of external input (a newtype so `AnalogShared` can derive
@@ -546,13 +577,18 @@ impl Voice for AnalogVoice {
         let key_oct = s.key_track * (self.pitch - 60.0) / 12.0;
         let vel_oct = s.vel_filter * 3.0 * (self.vel - 1.0);
         let lfo_oct = s.lfo_filter * 3.0 * s.lfo;
+        let ext_oct = s.ext_filter * EXT_FILTER_OCTAVES;
 
         let mut g = 0.0;
         let mut svf = SvfCoefs::default();
         for i in 0..n {
             let fenv = self.filter_env.next(&s.filter_adsr);
             if i % CONTROL_STEP == 0 {
-                let oct = s.filter_env * 6.0 * fenv + key_oct + vel_oct + lfo_oct;
+                let oct = s.filter_env * 6.0 * fenv
+                    + key_oct
+                    + vel_oct
+                    + lfo_oct
+                    + ext_oct * s.ext_env.0[i];
                 let fc = (s.cutoff * oct.exp2()).clamp(20.0, sr * 0.45);
                 if s.ladder {
                     g = (std::f32::consts::PI * fc / sr).tan();
@@ -681,6 +717,11 @@ pub struct AnalogSynth {
     chorus_mode: u8,
     chorus: Chorus,
     ext_source: Option<usize>,
+    /// Envelope follower state (follow, smoothed) and its coefficients.
+    follow: [f32; 2],
+    follow_attack: f32,
+    follow_release: f32,
+    follow_smooth: f32,
     tmp_l: [f32; MAX_BLOCK],
     tmp_r: [f32; MAX_BLOCK],
 }
@@ -699,6 +740,10 @@ impl AnalogSynth {
             chorus_mode: 0,
             chorus: Chorus::new(sample_rate),
             ext_source: None,
+            follow: [0.0; 2],
+            follow_attack: 0.0,
+            follow_release: 0.0,
+            follow_smooth: 0.0,
             tmp_l: [0.0; MAX_BLOCK],
             tmp_r: [0.0; MAX_BLOCK],
         };
@@ -743,6 +788,10 @@ impl AnalogSynth {
         s.ext_gain = 10f32.powf(p[EXT_GAIN] / 20.0);
         s.ext_fm = p[EXT_FM];
         s.ext_ring = p[EXT_RING];
+        s.ext_filter = p[EXT_FILTER];
+        self.follow_attack = (-1.0 / (FOLLOW_ATTACK_S * sr)).exp();
+        self.follow_release = (-1.0 / (p[EXT_FOLLOW].max(0.02) * sr)).exp();
+        self.follow_smooth = (-1.0 / (FOLLOW_SMOOTH_S * sr)).exp();
         self.ext_source = match p[EXT_SOURCE].round() as usize {
             0 => None,
             n => Some(n - 1),
@@ -751,8 +800,11 @@ impl AnalogSynth {
             // Nothing to modulate with: Ring and FM leave the oscillators
             // alone rather than silencing them.
             s.ext.0 = [0.0; MAX_BLOCK];
+            s.ext_env.0 = [0.0; MAX_BLOCK];
             s.ext_fm = 0.0;
             s.ext_ring = 0.0;
+            s.ext_filter = 0.0;
+            self.follow = [0.0; 2];
         }
     }
 
@@ -766,8 +818,22 @@ impl AnalogSynth {
     pub fn set_ext_input(&mut self, x: &[f32]) {
         let g = self.shared.ext_gain;
         let n = x.len().min(MAX_BLOCK);
-        for (o, v) in self.shared.ext.0[..n].iter_mut().zip(x) {
-            *o = (v * g).tanh();
+        let s = &mut self.shared;
+        for (i, v) in x.iter().take(n).enumerate() {
+            s.ext.0[i] = (v * g).tanh();
+            // Envelope follower, on the input before the soft limiter (which
+            // would pin a hot input near full scale): fast attack, release
+            // set by Ext Follow, then a smoothing stage against ripple.
+            let level = (v * g).abs().min(1.0);
+            let coef = if level > self.follow[0] {
+                self.follow_attack
+            } else {
+                self.follow_release
+            };
+            self.follow[0] = level + (self.follow[0] - level) * coef;
+            self.follow[1] =
+                self.follow[0] + (self.follow[1] - self.follow[0]) * self.follow_smooth;
+            s.ext_env.0[i] = self.follow[1];
         }
     }
 
@@ -903,5 +969,54 @@ mod tests {
         s.poly.note_off(60);
         render(&mut s, 9_600);
         assert_eq!(s.poly.active_voices(), 0);
+    }
+
+    /// The input follower is smooth on bass (no ripple into the filter),
+    /// isn't pinned by a hot Ext Gain, and resets when the source is off.
+    #[test]
+    fn ext_follower_is_smooth_and_tracks_level() {
+        let settle = |amp: f32, follow: f32| {
+            let mut s = synth_with(&[
+                ("ext_source", 1.0),
+                ("ext_gain", 16.0),
+                ("ext_follow", follow),
+            ]);
+            let mut env = Vec::new();
+            for block in 0..750 {
+                let x: Vec<f32> = (0..MAX_BLOCK)
+                    .map(|i| {
+                        amp * (std::f32::consts::TAU * 55.0 * (block * MAX_BLOCK + i) as f32
+                            / 48_000.0)
+                            .sin()
+                    })
+                    .collect();
+                s.set_ext_input(&x);
+                env.extend_from_slice(&s.shared.ext_env.0);
+            }
+            let tail = &env[env.len() - 12_000..];
+            let (lo, hi) = tail
+                .iter()
+                .fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+            let mean = tail.iter().sum::<f32>() / tail.len() as f32;
+            (mean, (hi - lo) / mean, s)
+        };
+        for follow in [0.02, 0.04] {
+            let (_, ripple, _) = settle(0.3, follow);
+            assert!(
+                ripple < 0.1,
+                "follow {follow}: ripple {:.1}%",
+                ripple * 100.0
+            );
+        }
+        let (quiet, _, _) = settle(0.05, 0.04);
+        let (loud, _, mut s) = settle(0.3, 0.04);
+        assert!(
+            loud > quiet + 0.2,
+            "level tracks the input: {quiet:.2} vs {loud:.2}"
+        );
+        let mut p = SynthKind::Analog.defaults();
+        p[SynthKind::Analog.index_of("ext_filter").unwrap()] = 1.0;
+        s.update(&p); // Ext Source back to Off
+        assert!(s.shared.ext_env.0.iter().all(|v| *v == 0.0) && s.shared.ext_filter == 0.0);
     }
 }
