@@ -30,7 +30,9 @@ controller or a DAW/sequencer.
     The input runs one 64-sample block (~1.3 ms) behind the source, so any slot can
     feed any other, even itself. Ext Source names a slot number, not a sound: a patch
     that uses it picks up whatever is in that slot of the rack it's loaded into.
-    For example, put a drum kit in slot 1 and mute it. Then in slot 2, an Analog with
+    The factory patch **Audio In** is set up for this: Osc 1 = Ext In, no Osc 2, one
+    voice, a resonant filter, and Ext Source = Slot 1. Ext Ring and Ext FM do nothing
+    while Ext Source is Off. For example, put a drum kit in slot 1 and mute it. Then in slot 2, an Analog with
     Ext Source = Slot 1, Osc 1 = Ext In and a resonant filter plays the drums through
     the filter, keyed by your notes. Or set Ext Ring at 100% on a saw lead for clangy,
     rhythmic tones.

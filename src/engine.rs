@@ -1363,7 +1363,7 @@ mod tests {
         ];
         for p in crate::patch::factory_patches()
             .into_iter()
-            .filter(|p| kinds.contains(&p.kind))
+            .filter(|p| kinds.contains(&p.kind) && !crate::patch::uses_ext_input(p))
         {
             let cmds: CommandQueue = Arc::new(ArrayQueue::new(256));
             let garbage: GarbageQueue = Arc::new(ArrayQueue::new(64));

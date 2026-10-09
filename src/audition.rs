@@ -180,6 +180,9 @@ fn phrase(p: &Patch) -> (Events, f32) {
 
 /// Render one patch to stereo samples.
 fn render(p: &Patch, samples_dir: &Path, builtins: &Builtins) -> Result<Vec<f32>, String> {
+    if crate::patch::uses_ext_input(p) {
+        return Err("plays another slot's sound (Ext Source): silent on its own".into());
+    }
     if p.kind == SynthKind::Kit && p.sample_paths().iter().all(Option::is_none) {
         return Err("no samples (an empty kit to load your own into)".into());
     }

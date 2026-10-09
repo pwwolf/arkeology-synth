@@ -95,6 +95,12 @@ impl PatchEntry {
     }
 }
 
+/// Whether a patch plays another rack slot's sound (Analog's Ext Source),
+/// so on its own, with nothing in that slot, it's silent.
+pub fn uses_ext_input(p: &Patch) -> bool {
+    p.kind == SynthKind::Analog && p.params.get("ext_source").is_some_and(|v| *v >= 0.5)
+}
+
 /// MIDI program numbers (0-based, as sent on the wire) for each entry of
 /// `all`, counted per synth type: factory patches first, so their numbers
 /// never change when you save patches, then the user's, each alphabetically.
@@ -2627,6 +2633,27 @@ pub fn factory_patches() -> Vec<Patch> {
                 ("fx1_reverb_type", 4.0),
                 ("fx1_reverb_size", 0.6),
                 ("reverb_send", 0.25),
+            ],
+        ),
+        // A starting point for using another slot's sound as the oscillator
+        // (expects the source in slot 1; change Ext Source to suit).
+        make(
+            "Audio In",
+            Analog,
+            &[
+                ("voices", 1.0),
+                ("osc1_wave", 3.0),
+                ("osc_mix", 0.0),
+                ("ext_source", 1.0),
+                ("cutoff", 6_000.0),
+                ("resonance", 0.35),
+                ("filter_env", 0.3),
+                ("f_decay", 0.4),
+                ("f_sustain", 0.3),
+                ("attack", 0.005),
+                ("sustain", 1.0),
+                ("release", 0.2),
+                ("drift", 0.0),
             ],
         ),
     ];

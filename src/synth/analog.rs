@@ -748,7 +748,11 @@ impl AnalogSynth {
             n => Some(n - 1),
         };
         if self.ext_source.is_none() {
+            // Nothing to modulate with: Ring and FM leave the oscillators
+            // alone rather than silencing them.
             s.ext.0 = [0.0; MAX_BLOCK];
+            s.ext_fm = 0.0;
+            s.ext_ring = 0.0;
         }
     }
 
