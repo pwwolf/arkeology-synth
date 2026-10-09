@@ -2,6 +2,11 @@
 //! sub and noise, optional unison stacking, a 12 dB (state-variable) or
 //! 24 dB (ladder) resonant low-pass with its own envelope, a global LFO and a
 //! Juno-style stereo chorus.
+//!
+//! It can also take another rack slot's audio as an input (Ext Source): as
+//! an oscillator wave (Ext In, run through each voice's filter and
+//! envelopes), as audio-rate FM of both oscillators, or ring-modulating
+//! oscillator 1, much like the audio input of a Korg NTS-1.
 
 use crate::dsp::{
     AdsrParams, Env, FilterMode, Ladder, Rng, Svf, SvfCoefs, midi_to_freq, pan_gains, poly_blep,
@@ -11,7 +16,13 @@ use crate::params::{ParamDesc as P, Unit};
 
 use super::{COMMON, Controls, GLIDE_PARAM, MAX_BLOCK, Poly, VOICES_PARAM, Voice, glide};
 
-pub const WAVES: [&str; 3] = ["Saw", "Pulse", "Triangle"];
+pub const WAVES: [&str; 4] = ["Saw", "Pulse", "Triangle", "Ext In"];
+/// The `WAVES` entry that plays the external input.
+const EXT_WAVE: u8 = 3;
+pub const EXT_SOURCES: [&str; 17] = [
+    "Off", "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5", "Slot 6", "Slot 7", "Slot 8",
+    "Slot 9", "Slot 10", "Slot 11", "Slot 12", "Slot 13", "Slot 14", "Slot 15", "Slot 16",
+];
 pub const POLES: [&str; 2] = ["12 dB", "24 dB"];
 pub const LFO_WAVES: [&str; 4] = ["Sine", "Triangle", "Square", "S&H"];
 pub const CHORUS_MODES: [&str; 4] = ["Off", "I", "II", "I+II"];
@@ -52,10 +63,14 @@ pub const LFO_FILTER: usize = 32;
 pub const LFO_PW: usize = 33;
 pub const WHEEL_VIB: usize = 34;
 pub const CHORUS: usize = 35;
+pub const EXT_SOURCE: usize = 36;
+pub const EXT_GAIN: usize = 37;
+pub const EXT_FM: usize = 38;
+pub const EXT_RING: usize = 39;
 
 pub const MAX_UNISON: usize = 7;
 
-pub static PARAMS: [P; 36] = [
+pub static PARAMS: [P; 40] = [
     VOICES_PARAM,
     GLIDE_PARAM,
     P::choice("osc1_wave", "Osc 1 Wave", "Oscillators", &WAVES, 0),
@@ -308,6 +323,36 @@ pub static PARAMS: [P; 36] = [
     )
     .step(1.0),
     P::choice("chorus", "Mode", "Chorus", &CHORUS_MODES, 0),
+    // External input (appended: older patches keep their layout).
+    P::choice("ext_source", "Ext Source", "Ext Input", &EXT_SOURCES, 0),
+    P::float(
+        "ext_gain",
+        "Ext Gain",
+        "Ext Input",
+        -12.0,
+        30.0,
+        12.0,
+        Unit::Decibels,
+    )
+    .step(0.5),
+    P::float(
+        "ext_fm",
+        "Ext FM",
+        "Ext Input",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
+    P::float(
+        "ext_ring",
+        "Ext Ring",
+        "Ext Input",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
 ];
 
 const VOICE_GAIN: f32 = 0.28;
@@ -343,6 +388,21 @@ pub struct AnalogShared {
     wheel_vib: f32,
     /// Current global LFO value (-1..1), updated once per block.
     lfo: f32,
+    ext_gain: f32,
+    ext_fm: f32,
+    ext_ring: f32,
+    /// This block's external input (another slot's audio), soft-limited.
+    ext: ExtBlock,
+}
+
+/// One block of external input (a newtype so `AnalogShared` can derive
+/// `Default`: std only implements it for arrays up to 32 long).
+struct ExtBlock([f32; MAX_BLOCK]);
+
+impl Default for ExtBlock {
+    fn default() -> Self {
+        ExtBlock([0.0; MAX_BLOCK])
+    }
 }
 
 #[inline]
@@ -468,6 +528,13 @@ impl Voice for AnalogVoice {
         }
         let uni_norm = 1.0 / (uni as f32).sqrt();
         let (g1, g2) = ((1.0 - s.mix) * uni_norm, s.mix * uni_norm);
+        // Ext In plays once per voice (not per unison copy, which would just
+        // stack identical signals), at the oscillator's place in the mix.
+        let ext_level = if s.wave1 == EXT_WAVE {
+            1.0 - s.mix
+        } else {
+            0.0
+        } + if s.wave2 == EXT_WAVE { s.mix } else { 0.0 };
 
         let amp_scale = VOICE_GAIN * crate::dsp::velocity_gain(self.vel, s.vel_amp);
         let k_ladder = s.resonance * 3.9;
@@ -494,20 +561,34 @@ impl Voice for AnalogVoice {
                 }
             }
 
+            let ext = s.ext.0[i];
+            // Audio-rate FM from the external input; never a negative step.
+            let fm = (1.0 + 2.0 * s.ext_fm * ext).max(0.0);
+            let ring = 1.0 - s.ext_ring + s.ext_ring * ext;
             let (mut xl, mut xr) = (0.0f32, 0.0f32);
             for k in 0..uni {
-                let dt1 = f1 * ratios[k] / sr;
-                let dt2 = f2 * ratios[k] / sr;
-                let v = osc(s.wave1, self.phase1[k], dt1, pw) * g1
-                    + osc(s.wave2, self.phase2[k], dt2, pw) * g2;
+                let dt1 = f1 * ratios[k] / sr * fm;
+                let dt2 = f2 * ratios[k] / sr * fm;
+                let o1 = if s.wave1 == EXT_WAVE {
+                    0.0
+                } else {
+                    osc(s.wave1, self.phase1[k], dt1, pw)
+                };
+                let o2 = if s.wave2 == EXT_WAVE {
+                    0.0
+                } else {
+                    osc(s.wave2, self.phase2[k], dt2, pw)
+                };
+                let v = o1 * ring * g1 + o2 * g2;
                 wrap(&mut self.phase1[k], dt1);
                 wrap(&mut self.phase2[k], dt2);
                 xl += v * gains[k].0;
                 xr += v * gains[k].1;
             }
             let dts = fsub / sr;
-            let common =
-                osc(1, self.sub_phase, dts, 0.5) * s.sub * 0.7 + self.rng.bipolar() * s.noise * 0.5;
+            let common = osc(1, self.sub_phase, dts, 0.5) * s.sub * 0.7
+                + self.rng.bipolar() * s.noise * 0.5
+                + ext * ext_level;
             wrap(&mut self.sub_phase, dts);
             xl += common;
             xr += common;
@@ -599,6 +680,7 @@ pub struct AnalogSynth {
     rng: Rng,
     chorus_mode: u8,
     chorus: Chorus,
+    ext_source: Option<usize>,
     tmp_l: [f32; MAX_BLOCK],
     tmp_r: [f32; MAX_BLOCK],
 }
@@ -616,6 +698,7 @@ impl AnalogSynth {
             rng: Rng::new(0x5EED_A11A),
             chorus_mode: 0,
             chorus: Chorus::new(sample_rate),
+            ext_source: None,
             tmp_l: [0.0; MAX_BLOCK],
             tmp_r: [0.0; MAX_BLOCK],
         };
@@ -656,6 +739,32 @@ impl AnalogSynth {
         self.lfo_wave = p[LFO_WAVE].round() as u8;
         self.lfo_inc = p[LFO_RATE] / sr;
         self.chorus_mode = p[CHORUS].round() as u8;
+        let s = &mut self.shared;
+        s.ext_gain = 10f32.powf(p[EXT_GAIN] / 20.0);
+        s.ext_fm = p[EXT_FM];
+        s.ext_ring = p[EXT_RING];
+        self.ext_source = match p[EXT_SOURCE].round() as usize {
+            0 => None,
+            n => Some(n - 1),
+        };
+        if self.ext_source.is_none() {
+            s.ext.0 = [0.0; MAX_BLOCK];
+        }
+    }
+
+    /// The rack slot (0-based) whose audio this synth takes as an input.
+    pub fn ext_source(&self) -> Option<usize> {
+        self.ext_source
+    }
+
+    /// The source slot's audio for the coming block: boosted by Ext Gain
+    /// and soft-limited, so a hot or self-fed input stays bounded.
+    pub fn set_ext_input(&mut self, x: &[f32]) {
+        let g = self.shared.ext_gain;
+        let n = x.len().min(MAX_BLOCK);
+        for (o, v) in self.shared.ext.0[..n].iter_mut().zip(x) {
+            *o = (v * g).tanh();
+        }
     }
 
     fn advance_lfo(&mut self, frames: usize) {

@@ -24,6 +24,11 @@ pub const MAX_SLOTS: usize = 16;
 /// Timestamped MIDI events one buffer can hold; beyond this they apply at
 /// the buffer's start.
 const MAX_PENDING_MIDI: usize = 1024;
+/// Each slot's recent output, so another slot can use it as an audio input
+/// (Analog's Ext Source). Read one block behind, so render order never
+/// matters and a slot can even feed itself.
+const EXT_RING: usize = 256;
+const EXT_DELAY: usize = MAX_BLOCK;
 
 /// Gain staging: volume parameters map through a square law times these.
 const SLOT_GAIN: f32 = 1.5;
@@ -307,6 +312,10 @@ pub struct Engine {
     buf_l: [f32; MAX_BLOCK],
     buf_r: [f32; MAX_BLOCK],
     mix_l: [f32; MAX_BLOCK],
+    /// Per-slot post-FX, pre-fader output (mono), for external inputs.
+    ext_ring: Box<[[f32; EXT_RING]; MAX_SLOTS]>,
+    ext_t: usize,
+    ext_in: [f32; MAX_BLOCK],
     mix_r: [f32; MAX_BLOCK],
     send_l: [f32; MAX_BLOCK],
     send_r: [f32; MAX_BLOCK],
@@ -340,6 +349,9 @@ impl Engine {
             buf_l: [0.0; MAX_BLOCK],
             buf_r: [0.0; MAX_BLOCK],
             mix_l: [0.0; MAX_BLOCK],
+            ext_ring: Box::new([[0.0; EXT_RING]; MAX_SLOTS]),
+            ext_t: 0,
+            ext_in: [0.0; MAX_BLOCK],
             mix_r: [0.0; MAX_BLOCK],
             send_l: [0.0; MAX_BLOCK],
             send_r: [0.0; MAX_BLOCK],
@@ -596,8 +608,16 @@ impl Engine {
         let any_solo = self.slots.iter().flatten().any(|s| s.solo);
         let k = glide_step(n, self.sample_rate);
 
+        let mask = EXT_RING - 1;
+        let t = self.ext_t;
         for (idx, slot) in self.slots.iter_mut().enumerate() {
-            let Some(s) = slot.as_mut() else { continue };
+            let Some(s) = slot.as_mut() else {
+                // An empty slot feeds silence, never its old audio.
+                for i in 0..n {
+                    self.ext_ring[idx][(t + i) & mask] = 0.0;
+                }
+                continue;
+            };
             if s.glide.step(&mut s.params, k) {
                 s.dirty = true;
             }
@@ -608,6 +628,12 @@ impl Engine {
                 }
                 s.dirty = false;
             }
+            if let Some(src) = s.inst.ext_source().filter(|&src| src < MAX_SLOTS) {
+                for i in 0..n {
+                    self.ext_in[i] = self.ext_ring[src][(t + i + EXT_RING - EXT_DELAY) & mask];
+                }
+                s.inst.set_ext_input(&self.ext_in[..n]);
+            }
             let (bl, br) = (&mut self.buf_l[..n], &mut self.buf_r[..n]);
             bl.fill(0.0);
             br.fill(0.0);
@@ -615,6 +641,11 @@ impl Engine {
             // Insert effects, pre-fader.
             for unit in &mut s.fx {
                 unit.process(bl, br);
+            }
+            // Tap for other slots' external inputs: after the effects, before
+            // volume and mute (a muted slot can still drive another).
+            for i in 0..n {
+                self.ext_ring[idx][(t + i) & mask] = 0.5 * (bl[i] + br[i]);
             }
 
             let audible = !s.mute && (!any_solo || s.solo);
@@ -637,6 +668,7 @@ impl Engine {
             }
             store_max(&self.telemetry.slots[idx].peak, peak);
         }
+        self.ext_t = self.ext_t.wrapping_add(n);
 
         self.reverb
             .process(&mut self.send_l[..n], &mut self.send_r[..n]);
@@ -1091,6 +1123,162 @@ mod tests {
         .ok();
         e.process_at(&mut out, 2, t0 + ms(21.33));
         assert_eq!(onsets(&out).first(), Some(&0));
+    }
+
+    /// Analog's Ext Source: another slot's audio as oscillator, FM or ring
+    /// modulation, through a fixed one-block tap.
+    mod ext_input {
+        use super::*;
+
+        const SR: f32 = 48_000.0;
+
+        /// Slot 0: Analog target with `over` applied; slot 1: an FM source
+        /// on channel 2, muted so the master carries only the target.
+        fn rack(over: &[(&str, f32)]) -> (Engine, CommandQueue) {
+            crate::dsp::init_tables();
+            let cmds: CommandQueue = Arc::new(ArrayQueue::new(256));
+            let e = Engine::new(
+                SR,
+                cmds.clone(),
+                Arc::new(ArrayQueue::new(64)),
+                Arc::new(Telemetry::default()),
+            );
+            let b = sample::builtins();
+            let kind = SynthKind::Analog;
+            let mut v = kind.defaults();
+            for (k, x) in [
+                ("osc_mix", 0.0),
+                ("sub", 0.0),
+                ("noise", 0.0),
+                ("drift", 0.0),
+                ("cutoff", 18_000.0),
+                ("filter_env", 0.0),
+                ("release", 0.05),
+            ]
+            .iter()
+            .chain(over)
+            {
+                v[kind.index_of(k).unwrap()] = *x;
+            }
+            v[synth::REVERB_SEND] = 0.0;
+            cmds.push(Command::InstallSlot {
+                slot: 0,
+                data: Slot::new(kind, v, Some(0), SR, &b, &[]),
+            })
+            .ok();
+            let fm = SynthKind::Fm;
+            let mut sv = fm.defaults();
+            sv[synth::REVERB_SEND] = 0.0;
+            cmds.push(Command::InstallSlot {
+                slot: 1,
+                data: Slot::new(fm, sv, Some(1), SR, &b, &[]),
+            })
+            .ok();
+            cmds.push(Command::SetMute { slot: 1, on: true }).ok();
+            (e, cmds)
+        }
+
+        fn run(e: &mut Engine, secs: f32) -> Vec<f32> {
+            let mut out = vec![0.0; 2 * (secs * SR) as usize];
+            e.process(&mut out, 2);
+            out.chunks(2).map(|f| f[0]).collect()
+        }
+
+        fn rms(x: &[f32]) -> f32 {
+            (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt()
+        }
+
+        /// Amplitude at `f` Hz (Hann-windowed DFT).
+        fn mag(x: &[f32], f: f32) -> f32 {
+            let n = x.len() as f64;
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (i, v) in x.iter().enumerate() {
+                let w = 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / n).cos();
+                let ph = std::f64::consts::TAU * f as f64 * i as f64 / SR as f64;
+                re += *v as f64 * w * ph.cos();
+                im += *v as f64 * w * ph.sin();
+            }
+            ((re * re + im * im).sqrt() * 4.0 / n) as f32
+        }
+
+        fn on(cmds: &CommandQueue, slot: usize, note: u8) {
+            cmds.push(Command::NoteOn {
+                slot,
+                note,
+                velocity: 0.9,
+            })
+            .ok();
+        }
+
+        #[test]
+        fn ext_in_plays_another_slot_through_this_ones_envelope() {
+            let (mut e, cmds) = rack(&[("osc1_wave", 3.0), ("ext_source", 2.0)]);
+            on(&cmds, 1, 69); // the source sings A4, muted
+            run(&mut e, 0.2);
+            assert!(
+                rms(&run(&mut e, 0.2)) < 1e-4,
+                "no note on the target, no sound"
+            );
+            on(&cmds, 0, 48);
+            let held = run(&mut e, 0.5);
+            assert!(
+                mag(&held, 440.0) > 20.0 * mag(&held, 300.0),
+                "the source's pitch comes through"
+            );
+            // As loud as an ordinary saw on the same voice, give or take.
+            let (mut saw, cmds2) = rack(&[]);
+            on(&cmds2, 0, 48);
+            let saw = run(&mut saw, 0.5);
+            let db = 20.0 * (rms(&held) / rms(&saw)).log10();
+            assert!(db.abs() < 9.0, "Ext In is {db:+.1} dB against a saw");
+            cmds.push(Command::NoteOff { slot: 0, note: 48 }).ok();
+            run(&mut e, 0.3);
+            assert!(rms(&run(&mut e, 0.2)) < 1e-4, "released: silent again");
+            // Removing the source leaves silence, not a loop of its last block.
+            on(&cmds, 0, 48);
+            cmds.push(Command::RemoveSlot { slot: 1 }).ok();
+            run(&mut e, 0.1);
+            assert!(rms(&run(&mut e, 0.3)) < 1e-4, "no stale input");
+        }
+
+        #[test]
+        fn ext_ring_and_fm_make_sidebands() {
+            // Target triangle at 220 Hz; source at 370 Hz (F#4). Ring and FM
+            // both put energy at 370 - 220 = 150 Hz and 370 + 220 = 590 Hz.
+            let sidebands = |over: &[(&str, f32)]| {
+                let mut o = vec![("osc1_wave", 2.0), ("ext_source", 2.0)];
+                o.extend_from_slice(over);
+                let (mut e, cmds) = rack(&o);
+                on(&cmds, 1, 66);
+                on(&cmds, 0, 57);
+                run(&mut e, 0.3);
+                let x = run(&mut e, 0.5);
+                (mag(&x, 150.0) + mag(&x, 590.0), x)
+            };
+            let (dry, _) = sidebands(&[]);
+            let (ring, _) = sidebands(&[("ext_ring", 1.0)]);
+            let (fm, _) = sidebands(&[("ext_fm", 0.3)]);
+            assert!(ring > 10.0 * dry.max(1e-6), "ring: {ring} vs {dry}");
+            assert!(fm > 10.0 * dry.max(1e-6), "fm: {fm} vs {dry}");
+            let (_, wild) = sidebands(&[("ext_fm", 1.0), ("ext_gain", 30.0)]);
+            assert!(wild.iter().all(|v| v.is_finite()) && rms(&wild) > 1e-3);
+        }
+
+        #[test]
+        fn a_slot_feeding_itself_stays_bounded() {
+            let (mut e, cmds) = rack(&[
+                ("ext_source", 1.0),
+                ("ext_ring", 1.0),
+                ("ext_fm", 1.0),
+                ("ext_gain", 30.0),
+                ("osc2_wave", 3.0),
+                ("osc_mix", 0.5),
+            ]);
+            on(&cmds, 0, 45);
+            let x = run(&mut e, 2.0);
+            let peak = x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            assert!(x.iter().all(|v| v.is_finite()) && peak < 1.5, "peak {peak}");
+        }
     }
 
     /// Playing softly is clearly quieter on velocity-sensitive patches (the

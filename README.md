@@ -15,6 +15,25 @@ controller or a DAW/sequencer.
   - Separate amp and filter envelopes, and a global LFO (sine, triangle, square or
     sample-and-hold) routable to pitch, cutoff and pulse width.
   - A Juno-style stereo chorus (I, II, I+II).
+  - **External input**, like a Korg NTS-1's audio in: **Ext Source** picks another rack
+    slot, and that slot's sound (after its effects, before its volume) becomes a sound
+    source. Mute the source slot to hear only the result.
+    - **Ext In** (an oscillator wave) plays it through this synth's filter and
+      envelopes, gated by your notes. Every held note adds its own copy, so Voices 1
+      works best for this.
+    - **Ext FM** bends both oscillators' pitch with it at audio rate (fixed tones
+      turn metallic and clangy).
+    - **Ext Ring** ring-modulates oscillator 1 with it.
+    - **Ext Gain** sets how hard the input drives all three, and it's soft-limited.
+      The default puts Ext In near a saw's level.
+
+    The input runs one 64-sample block (~1.3 ms) behind the source, so any slot can
+    feed any other, even itself. Ext Source names a slot number, not a sound: a patch
+    that uses it picks up whatever is in that slot of the rack it's loaded into.
+    For example, put a drum kit in slot 1 and mute it. Then in slot 2, an Analog with
+    Ext Source = Slot 1, Osc 1 = Ext In and a resonant filter plays the drums through
+    the filter, keyed by your notes. Or set Ext Ring at 100% on a saw lead for clangy,
+    rhythmic tones.
 - **Physical**: physically modelled instruments with four models. Only the selected
   model's controls are shown.
   - **String** is an extended Karplus-Strong plucked string. A fractional all-pass keeps it

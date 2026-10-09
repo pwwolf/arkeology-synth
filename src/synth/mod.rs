@@ -544,6 +544,21 @@ impl Instrument {
         self.poly_op(|p| p.active_voices())
     }
 
+    /// The slot this instrument takes an audio input from, if any.
+    pub fn ext_source(&self) -> Option<usize> {
+        match self {
+            Instrument::Analog(s) => s.ext_source(),
+            _ => None,
+        }
+    }
+
+    /// The source slot's audio for the coming block (see `ext_source`).
+    pub fn set_ext_input(&mut self, x: &[f32]) {
+        if let Instrument::Analog(s) = self {
+            s.set_ext_input(x);
+        }
+    }
+
     /// Swap in a sample at `index` (a kit pad; 0 for single-sample synths).
     /// Returns the previous one so the caller can free it off the audio thread.
     pub fn set_sample(&mut self, index: usize, sample: Option<Arc<Sample>>) -> Option<Arc<Sample>> {
