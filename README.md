@@ -82,10 +82,12 @@ controller or a DAW/sequencer.
     The very top of the violin range (above ~E6) is less reliable.
   - **Wind** blows a waveguide bore through a nonlinear reed or air jet: **Clarinet**
     (single reed, cylindrical bore: hollow, odd harmonics), **Sax** (reed on a conical
-    bore) and **Flute** (an air jet across the embouchure hole). Notes sustain while
+    bore) and **Flute** (an air jet across the embouchure hole, splitting on its edge,
+    on a tube open at both ends, so it has the even harmonics a clarinet lacks). Notes sustain while
     held. **Breath** sets how hard you blow; velocity and the mod wheel add to it, so
     playing harder or pushing the wheel makes notes louder and brighter. **Embouchure**
-    is reed stiffness (or jet length on the flute), and there's breath noise, attack and
+    is reed stiffness (or, on the flute, where the jet meets the edge, which shapes the
+    tone), and there's breath noise, attack and
     delayed vibrato (on the flute it's mostly breath, swelling the level, as flautists
     do). **Drift** adds a player's small unsteadiness: pitch, breath and vibrato rate
     wander slowly. The sound is heard as it leaves the bell and tone holes, not from

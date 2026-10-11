@@ -6,8 +6,14 @@
 //!   reed whose reflection follows a linear "reed table".
 //! - **Sax**: the same reed on a conical bore, modelled as two delay
 //!   sections either side of the reed (which brings back the even harmonics).
-//! - **Flute**: an air jet across the embouchure hole: a jet delay feeding a
-//!   cubic jet nonlinearity, coupled to an open bore.
+//! - **Flute**: an open-open bore (every harmonic resonates) driven by an
+//!   air jet. The jet carries the sound at the embouchure hole across it in
+//!   about half a period and splits on the far edge through a smooth
+//!   (tanh) curve; the jet sitting slightly off the edge makes even
+//!   harmonics. Breath sets the jet's flow, not its operating point, so it
+//!   changes loudness without changing register. (STK's flute instead feeds
+//!   the breath into a cubic and uses an inverting bore 3/2 of a period
+//!   long, which only supports odd harmonics: it sounds like a clarinet.)
 //!
 //! Each instrument only speaks inside a window of breath pressure (below it
 //! the reed or jet can't sustain an oscillation; above it the reed chokes or
@@ -28,19 +34,33 @@ const SAX_LOSS_HARMONICS: f32 = 10.0;
 /// to the octave on most notes; 0.32 keeps the fundamental across the range
 /// and the breath window.
 const SAX_POSITION: f32 = 0.32;
-/// Flute bore loss cutoff (STK's pole 0.65 at 44.1 kHz).
-const FLUTE_LOSS_HZ: f32 = 3_000.0;
-/// The flute bore is 3/2 of the note's period (STK: "we're overblowing
-/// here"), lengthened slightly for the pitch the jet adds; the jet takes
-/// about a third of it.
-const FLUTE_BORE: f32 = 1.5;
-const FLUTE_JET: f32 = 0.32;
+/// Flute bore loss: a one-pole low-pass this many harmonics above the note
+/// (it keeps the saturating jet from building up a strong third harmonic).
+const FLUTE_LOSS_HARMONICS: f32 = 3.0;
+/// Round-trip reflection of the open-open flute bore.
+const FLUTE_REFLECTION: f32 = 0.9;
+/// The jet crosses the embouchure hole in half a period, and its gain is
+/// negative (it's deflected away from the sound's flow), so the loop is in
+/// phase at the fundamental.
+const FLUTE_JET: f32 = 0.5;
+const FLUTE_JET_GAIN: f32 = -0.3;
+/// Extra jet gain at the start of a note, fading over this many seconds.
+const FLUTE_TONGUE: f32 = 2.0;
+const FLUTE_TONGUE_TIME: f32 = 0.2;
+/// The tongued puff's turbulence, fading over the first 60 ms.
+const FLUTE_PUFF: f32 = 0.3;
+/// Turbulence in the jet, which starts the oscillation.
+const FLUTE_SEED: f32 = 0.01;
+/// Even-order shaping of the flute's radiated sound: the second harmonic
+/// sits at about half this relative to the fundamental (before radiation).
+/// The jet loop alone leaves it 20 dB down; a real flute's is strong.
+const FLUTE_EVEN: f32 = 1.0;
 /// How long a new note's bore stays dark before opening up (seconds).
 const ATTACK_DARK: f32 = 0.1;
 /// DC blocker inside the flute loop.
 const FLUTE_DC_HZ: f32 = 20.0;
 /// Output gain per instrument, bringing their natural levels together.
-const LEVEL: [f32; 3] = [3.8, 2.1, 1.3];
+const LEVEL: [f32; 3] = [2.66, 1.47, 0.47];
 /// Pitch wander at full Drift, cents.
 const DRIFT_CENTS: f32 = 8.0;
 /// Breath (level) wander at full Drift, as a fraction of the level.
@@ -79,7 +99,7 @@ impl Instrument {
                 let k = reed_stiffness(embouchure);
                 (0.68 / k, 0.86 / k)
             }
-            Instrument::Flute => (0.95, 1.24),
+            Instrument::Flute => (0.4, 1.0),
         }
     }
 
@@ -110,7 +130,9 @@ impl Instrument {
         let periods = match self {
             Instrument::Clarinet => 0.5,
             Instrument::Sax => 1.0,
-            Instrument::Flute => FLUTE_BORE * 1.1,
+            // The loop's DC blocker leads by up to a quarter period, which
+            // the bore makes up.
+            Instrument::Flute => 1.3,
         };
         sr * periods / (DELAY_LEN as f32 - 8.0)
     }
@@ -217,8 +239,12 @@ pub struct WindPipe {
     /// DC blocker on the output (the breath itself is a DC offset).
     dc_x1: f32,
     dc_y1: f32,
-    /// Radiation high-pass state and coefficients.
-    rad: (f32, f32, f32),
+    /// Level follower for the flute's even-harmonic shaping.
+    env: f32,
+    env_coef: f32,
+    /// Radiation high-pass: coefficients (b0, a1), dry floor, level
+    /// normalisation; and state.
+    rad: (f32, f32, f32, f32),
     rad_x1: f32,
     rad_y1: f32,
     pressure: f32,
@@ -249,7 +275,9 @@ impl WindPipe {
             loop_y1: 0.0,
             dc_x1: 0.0,
             dc_y1: 0.0,
-            rad: (1.0, 0.0, 0.0),
+            env: 0.0,
+            env_coef: 0.999,
+            rad: (1.0, 0.0, 0.0, 1.0),
             rad_x1: 0.0,
             rad_y1: 0.0,
             pressure: 0.0,
@@ -272,6 +300,7 @@ impl WindPipe {
         self.dc_y1 = 0.0;
         self.rad_x1 = 0.0;
         self.rad_y1 = 0.0;
+        self.env = 0.0;
         self.pressure = 0.0;
         self.age = 0.0;
     }
@@ -286,7 +315,11 @@ impl WindPipe {
         // While a note builds up, a darker bore favours the fundamental, so
         // the oscillation can't lock onto a higher register (as a clean
         // tongued attack does); the loss then opens up over the next 0.1 s.
-        let settle = 0.25 + 0.75 * ((self.age - ATTACK_DARK) / ATTACK_DARK).clamp(0.0, 1.0);
+        let settle = if s.instrument == Instrument::Flute {
+            1.0
+        } else {
+            0.25 + 0.75 * ((self.age - ATTACK_DARK) / ATTACK_DARK).clamp(0.0, 1.0)
+        };
         let loss_pole = |fc: f32| (-std::f32::consts::TAU * fc * settle / sr).exp().min(0.95);
         match s.instrument {
             Instrument::Clarinet => {
@@ -306,20 +339,18 @@ impl WindPipe {
                 self.d_bore_target = d - self.d_aux_target;
             }
             Instrument::Flute => {
-                self.lp_pole = loss_pole(FLUTE_LOSS_HZ);
+                // Open at both ends: the round trip doesn't invert and spans
+                // the period.
+                self.lp_pole = loss_pole(f0 * FLUTE_LOSS_HARMONICS);
                 self.loop_pole = (-std::f32::consts::TAU * FLUTE_DC_HZ / sr).exp();
                 let filters = one_pole_delay(self.lp_pole, w) + dc_block_delay(self.loop_pole, w);
-                // The jet pulls the pitch sharp, increasingly so up the range
-                // (measured: +4.5 cents at C4, then ~0.8 cents per semitone).
-                let note = 69.0 + 12.0 * (f0 / 440.0).log2();
-                let sharp = 4.5 + 0.8 * (note - 60.0);
-                let d = (total * FLUTE_BORE * (sharp / 1200.0).exp2() - filters).max(4.0);
-                self.d_bore_target = d;
-                // Embouchure shortens or lengthens the jet a little.
-                let jet = FLUTE_JET * (1.0 + 0.06 * (s.embouchure - 0.5));
-                self.d_aux_target = (d * jet).max(1.0);
+                self.d_bore_target = (total - filters).max(4.0);
+                self.d_aux_target = (total * FLUTE_JET).max(1.0);
             }
         }
+        let max = DELAY_LEN as f32 - 4.0;
+        self.d_bore_target = self.d_bore_target.min(max);
+        self.d_aux_target = self.d_aux_target.min(max);
         if snap {
             self.d_bore = self.d_bore_target;
             self.d_aux = self.d_aux_target;
@@ -335,10 +366,19 @@ impl WindPipe {
         self.tune(s, sr, f0, true);
         self.attack_coef = (-1.0 / (s.attack.max(0.002) * 0.3 * sr)).exp();
         self.release_coef = (-1.0 / (0.03 * sr)).exp();
-        // Bilinear first-order high-pass: y = b0 (x - x1) + a1 y1.
+        self.env_coef = (-1.0 / (0.02 * sr)).exp();
+        // Bilinear first-order high-pass: y = b0 (x - x1) + a1 y1. It
+        // shapes each note's harmonics; its gain at the fundamental is
+        // normalised (to A4's), or high notes would come out up to 18 dB
+        // louder than low ones.
         let (fc, floor) = s.instrument.radiation();
         let k = (std::f32::consts::PI * fc / sr).tan();
-        self.rad = (1.0 / (1.0 + k), (1.0 - k) / (1.0 + k), floor);
+        let gain_at = |f: f32| {
+            let r = f / fc;
+            r / (1.0 + r * r).sqrt() + floor
+        };
+        let norm = gain_at(440.0) / gain_at(f0.max(20.0));
+        self.rad = (1.0 / (1.0 + k), (1.0 - k) / (1.0 + k), floor, norm);
     }
 
     /// Render a block, adding `gain` times the output into `out`. `pitch` is
@@ -394,8 +434,20 @@ impl WindPipe {
         let step_bore = (self.d_bore_target - self.d_bore) / n as f32;
         let step_aux = (self.d_aux_target - self.d_aux) / n as f32;
         let reed_slope = -0.3 * reed_stiffness(s.embouchure);
+        // Where the flute's jet meets the edge: embouchure moves it. The
+        // jet's gain is normalised to the curve's slope there, so the loop
+        // gain (and so whether the note speaks) doesn't change with it.
+        let offset = 0.25 + 0.5 * s.embouchure.clamp(0.0, 1.0);
+        let offset_out = offset.tanh();
+        let slope = |x: f32| 1.0 - x.tanh().powi(2);
+        // A tongued attack: the jet starts strong, so the note speaks
+        // quickly instead of growing slowly out of turbulence, then relaxes
+        // to its playing gain.
+        let tongue = 1.0 + FLUTE_TONGUE * (1.0 - self.age / FLUTE_TONGUE_TIME).max(0.0);
+        let jet_gain = FLUTE_JET_GAIN * slope(0.5) / slope(offset) * tongue;
+        let seed = FLUTE_SEED + FLUTE_PUFF * (1.0 - self.age / 0.06).max(0.0);
         let level = LEVEL[self.instrument as usize] * (1.0 + breath_mod);
-        let (rad_b0, rad_a1, rad_floor) = self.rad;
+        let (rad_b0, rad_a1, rad_floor, rad_norm) = self.rad;
         // Breath noise as a fraction of the pressure. Too much tips the sax
         // into its octave and the flute (whose window is narrower) into
         // higher registers, especially while a note builds up, so it fades
@@ -406,7 +458,7 @@ impl WindPipe {
             * match self.instrument {
                 Instrument::Clarinet => 0.2,
                 Instrument::Sax => 0.15,
-                Instrument::Flute => 0.12,
+                Instrument::Flute => 0.3,
             };
         let mask = DELAY_LEN - 1;
         let mut peak = 0.0f32;
@@ -441,15 +493,28 @@ impl WindPipe {
                 Instrument::Flute => {
                     let bore_out = read(&self.bore, w, self.d_bore);
                     self.lp_y = (1.0 - self.lp_pole) * bore_out + self.lp_pole * self.lp_y;
-                    let x = -self.lp_y;
-                    let t = x - self.loop_x1 + self.loop_pole * self.loop_y1;
-                    self.loop_x1 = x;
-                    self.loop_y1 = t;
-                    self.aux[w] = breath - 0.5 * t;
-                    let jet = read(&self.aux, w, self.d_aux);
-                    let jet = (jet * (jet * jet - 1.0)).clamp(-1.0, 1.0);
-                    self.bore[w] = jet + 0.5 * t;
-                    bore_out
+                    // The sound returning to the embouchure (DC-blocked).
+                    let a = self.lp_y - self.loop_x1 + self.loop_pole * self.loop_y1;
+                    self.loop_x1 = self.lp_y;
+                    self.loop_y1 = a;
+                    // It deflects the jet, which crosses the hole and splits
+                    // on the edge. Breath sets the jet's flow; a faster jet is
+                    // deflected proportionally less, so the loop gain (and the
+                    // register) doesn't depend on it, only the loudness. Below
+                    // a gentle breath the gain falls, so the note dies away
+                    // once the player stops blowing.
+                    self.aux[w] = a;
+                    let j = read(&self.aux, w, self.d_aux) + seed * self.rng.bipolar();
+                    let jet =
+                        breath * ((jet_gain * j / breath.max(0.25) + offset).tanh() - offset_out);
+                    self.bore[w] = jet + FLUTE_REFLECTION * a;
+                    // Even harmonics, scaled to the level so their share
+                    // doesn't depend on loudness.
+                    // (Bounded by the sample itself while the follower
+                    // catches up with an attack.)
+                    self.env = bore_out.abs() + (self.env - bore_out.abs()) * self.env_coef;
+                    let amp = (self.env * std::f32::consts::FRAC_PI_2).max(bore_out.abs()) + 1e-4;
+                    bore_out + FLUTE_EVEN * bore_out * bore_out / amp
                 }
             };
             self.w = (self.w + 1) & mask;
@@ -460,7 +525,7 @@ impl WindPipe {
             let hp = rad_b0 * (v - self.rad_x1) + rad_a1 * self.rad_y1;
             self.rad_x1 = v;
             self.rad_y1 = hp;
-            let v = (hp + rad_floor * v) * level;
+            let v = (hp + rad_floor * v) * rad_norm * level;
             *o += v;
             peak = peak.max(v.abs());
         }
