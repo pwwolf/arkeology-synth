@@ -10,6 +10,7 @@ pub mod physical;
 pub mod sampler;
 pub mod tonewheel;
 pub mod vocal;
+pub mod wind;
 
 use std::sync::Arc;
 

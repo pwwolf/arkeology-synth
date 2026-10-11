@@ -10,7 +10,7 @@ Rust comes from mise (`mise.toml`); if `cargo` isn't on PATH, it's in `~/.cargo/
 
 ```sh
 cargo build --release
-cargo test --release                       # full suite (~80 tests, ~1 s in release)
+cargo test --release                       # full suite (~130 tests, ~5 s in release)
 cargo test --release <name>                # one test or module, e.g. `physical`, `fx::tests::eq`
 cargo test <name> -- --nocapture           # see eprintln! output
 cargo clippy --all-targets                 # must stay warning-free
@@ -43,7 +43,7 @@ Anything heap-allocated (a whole `engine::Slot`, an `fx::FxUnit` with its delay 
 Adding a parameter means adding a table entry and reading it in `update`. Visibility is computed, not stored: `SynthKind::param_visible` hides parameters of inactive FX types and of other physical-synth models. The UI, MCP `get_params` and patch saving all respect it.
 
 **Synth engines** (`src/synth/`), dispatched statically through `synth::Instrument`:
-- Polyphonic engines (`fm`, `analog`, `granular`, `sampler`, `physical`, `vocal`) implement `synth::Voice` and reuse `synth::Poly`, which handles allocation, stealing, sustain, glide and bend.
+- Polyphonic engines (`fm`, `analog`, `granular`, `sampler`, `physical` with its `wind` bores, `vocal`) implement `synth::Voice` and reuse `synth::Poly`, which handles allocation, stealing, sustain, glide and bend.
 - Mono or one-shot engines (`acid`, `drums`, `kit`) handle notes themselves and implement the private `PolyControl` trait. `tonewheel` is in between: it uses `Poly` for voices but wraps it to track held keys (single-trigger percussion) and runs a shared post-chain (vibrato scanner, overdrive, rotary speaker).
 - To add an engine: a `SynthKind` variant (label, long name, `ALL` order), a params table, an `Instrument` variant wired into every match in `synth/mod.rs`, a UI colour in `ui.rs`, factory patches in `patch.rs`, and the kind name in the MCP tool schema (`mcp.rs`) and in `app/tools.rs` errors.
 - Large engine structs are boxed in `Instrument` (clippy's `large_enum_variant`).
@@ -65,6 +65,7 @@ Adding a parameter means adding a table entry and reading it in `update`. Visibi
 - Gain staging is calibrated by measurement. When adding sounds or engines, compare peak and RMS against existing ones (single FM note ≈ 0.2 peak) and check that the `--render-demo` mix doesn't push the master soft clipper (peaks ≲ 0.9).
 - Physical models must stay in tune. Tests use the YIN detector (`Sample::detect_pitch`) to assert pitch within a few cents. Loop filters' phase delay is compensated at the fundamental, and HF damping is capped in the treble (`WaveString::tune`).
 - The bowed-string model is regime-sensitive (Helmholtz vs multi-slip/sticking). `bow_slope` and `bowed_loss_pole` were tuned against a grid of pressure × position × velocity × note, and `bowed_strings_find_helmholtz_motion` guards the defaults. Re-run a similar grid before changing them.
+- The wind models (`synth/wind.rs`) only speak inside a window of breath pressure (silent below, choked or overblown above), so breath drive is mapped into each instrument's window, which also scales with reed stiffness. The windows, the sax reed position and the flute's tuning curve were measured; `winds_speak_in_tune_across_breath_and_embouchure` checks every combination at 44.1 and 48 kHz. Re-run it after changing any loop.
 - Key repeat: terminals with the kitty keyboard protocol report `KeyEventKind::Repeat` separately. Only keys allowed by `repeatable()` in `app.rs` act on repeats.
 - CI (`.github/workflows/build.yml`) runs `cargo fmt --check`, `clippy -D warnings` and the tests on Linux, macOS and Windows; keep code portable (Unix-only bits such as virtual MIDI ports sit behind `#[cfg(unix)]`). `v*` tags publish a release.
 - Commit each finished, tested change on `main`; the remote is `origin` (github.com/pwwolf/arkeology-synth). Push only when asked.

@@ -199,7 +199,7 @@ fn tool_definitions() -> Value {
         "type": "string",
         "enum": ["fm", "analog", "physical", "tonewheel", "vocal", "granular", "acid", "drums", "kit", "sampler"],
         "description": "fm: 4-op FM · analog: poly subtractive (pads, brass, leads) · \
-    physical: modelled plucked strings, mallets/bells, piano and bowed strings (violin family) · granular: grain clouds · \
+    physical: modelled plucked strings, mallets/bells, piano, bowed strings (violin family) and winds (clarinet, sax, flute) · granular: grain clouds · \
     acid: 303-style mono bass · drums: synthesized 808/909 kit on the GM drum map · \
     kit: sample drum kit, 16 pads with their own WAV/FLAC files on GM notes · sampler: WAV/FLAC sampler (classic/one-shot/slice)"
     });

@@ -44,7 +44,7 @@ controller or a DAW/sequencer.
     Ext Source = Slot 1, Osc 1 = Ext In and a resonant filter plays the drums through
     the filter, keyed by your notes. Or set Ext Ring at 100% on a saw lead for clangy,
     rhythmic tones.
-- **Physical**: physically modelled instruments with four models. Only the selected
+- **Physical**: physically modelled instruments with five models. Only the selected
   model's controls are shown.
   - **String** is an extended Karplus-Strong plucked string. A fractional all-pass keeps it
     in tune, and it has damping for brightness and dispersion for stiffness. Pick
@@ -80,8 +80,16 @@ controller or a DAW/sequencer.
     or bass body. Notes sustain while held, and force follows speed and position as on a
     real bow, so notes from E2 to E6 settle into a proper bowed tone at any velocity.
     The very top of the violin range (above ~E6) is less reliable.
-  - Every element's phase delay is compensated, so strings, mallets and pianos measure
-    within a few cents of pitch across the keyboard.
+  - **Wind** blows a waveguide bore through a nonlinear reed or air jet: **Clarinet**
+    (single reed, cylindrical bore: hollow, odd harmonics), **Sax** (reed on a conical
+    bore) and **Flute** (an air jet across the embouchure hole). Notes sustain while
+    held. **Breath** sets how hard you blow; velocity and the mod wheel add to it, so
+    playing harder or pushing the wheel makes notes louder and brighter. **Embouchure**
+    is reed stiffness (or jet length on the flute), and there's breath noise, attack and
+    delayed vibrato. Breath is kept within the range where each instrument speaks
+    cleanly, so notes never squeak into the wrong register.
+  - Every element's phase delay is compensated, so strings, mallets, pianos and winds
+    measure within a few cents of pitch across the keyboard.
 - **Tonewheel organ**: a drawbar organ with a rotary speaker.
   - Nine drawbars (16' to 1', 0–8, 3 dB per step) mix free-running sine "tonewheels".
     Pitches above the top wheel fold back an octave, as on the real instrument.
@@ -242,6 +250,7 @@ controller or a DAW/sequencer.
   Bass: DnB Sub and Reese Mid (layer them on one channel), Reese, Neuro Growl, Wobble Bass.
   Plus Warm Pad, Poly Brass, Juno Strings, Supersaw Lead,
   Poly Stab, Soft Bass, Grand/Upright/Felt/Honky-Tonk Piano, Solo Violin, Viola, Cello, Double Bass, String Section, Pizzicato Strings,
+  Clarinet, Alto/Tenor Sax, Flute, Pan Flute,
   Nylon/Steel Guitar, Harp, Clav, Koto, Modelled Marimba, Vibraphone, Xylophone, Church Bell,
   Kalimba, five acid basses, 808/909/Lo-Fi kits,
   sampler examples (Choir Loop, Pluck Slices, Saw Stab, Reverse Glass) and more. Press `l`

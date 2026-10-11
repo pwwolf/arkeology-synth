@@ -1,4 +1,4 @@
-//! Physical-modelling synth with four models:
+//! Physical-modelling synth with five models:
 //!
 //! - **String**: extended Karplus-Strong. A delay loop tuned to the note's
 //!   period (with a first-order Thiran all-pass for the fractional part)
@@ -19,13 +19,17 @@
 //!   the bow drives it through a nonlinear stick-slip friction curve. Bow
 //!   speed (velocity + mod wheel), pressure and position shape the tone;
 //!   delayed vibrato and a violin-family body filter finish it.
+//! - **Wind**: clarinet, sax and flute waveguides (see `wind.rs`), blown
+//!   with a breath pressure set by the Breath control, velocity and the mod
+//!   wheel.
 
 use crate::dsp::{Biquad, FilterMode, Rng, Svf, SvfCoefs, midi_to_freq, pan_gains, sin_cycles};
 use crate::params::{ParamDesc as P, Unit};
 
+use super::wind::{self, WindPipe, WindSettings};
 use super::{COMMON, Controls, MAX_BLOCK, Poly, VOICES_PARAM, Voice};
 
-pub const MODELS: [&str; 4] = ["String", "Mallet", "Piano", "Bowed"];
+pub const MODELS: [&str; 5] = ["String", "Mallet", "Piano", "Bowed", "Wind"];
 pub const MATERIALS: [&str; 7] = [
     "Wood", "Metal", "Glass", "Free Bar", "Bell", "Membrane", "Tine",
 ];
@@ -58,8 +62,15 @@ pub const DECAY_TRACK: usize = 20;
 pub const TWO_STAGE: usize = 21;
 pub const BODY_TYPE: usize = 22;
 pub const SYMPATHETIC: usize = 23;
+pub const WIND_INSTRUMENT: usize = 24;
+pub const BREATH: usize = 25;
+pub const EMBOUCHURE: usize = 26;
+pub const BREATH_NOISE: usize = 27;
+pub const WIND_ATTACK: usize = 28;
+pub const WIND_VIBRATO: usize = 29;
+pub const WIND_VIBRATO_RATE: usize = 30;
 
-pub static PARAMS: [P; 24] = [
+pub static PARAMS: [P; 31] = [
     VOICES_PARAM,
     P::choice("model", "Model", "Model", &MODELS, 0),
     P::float(
@@ -226,6 +237,61 @@ pub static PARAMS: [P; 24] = [
         0.0,
         Unit::Percent,
     ),
+    P::choice(
+        "wind_instrument",
+        "Instrument",
+        "Wind",
+        &wind::INSTRUMENTS,
+        0,
+    ),
+    P::float("breath", "Breath", "Wind", 0.0, 1.0, 0.4, Unit::Percent),
+    P::float(
+        "embouchure",
+        "Embouchure",
+        "Wind",
+        0.0,
+        1.0,
+        0.5,
+        Unit::Percent,
+    ),
+    P::float(
+        "breath_noise",
+        "Breath Noise",
+        "Wind",
+        0.0,
+        1.0,
+        0.3,
+        Unit::Percent,
+    ),
+    P::float(
+        "wind_attack",
+        "Attack",
+        "Wind",
+        0.005,
+        1.0,
+        0.06,
+        Unit::Seconds,
+    )
+    .exp(),
+    P::float(
+        "wind_vibrato",
+        "Vibrato",
+        "Wind",
+        0.0,
+        50.0,
+        10.0,
+        Unit::Cents,
+    )
+    .step(1.0),
+    P::float(
+        "wind_vibrato_rate",
+        "Vibrato Rate",
+        "Wind",
+        3.0,
+        8.0,
+        5.2,
+        Unit::Hz,
+    ),
 ];
 
 /// Which of this synth's own parameters apply to the selected model.
@@ -234,8 +300,11 @@ pub fn param_visible(p: &[f32], local: usize) -> bool {
     let model = model_from(p[MODEL]);
     match local {
         HARDNESS | POSITION | VEL_BRIGHT | STIFFNESS | DECAY | RELEASE_DAMP => {
-            model != Model::Bowed
+            !matches!(model, Model::Bowed | Model::Wind)
         }
+        HF_DAMP | BODY => model != Model::Wind,
+        WIND_INSTRUMENT | BREATH | EMBOUCHURE | BREATH_NOISE | WIND_ATTACK | WIND_VIBRATO
+        | WIND_VIBRATO_RATE => model == Model::Wind,
         BOW_PRESSURE | BOW_POSITION | BOW_ATTACK | VIBRATO | VIBRATO_RATE | BOWED_BODY => {
             model == Model::Bowed
         }
@@ -310,6 +379,10 @@ const TWO_STAGE_TAIL: f32 = 1.4;
 const PIANO_GAIN: f32 = 0.16;
 const MALLET_GAIN: f32 = 0.32;
 const BOWED_GAIN: f32 = 0.4;
+const WIND_GAIN: f32 = 0.22;
+/// How much velocity sets a wind note's loudness (its breath drive also
+/// follows velocity, which brightens it).
+const WIND_VELOCITY_SENS: f32 = 0.5;
 /// Bowed strings need substantial losses for a stable Helmholtz motion
 /// (with too little loss the bow locks onto higher modes): STK's value.
 const BOWED_LOSS: f32 = 0.95;
@@ -323,6 +396,7 @@ enum Model {
     Mallet,
     Piano,
     Bowed,
+    Wind,
 }
 
 fn model_from(v: f32) -> Model {
@@ -330,6 +404,7 @@ fn model_from(v: f32) -> Model {
         1 => Model::Mallet,
         2 => Model::Piano,
         3 => Model::Bowed,
+        4 => Model::Wind,
         _ => Model::String,
     }
 }
@@ -357,6 +432,8 @@ pub struct PhysicalShared {
     width: f32,
     decay_track: f32,
     two_stage: f32,
+    wind: WindSettings,
+    breath: f32,
 }
 
 /// Phase delay in samples of H(e^{jw}) given its value at `w`.
@@ -696,6 +773,8 @@ pub struct PhysicalVoice {
     pulse_amp: f32,
     // Bowed
     bow: BowedString,
+    // Wind
+    wind: WindPipe,
 }
 
 impl PhysicalVoice {
@@ -727,6 +806,7 @@ impl PhysicalVoice {
             pulse_len: 0,
             pulse_amp: 0.0,
             bow: BowedString::new(),
+            wind: WindPipe::new(seed),
         }
     }
 
@@ -948,6 +1028,7 @@ impl PhysicalVoice {
             st.clear();
         }
         self.bow.clear();
+        self.wind.clear();
         self.modes = [Mode::default(); MAX_MODES];
         self.dc_x1 = 0.0;
         self.dc_y1 = 0.0;
@@ -962,6 +1043,37 @@ impl PhysicalVoice {
         self.dc_x1 = x;
         self.dc_y1 = y;
         y
+    }
+
+    fn render_wind(
+        &mut self,
+        s: &PhysicalShared,
+        ctl: &Controls,
+        l: &mut [f32],
+        r: &mut [f32],
+    ) -> f32 {
+        let n = l.len();
+        // Breath: the Breath control, plus velocity (harder notes are blown
+        // harder, which brightens them) and the mod wheel.
+        let drive = s.breath + 0.4 * (self.vel - 0.7) + 0.6 * ctl.modwheel;
+        let mut mono = [0.0f32; MAX_BLOCK];
+        self.wind.render(
+            &s.wind,
+            s.sample_rate,
+            self.note as f32 + ctl.pitch,
+            drive,
+            self.released,
+            &mut mono[..n],
+        );
+        let gain = WIND_GAIN * crate::dsp::velocity_gain(self.vel, WIND_VELOCITY_SENS);
+        let mut peak = 0.0f32;
+        for i in 0..n {
+            let o = mono[i] * gain;
+            peak = peak.max(o.abs());
+            l[i] += o * self.pan.0;
+            r[i] += o * self.pan.1;
+        }
+        peak
     }
 
     fn render_bowed(
@@ -1096,6 +1208,12 @@ impl Voice for PhysicalVoice {
                         self.bow.d_neck = self.bow.d_neck_target;
                     }
                 }
+                // The pipe follows pitch itself, block by block.
+                Model::Wind => {
+                    if self.pending {
+                        self.wind.start(&s.wind, s.sample_rate, f0);
+                    }
+                }
             }
             self.tuned_for = pitch;
         }
@@ -1104,7 +1222,7 @@ impl Voice for PhysicalVoice {
                 Model::String => self.excite_string(s),
                 Model::Piano => self.excite_piano(s),
                 Model::Mallet => self.excite_mallet(s),
-                Model::Bowed => {}
+                Model::Bowed | Model::Wind => {}
             }
             self.pending = false;
         }
@@ -1160,11 +1278,15 @@ impl Voice for PhysicalVoice {
             Model::Bowed => {
                 peak = self.render_bowed(s, ctl, &mut l[..n], &mut r[..n]);
             }
+            Model::Wind => {
+                peak = self.render_wind(s, ctl, &mut l[..n], &mut r[..n]);
+            }
         }
         // Free the voice once it has been effectively silent for a while
-        // (a bowed note is never silent while the bow is on the string).
-        let bowing = self.model == Model::Bowed && !self.released;
-        if peak < 1e-4 && !bowing {
+        // (a bowed or blown note is never silent while held, though it may
+        // take a while to speak).
+        let sustained = matches!(self.model, Model::Bowed | Model::Wind) && !self.released;
+        if peak < 1e-4 && !sustained {
             self.quiet_blocks += 1;
             if self.quiet_blocks > 8 {
                 self.active = false;
@@ -1318,6 +1440,15 @@ impl PhysicalSynth {
         s.width = p[WIDTH];
         s.decay_track = p[DECAY_TRACK];
         s.two_stage = p[TWO_STAGE];
+        s.breath = p[BREATH];
+        s.wind = WindSettings {
+            instrument: wind::instrument_from(p[WIND_INSTRUMENT]),
+            embouchure: p[EMBOUCHURE],
+            noise: p[BREATH_NOISE],
+            attack: p[WIND_ATTACK],
+            vibrato: p[WIND_VIBRATO],
+            vibrato_rate: p[WIND_VIBRATO_RATE],
+        };
         self.sympathetic = if s.model == Model::String {
             p[SYMPATHETIC]
         } else {
@@ -1397,7 +1528,7 @@ impl PhysicalSynth {
         self.tmp_r[..n].fill(0.0);
         self.poly
             .render(&self.shared, &mut self.tmp_l[..n], &mut self.tmp_r[..n]);
-        let body = if self.shared.model == Model::Bowed {
+        let body = if matches!(self.shared.model, Model::Bowed | Model::Wind) {
             0.0
         } else {
             self.body
@@ -1652,6 +1783,16 @@ mod tests {
         );
         p[MODEL] = 1.0; // mallet
         assert!(param_visible(&p, MATERIAL) && param_visible(&p, HARDNESS));
+        assert!(!param_visible(&p, BREATH));
+        p[MODEL] = 4.0; // wind
+        assert!(
+            param_visible(&p, BREATH)
+                && param_visible(&p, WIND_INSTRUMENT)
+                && param_visible(&p, TONE)
+                && !param_visible(&p, BODY)
+                && !param_visible(&p, DECAY)
+                && !param_visible(&p, BOW_PRESSURE)
+        );
     }
 
     #[test]
@@ -1675,6 +1816,94 @@ mod tests {
                 0,
                 "material {material} still ringing"
             );
+        }
+    }
+
+    fn wind_synth(instrument: usize, overrides: &[(&str, f32)]) -> PhysicalSynth {
+        let mut all = vec![
+            ("model", 4.0),
+            ("wind_instrument", instrument as f32),
+            ("wind_vibrato", 0.0),
+        ];
+        all.extend_from_slice(overrides);
+        synth_with(&all)
+    }
+
+    /// A slow attack keeps a note quiet for a while: the voice must not be
+    /// freed before it speaks, and must be freed once released.
+    #[test]
+    fn winds_sustain_while_held_and_stop_when_released() {
+        for inst in 0..wind::INSTRUMENTS.len() {
+            let mut s = wind_synth(inst, &[("wind_attack", 1.0)]);
+            s.poly.note_on(67, 0.8, &s.shared);
+            let held = render(&mut s, 96_000);
+            assert!(held.iter().all(|v| v.is_finite()));
+            let (early, late) = (rms(&held[24_000..48_000]), rms(&held[72_000..96_000]));
+            assert!(early > 0.01, "instrument {inst} didn't speak: {early}");
+            assert!(
+                late > early * 0.6,
+                "instrument {inst} died while held: {early} -> {late}"
+            );
+            s.poly.note_off(67);
+            render(&mut s, 48_000);
+            assert_eq!(
+                s.poly.active_voices(),
+                0,
+                "instrument {inst} still sounding"
+            );
+        }
+    }
+
+    #[test]
+    fn winds_are_in_tune_and_follow_velocity() {
+        let notes: [&[u8]; 3] = [&[52, 64, 76, 88], &[50, 62, 74, 82], &[62, 74, 86, 94]];
+        for (inst, notes) in notes.iter().enumerate() {
+            for &note in *notes {
+                let mut s = wind_synth(inst, &[]);
+                let p = measured_pitch(&mut s, note);
+                assert!(
+                    (p - note as f32).abs() < 0.12,
+                    "instrument {inst} note {note}: measured {p}"
+                );
+            }
+            let level = |vel: f32| {
+                let mut s = wind_synth(inst, &[]);
+                s.poly.note_on(notes[1], vel, &s.shared);
+                rms(&render(&mut s, 48_000)[24_000..])
+            };
+            let (soft, loud) = (level(0.3), level(1.0));
+            assert!(
+                loud > soft * 2.0,
+                "instrument {inst}: soft {soft} loud {loud}"
+            );
+        }
+    }
+
+    #[test]
+    fn wind_extremes_stay_bounded() {
+        for inst in 0..wind::INSTRUMENTS.len() {
+            for emb in [0.0, 1.0] {
+                let mut s = wind_synth(
+                    inst,
+                    &[
+                        ("embouchure", emb),
+                        ("breath", 1.0),
+                        ("breath_noise", 1.0),
+                        ("wind_attack", 0.005),
+                    ],
+                );
+                s.poly.set_modwheel(1.0);
+                for note in [0u8, 60, 127] {
+                    s.poly.note_on(note, 1.0, &s.shared);
+                }
+                let out = render(&mut s, 48_000);
+                assert!(out.iter().all(|v| v.is_finite()));
+                assert!(
+                    peak(&out) < 2.0,
+                    "instrument {inst} embouchure {emb}: peak {}",
+                    peak(&out)
+                );
+            }
         }
     }
 
