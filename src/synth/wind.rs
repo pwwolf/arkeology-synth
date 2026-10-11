@@ -307,21 +307,20 @@ impl WindPipe {
 
     /// Set delay lengths (and loss filter) for `f0`. With `snap`, jump to
     /// them (a new note) rather than gliding (bends, vibrato).
-    fn tune(&mut self, s: &WindSettings, sr: f32, f0: f32, snap: bool) {
-        self.instrument = s.instrument;
-        let f0 = f0.clamp(s.instrument.min_freq(sr), sr * 0.1);
+    fn tune(&mut self, sr: f32, f0: f32, snap: bool) {
+        let f0 = f0.clamp(self.instrument.min_freq(sr), sr * 0.1);
         let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
         let total = sr / f0;
         // While a note builds up, a darker bore favours the fundamental, so
         // the oscillation can't lock onto a higher register (as a clean
         // tongued attack does); the loss then opens up over the next 0.1 s.
-        let settle = if s.instrument == Instrument::Flute {
+        let settle = if self.instrument == Instrument::Flute {
             1.0
         } else {
             0.25 + 0.75 * ((self.age - ATTACK_DARK) / ATTACK_DARK).clamp(0.0, 1.0)
         };
         let loss_pole = |fc: f32| (-std::f32::consts::TAU * fc * settle / sr).exp().min(0.95);
-        match s.instrument {
+        match self.instrument {
             Instrument::Clarinet => {
                 // The loop inverts, so it spans half a period.
                 self.lp_pole = loss_pole(f0 * CLARINET_LOSS_HARMONICS);
@@ -357,13 +356,17 @@ impl WindPipe {
         }
     }
 
-    /// Start (or re-tongue) a note.
+    /// Start (or re-tongue) a note. The instrument is fixed for the life of
+    /// the note (as the physical model is for every voice): switching it
+    /// takes effect from the next note, rather than running one
+    /// instrument's loop on another's state.
     pub fn start(&mut self, s: &WindSettings, sr: f32, f0: f32) {
         if s.instrument != self.instrument {
             self.clear();
+            self.instrument = s.instrument;
         }
         self.age = 0.0;
-        self.tune(s, sr, f0, true);
+        self.tune(sr, f0, true);
         self.attack_coef = (-1.0 / (s.attack.max(0.002) * 0.3 * sr)).exp();
         self.release_coef = (-1.0 / (0.03 * sr)).exp();
         self.env_coef = (-1.0 / (0.02 * sr)).exp();
@@ -371,7 +374,7 @@ impl WindPipe {
         // shapes each note's harmonics; its gain at the fundamental is
         // normalised (to A4's), or high notes would come out up to 18 dB
         // louder than low ones.
-        let (fc, floor) = s.instrument.radiation();
+        let (fc, floor) = self.instrument.radiation();
         let k = (std::f32::consts::PI * fc / sr).tan();
         let gain_at = |f: f32| {
             let r = f / fc;
@@ -412,7 +415,7 @@ impl WindPipe {
         let wave = onset * sin_cycles(self.vib_phase);
         let (vib_pitch, vib_breath) = self.instrument.vibrato_split();
         let cents = s.vibrato * vib_pitch * wave + DRIFT_CENTS * drift_pitch;
-        self.tune(s, sr, midi_to_freq(pitch + cents / 100.0), false);
+        self.tune(sr, midi_to_freq(pitch + cents / 100.0), false);
 
         // Breath vibrato and wander: mostly loudness, plus a little pressure
         // away from the window's edges.
@@ -601,5 +604,29 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// Switching instrument while a note is held doesn't touch that note.
+    #[test]
+    fn instrument_is_fixed_for_a_held_note() {
+        crate::dsp::init_tables();
+        let (sr, note) = (48_000.0, 64u8);
+        let clarinet = settings(Instrument::Clarinet, 0.5, 0.3);
+        let flute = settings(Instrument::Flute, 0.5, 0.3);
+        let run = |switch: bool| {
+            let mut p = WindPipe::new(1);
+            p.start(&clarinet, sr, midi_to_freq(note as f32));
+            let mut out = vec![0.0; 24_000];
+            for (k, chunk) in out.chunks_mut(64).enumerate() {
+                let s = if switch && k >= 150 {
+                    &flute
+                } else {
+                    &clarinet
+                };
+                p.render(s, sr, note as f32, 0.5, false, chunk);
+            }
+            out
+        };
+        assert_eq!(run(false), run(true));
     }
 }
