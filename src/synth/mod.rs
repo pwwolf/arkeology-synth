@@ -226,6 +226,10 @@ pub struct Controls {
     pub pitch: f32,
     /// Mod wheel, 0..=1.
     pub modwheel: f32,
+    /// Breath controller (CC2), 0..=1.
+    pub breath: f32,
+    /// Channel pressure (aftertouch), 0..=1.
+    pub aftertouch: f32,
     /// Per-sample glide coefficient (0 = no glide).
     pub glide_coef: f32,
 }
@@ -389,6 +393,14 @@ impl<V: Voice> Poly<V> {
         self.ctl.modwheel = v.clamp(0.0, 1.0);
     }
 
+    pub fn set_breath(&mut self, v: f32) {
+        self.ctl.breath = v.clamp(0.0, 1.0);
+    }
+
+    pub fn set_aftertouch(&mut self, v: f32) {
+        self.ctl.aftertouch = v.clamp(0.0, 1.0);
+    }
+
     pub fn all_notes_off(&mut self) {
         self.sustain = false;
         for s in &mut self.slots {
@@ -537,6 +549,14 @@ impl Instrument {
         self.poly_op(|p| p.set_modwheel(v))
     }
 
+    pub fn set_breath(&mut self, v: f32) {
+        self.poly_op(|p| p.set_breath(v))
+    }
+
+    pub fn set_aftertouch(&mut self, v: f32) {
+        self.poly_op(|p| p.set_aftertouch(v))
+    }
+
     pub fn all_notes_off(&mut self) {
         self.poly_op(|p| p.all_notes_off())
     }
@@ -600,6 +620,9 @@ trait PolyControl {
     fn set_sustain(&mut self, on: bool);
     fn set_bend(&mut self, v: f32);
     fn set_modwheel(&mut self, v: f32);
+    /// Breath controller and channel pressure: only some engines use them.
+    fn set_breath(&mut self, _v: f32) {}
+    fn set_aftertouch(&mut self, _v: f32) {}
     fn all_notes_off(&mut self);
     fn active_voices(&self) -> usize;
 }
@@ -616,6 +639,12 @@ impl<V: Voice> PolyControl for Poly<V> {
     }
     fn set_modwheel(&mut self, v: f32) {
         Poly::set_modwheel(self, v)
+    }
+    fn set_breath(&mut self, v: f32) {
+        Poly::set_breath(self, v)
+    }
+    fn set_aftertouch(&mut self, v: f32) {
+        Poly::set_aftertouch(self, v)
     }
     fn all_notes_off(&mut self) {
         Poly::all_notes_off(self)

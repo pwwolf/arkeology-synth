@@ -513,6 +513,8 @@ impl Engine {
                 }
                 MidiKind::NoteOff { note } => s.inst.note_off(note),
                 MidiKind::Cc { cc: 1, value } => s.inst.set_modwheel(value as f32 / 127.0),
+                MidiKind::Cc { cc: 2, value } => s.inst.set_breath(value as f32 / 127.0),
+                MidiKind::Aftertouch(value) => s.inst.set_aftertouch(value as f32 / 127.0),
                 MidiKind::Cc { cc: 64, value } => s.inst.set_sustain(value >= 64),
                 MidiKind::Cc { cc: 120 | 123, .. } => s.inst.all_notes_off(),
                 MidiKind::PitchBend(v) => s.inst.set_bend(v),
@@ -1330,6 +1332,61 @@ mod tests {
     /// Playing softly is clearly quieter on velocity-sensitive patches (the
     /// velocity curve reaches about -12 dB at 64 and -24 dB at 32 at full
     /// sensitivity), while the organ ignores velocity as a real one does.
+    /// CC2 (breath) and channel pressure reach a wind voice set to use them.
+    #[test]
+    fn breath_cc_and_aftertouch_reach_the_synth() {
+        crate::dsp::init_tables();
+        let sr = 48_000.0;
+        let builtins = sample::builtins();
+        let clarinet = crate::patch::factory_patches()
+            .into_iter()
+            .find(|p| p.name == "Clarinet")
+            .unwrap();
+        type Breath = fn(u8) -> MidiKind;
+        let inputs: [(f32, Breath); 2] = [
+            (1.0, |value| MidiKind::Cc { cc: 2, value }),
+            (2.0, MidiKind::Aftertouch),
+        ];
+        for (input, breath) in inputs {
+            let cmds: CommandQueue = Arc::new(ArrayQueue::new(256));
+            let mut e = Engine::new(
+                sr,
+                cmds.clone(),
+                Arc::new(ArrayQueue::new(64)),
+                Arc::new(Telemetry::default()),
+            );
+            let mut v = clarinet.values();
+            v[synth::REVERB_SEND] = 0.0;
+            v[SynthKind::Physical.index_of("breath_input").unwrap()] = input;
+            let slot = Slot::new(SynthKind::Physical, v, Some(0), sr, &builtins, &[]);
+            cmds.push(Command::InstallSlot {
+                slot: 0,
+                data: slot,
+            })
+            .ok();
+            let midi = |kind| Command::Midi(MidiMsg { channel: 0, kind });
+            cmds.push(midi(MidiKind::NoteOn {
+                note: 64,
+                velocity: 100,
+            }))
+            .ok();
+            let mut out = vec![0.0; 2 * 24_000];
+            e.process(&mut out, 2);
+            let peak = out.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+            assert!(
+                peak < 1e-3,
+                "input {input}: sounded before any breath ({peak})"
+            );
+            cmds.push(midi(breath(127))).ok();
+            e.process(&mut out, 2);
+            let rms = (out.iter().map(|x| x * x).sum::<f32>() / out.len() as f32).sqrt();
+            assert!(
+                rms > 0.01,
+                "input {input}: breath didn't sound the note ({rms})"
+            );
+        }
+    }
+
     #[test]
     fn velocity_is_audible() {
         crate::dsp::init_tables();

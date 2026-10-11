@@ -157,7 +157,7 @@ fn midi_behaviour(kind: SynthKind, values: &[f32]) -> Value {
             "adds bow pressure (force) for swells".to_string()
         }
         SynthKind::Physical if model == "Wind" => {
-            "adds breath pressure for swells (louder and brighter)".to_string()
+            "adds breath pressure for swells (louder and brighter); with Breath Input set to Breath CC or Aftertouch, that controller is the breath and sets loudness down to silence".to_string()
         }
         SynthKind::Tonewheel => {
             "rotary speaker fast while above halfway (slow below, unless Speed is Fast)".to_string()
@@ -180,7 +180,7 @@ fn midi_behaviour(kind: SynthKind, values: &[f32]) -> Value {
         SynthKind::Kit => "level (Vel Sens; 100% = the GM curve, about -12 dB at velocity 64, -24 dB at 32) and brightness (Vel>Cutoff)".to_string(),
         SynthKind::Sampler => "level (Vel>Amp; 100% = the GM curve, about -12 dB at velocity 64, -24 dB at 32) and filter cutoff (Vel>Cutoff)".to_string(),
         SynthKind::Physical if model == "Bowed" => "bow speed: louder notes with the same tone".to_string(),
-        SynthKind::Physical if model == "Wind" => "breath: louder and (by blowing harder) brighter notes".to_string(),
+        SynthKind::Physical if model == "Wind" => "breath: louder and (by blowing harder) brighter notes; ignored when Breath Input is Breath CC (CC2) or Aftertouch".to_string(),
         SynthKind::Physical => "level and brightness (Vel>Bright: harder strikes/plucks are brighter)".to_string(),
         SynthKind::Tonewheel => "ignored, like a real organ (MIDI-learn a CC to Volume for a swell pedal)".to_string(),
         SynthKind::Vocal => {

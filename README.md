@@ -92,8 +92,12 @@ controller or a DAW/sequencer.
     do). **Drift** adds a player's small unsteadiness: pitch, breath and vibrato rate
     wander slowly. The sound is heard as it leaves the bell and tone holes, not from
     inside the tube. Breath is kept within the range where each instrument speaks
-    cleanly, so notes across its range don't squeak into the wrong register. For a
-    breath controller, MIDI-learn its CC (usually CC2) to Breath.
+    cleanly, so notes across its range don't squeak into the wrong register.
+    **Breath Input** chooses what blows: *Keyboard* (the above), *Breath CC* (CC2 from a
+    breath or wind controller) or *Aftertouch* (channel pressure). With a controller,
+    it's your breath, as on a wind controller: it sets loudness all the way down to
+    silence while you hold a key, and the tone within the range where the instrument
+    speaks; velocity is ignored.
   - Every element's phase delay is compensated, so strings, mallets, pianos and winds
     measure within a few cents of pitch across the keyboard.
 - **Tonewheel organ**: a drawbar organ with a rotary speaker.

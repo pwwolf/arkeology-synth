@@ -70,8 +70,12 @@ pub const WIND_ATTACK: usize = 28;
 pub const WIND_VIBRATO: usize = 29;
 pub const WIND_VIBRATO_RATE: usize = 30;
 pub const WIND_DRIFT: usize = 31;
+pub const BREATH_INPUT: usize = 32;
 
-pub static PARAMS: [P; 32] = [
+/// What blows a wind note: velocity and the mod wheel, or a controller.
+pub const BREATH_INPUTS: [&str; 3] = ["Keyboard", "Breath CC", "Aftertouch"];
+
+pub static PARAMS: [P; 33] = [
     VOICES_PARAM,
     P::choice("model", "Model", "Model", &MODELS, 0),
     P::float(
@@ -294,6 +298,7 @@ pub static PARAMS: [P; 32] = [
         Unit::Hz,
     ),
     P::float("wind_drift", "Drift", "Wind", 0.0, 1.0, 0.5, Unit::Percent),
+    P::choice("breath_input", "Breath Input", "Wind", &BREATH_INPUTS, 0),
 ];
 
 /// Which of this synth's own parameters apply to the selected model.
@@ -306,7 +311,7 @@ pub fn param_visible(p: &[f32], local: usize) -> bool {
         }
         HF_DAMP | BODY => model != Model::Wind,
         WIND_INSTRUMENT | BREATH | EMBOUCHURE | BREATH_NOISE | WIND_ATTACK | WIND_VIBRATO
-        | WIND_VIBRATO_RATE | WIND_DRIFT => model == Model::Wind,
+        | WIND_VIBRATO_RATE | WIND_DRIFT | BREATH_INPUT => model == Model::Wind,
         BOW_PRESSURE | BOW_POSITION | BOW_ATTACK | VIBRATO | VIBRATO_RATE | BOWED_BODY => {
             model == Model::Bowed
         }
@@ -436,6 +441,7 @@ pub struct PhysicalShared {
     two_stage: f32,
     wind: WindSettings,
     breath: f32,
+    breath_input: usize,
     dc_pole: f32,
 }
 
@@ -778,6 +784,9 @@ pub struct PhysicalVoice {
     bow: BowedString,
     // Wind
     wind: WindPipe,
+    /// Output level, smoothed (a breath controller's CC arrives in steps);
+    /// NaN at note start, so it begins at its target.
+    wind_level: f32,
 }
 
 impl PhysicalVoice {
@@ -810,6 +819,7 @@ impl PhysicalVoice {
             pulse_amp: 0.0,
             bow: BowedString::new(),
             wind: WindPipe::new(seed),
+            wind_level: f32::NAN,
         }
     }
 
@@ -1056,9 +1066,28 @@ impl PhysicalVoice {
         r: &mut [f32],
     ) -> f32 {
         let n = l.len();
-        // Breath: the Breath control, plus velocity (harder notes are blown
-        // harder, which brightens them) and the mod wheel.
-        let drive = s.breath + 0.4 * (self.vel - 0.7) + 0.6 * ctl.modwheel;
+        let controller = match s.breath_input {
+            1 => Some(ctl.breath),
+            2 => Some(ctl.aftertouch),
+            _ => None,
+        };
+        let (drive, level) = match controller {
+            // Keyboard: the Breath control, plus velocity (harder notes are
+            // blown harder, which brightens them) and the mod wheel.
+            None => (
+                s.breath + 0.4 * (self.vel - 0.7) + 0.6 * ctl.modwheel,
+                crate::dsp::velocity_gain(self.vel, WIND_VELOCITY_SENS),
+            ),
+            // A breath controller or aftertouch is the player's breath, as on
+            // a wind controller (velocity is ignored): it sets loudness all
+            // the way to silence and, within the pressures where the
+            // instrument speaks, its tone. The pipe itself keeps speaking, so
+            // blowing softly can't push it into another register.
+            Some(b) => (
+                s.breath + 0.8 * (b - 0.5) + 0.6 * ctl.modwheel,
+                b.clamp(0.0, 1.0).powf(1.5),
+            ),
+        };
         let mut mono = [0.0f32; MAX_BLOCK];
         self.wind.render(
             &s.wind,
@@ -1068,10 +1097,19 @@ impl PhysicalVoice {
             self.released,
             &mut mono[..n],
         );
-        let gain = WIND_GAIN * crate::dsp::velocity_gain(self.vel, WIND_VELOCITY_SENS);
+        // Smooth the level over ~10 ms, ramping across the block.
+        let target = WIND_GAIN * level;
+        let from = if self.wind_level.is_finite() {
+            self.wind_level
+        } else {
+            target
+        };
+        let k = 1.0 - (-(n as f32) / (0.01 * s.sample_rate)).exp();
+        self.wind_level = from + (target - from) * k;
+        let step = (self.wind_level - from) / n as f32;
         let mut peak = 0.0f32;
         for i in 0..n {
-            let o = mono[i] * gain;
+            let o = mono[i] * (from + step * (i + 1) as f32);
             peak = peak.max(o.abs());
             l[i] += o * self.pan.0;
             r[i] += o * self.pan.1;
@@ -1215,6 +1253,7 @@ impl Voice for PhysicalVoice {
                 Model::Wind => {
                     if self.pending {
                         self.wind.start(&s.wind, s.sample_rate, f0);
+                        self.wind_level = f32::NAN;
                     }
                 }
             }
@@ -1445,6 +1484,7 @@ impl PhysicalSynth {
         s.decay_track = p[DECAY_TRACK];
         s.two_stage = p[TWO_STAGE];
         s.breath = p[BREATH];
+        s.breath_input = p[BREATH_INPUT].round() as usize;
         s.wind = WindSettings {
             instrument: wind::instrument_from(p[WIND_INSTRUMENT]),
             embouchure: p[EMBOUCHURE],
@@ -1794,6 +1834,7 @@ mod tests {
             param_visible(&p, BREATH)
                 && param_visible(&p, WIND_INSTRUMENT)
                 && param_visible(&p, WIND_DRIFT)
+                && param_visible(&p, BREATH_INPUT)
                 && param_visible(&p, TONE)
                 && !param_visible(&p, BODY)
                 && !param_visible(&p, DECAY)
@@ -1916,6 +1957,59 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// With a breath controller (or aftertouch), the controller sets the
+    /// loudness of a held note all the way down to silence and back, and the
+    /// note stays in its register throughout.
+    #[test]
+    fn breath_controller_sets_loudness_down_to_silence() {
+        for inst in 0..wind::INSTRUMENTS.len() {
+            for input in [1.0f32, 2.0] {
+                let mut s = wind_synth(inst, &[("breath_input", input)]);
+                let set = |s: &mut PhysicalSynth, v: f32| {
+                    if input == 1.0 {
+                        s.poly.set_breath(v)
+                    } else {
+                        s.poly.set_aftertouch(v)
+                    }
+                };
+                let what = format!("instrument {inst} input {input}");
+                set(&mut s, 0.0);
+                s.poly.note_on(67, 1.0, &s.shared);
+                assert!(peak(&render(&mut s, 24_000)) < 1e-3, "{what}: not silent");
+                set(&mut s, 1.0);
+                let blown = render(&mut s, 48_000);
+                let loud = rms(&blown[24_000..]);
+                let p = Sample::new("t", blown[24_000..].to_vec(), None, 48_000.0)
+                    .detect_pitch()
+                    .unwrap_or(f32::NAN);
+                assert!(
+                    loud > 0.02 && (p - 67.0).abs() < 0.15,
+                    "{what}: {loud} at {p}"
+                );
+                set(&mut s, 0.3);
+                let soft = rms(&render(&mut s, 24_000)[12_000..]);
+                assert!(
+                    soft > 1e-3 && soft < loud * 0.5,
+                    "{what}: soft {soft} loud {loud}"
+                );
+                set(&mut s, 0.0);
+                let stopped = render(&mut s, 24_000);
+                assert!(peak(&stopped[4_800..]) < 1e-3, "{what}: didn't fall silent");
+                // Still held: blowing again brings the note back.
+                set(&mut s, 1.0);
+                assert!(
+                    rms(&render(&mut s, 24_000)[12_000..]) > 0.02,
+                    "{what}: no return"
+                );
+            }
+        }
+        // On the keyboard, the breath controller is ignored.
+        let mut s = wind_synth(0, &[]);
+        s.poly.set_breath(0.0);
+        s.poly.note_on(67, 0.8, &s.shared);
+        assert!(rms(&render(&mut s, 48_000)[24_000..]) > 0.02);
     }
 
     #[test]
