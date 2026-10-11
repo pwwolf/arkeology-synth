@@ -529,13 +529,31 @@ impl WaveString {
         let lp_delay = phase_delay(lp_re, lp_im, w);
         let lp_mag = (lp_re * lp_re + lp_im * lp_im).sqrt() as f32;
 
-        self.disp_a = -0.75 * stiffness.clamp(0.0, 1.0);
-        let (dr, di) = allpass_at(self.disp_a as f64, w);
-        let disp_delay = if stiffness > 0.0 {
+        // Dispersion (stiffness): a chain of all-passes whose delay at the
+        // fundamental must still fit in the period (with room for the
+        // tuning all-pass), or the note would go flat. In the treble that
+        // caps the stiffness: find the strongest coefficient that fits.
+        let disp_delay_for = |a: f64| {
+            let (dr, di) = allpass_at(a, w);
             phase_delay(dr, di, w) * DISPERSION_STAGES as f64
-        } else {
-            0.0
         };
+        let budget = period - lp_delay - 2.5;
+        let mut a = -0.75 * stiffness.clamp(0.0, 1.0) as f64;
+        if a < 0.0 && disp_delay_for(a) > budget {
+            // Phase delay grows as `a` goes more negative: bisect towards 0.
+            let mut ok = 0.0;
+            for _ in 0..20 {
+                let mid = 0.5 * (a + ok);
+                if disp_delay_for(mid) > budget {
+                    a = mid;
+                } else {
+                    ok = mid;
+                }
+            }
+            a = ok;
+        }
+        self.disp_a = a as f32;
+        let disp_delay = if a < 0.0 { disp_delay_for(a) } else { 0.0 };
 
         let remaining = (period - lp_delay - disp_delay).max(2.5);
         // Keep the Thiran all-pass delay within 0.5..1.5 samples for accuracy.
@@ -2061,6 +2079,57 @@ mod tests {
                     "instrument {inst} embouchure {emb}: peak {}",
                     peak(&out)
                 );
+            }
+        }
+    }
+
+    /// Cents between `f0` and the strongest spectral peak within ±150 cents
+    /// of it: the fundamental itself, which a stiff string's stretched
+    /// overtones can't pull (unlike a periodicity detector).
+    fn fundamental_cents(out: &[f32], f0: f32) -> f32 {
+        let n = out.len();
+        let mag = |f: f32| {
+            let (mut re, mut im) = (0.0f32, 0.0f32);
+            for (i, x) in out.iter().enumerate() {
+                let w = 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n as f32).cos();
+                let ph = std::f32::consts::TAU * f * i as f32 / 48_000.0;
+                re += x * w * ph.cos();
+                im += x * w * ph.sin();
+            }
+            re * re + im * im
+        };
+        let best = |cents: &mut dyn Iterator<Item = f32>| {
+            cents
+                .map(|c| (c, mag(f0 * (c / 1200.0).exp2())))
+                .fold((0.0, -1.0), |b, (c, m)| if m > b.1 { (c, m) } else { b })
+                .0
+        };
+        // Coarse 5-cent steps, then 1-cent steps around the best.
+        let coarse = best(&mut (-30..=30).map(|k| k as f32 * 5.0));
+        best(&mut (-5..=5).map(|k| coarse + k as f32))
+    }
+
+    /// Stiffness stretches the overtones but must never detune the
+    /// fundamental: in the treble the dispersion is capped to fit the period.
+    #[test]
+    fn stiff_strings_keep_their_fundamental_in_tune() {
+        for model in [0.0f32, 2.0] {
+            for stiffness in [0.0f32, 0.5, 0.8, 1.0] {
+                for note in [40u8, 52, 64, 76, 88, 96, 104] {
+                    let mut s = synth_with(&[
+                        ("model", model),
+                        ("stiffness", stiffness),
+                        ("body", 0.0),
+                        ("decay", 8.0),
+                    ]);
+                    s.poly.note_on(note, 0.8, &s.shared);
+                    let out = render(&mut s, 24_000);
+                    let c = fundamental_cents(&out[2_400..21_600], midi_to_freq(note as f32));
+                    assert!(
+                        c.abs() <= 6.0,
+                        "model {model} stiffness {stiffness} note {note}: {c:+} cents"
+                    );
+                }
             }
         }
     }
