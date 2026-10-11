@@ -1518,11 +1518,20 @@ impl PhysicalSynth {
             vibrato_rate: p[WIND_VIBRATO_RATE],
             drift: p[WIND_DRIFT],
         };
-        self.sympathetic = if s.model == Model::String {
+        let sympathetic = if s.model == Model::String {
             p[SYMPATHETIC]
         } else {
             0.0
         };
+        // The open strings only run while Sympathetic is up: silence them
+        // when it's turned off, or turning it back on would revive
+        // whatever was ringing at the time.
+        if sympathetic <= 0.0 && self.sympathetic > 0.0 {
+            for st in &mut self.open_strings {
+                st.clear();
+            }
+        }
+        self.sympathetic = sympathetic;
         let key = (s.decay, s.hf_damp, s.decay_track);
         if self.sympathetic > 0.0 && key != self.open_tuned_for {
             self.open_tuned_for = key;
@@ -2132,6 +2141,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Turning Sympathetic off silences the open strings rather than
+    /// freezing them, so turning it back on can't revive an old resonance.
+    #[test]
+    fn sympathetic_strings_stop_when_turned_off() {
+        let on = [("sympathetic", 1.0), ("decay", 2.0), ("release_damp", 1.0)];
+        let mut s = synth_with(&on);
+        s.poly.note_on(64, 1.0, &s.shared);
+        render(&mut s, 9_600);
+        let mut params = SynthKind::Physical.defaults();
+        for (k, v) in on {
+            params[SynthKind::Physical.index_of(k).unwrap()] = v;
+        }
+        params[SynthKind::Physical.index_of("sympathetic").unwrap()] = 0.0;
+        s.update(&params);
+        s.poly.note_off(64);
+        render(&mut s, 48_000);
+        assert_eq!(s.poly.active_voices(), 0);
+        params[SynthKind::Physical.index_of("sympathetic").unwrap()] = 1.0;
+        s.update(&params);
+        let revived = peak(&render(&mut s, 9_600));
+        assert!(revived < 1e-4, "old resonance came back: {revived}");
     }
 
     /// Pizzicato is short and plucky: held notes must die away quickly.
