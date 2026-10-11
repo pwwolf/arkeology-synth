@@ -702,9 +702,14 @@ impl BowedString {
         (sr / f0) - lp_delay as f32
     }
 
+    /// The range of frequencies whose loop fits the delay lines.
+    fn playable(sr: f32, f: f32) -> f32 {
+        f.clamp(sr / (DELAY_LEN as f32 - 8.0), sr * 0.15)
+    }
+
     fn tune(&mut self, s: &PhysicalShared, f0: f32) {
         let sr = s.sample_rate;
-        let f0 = f0.clamp(sr / (DELAY_LEN as f32 - 8.0), sr * 0.15);
+        let f0 = Self::playable(sr, f0);
         self.lp_pole = bowed_loss_pole(s, f0);
         let total = self.loop_delay(sr, f0);
         // Both segments are fractional (as in STK): rounding the short
@@ -1132,7 +1137,8 @@ impl PhysicalVoice {
         b.vib_phase = (b.vib_phase + s.vibrato_rate * n as f32 / sr).fract();
         let onset = ((b.vib_time - 0.25) / 0.4).clamp(0.0, 1.0);
         let vib = s.vibrato * onset * sin_cycles(b.vib_phase) / 100.0;
-        let f = midi_to_freq(self.note as f32 + ctl.pitch + vib);
+        // Bends and vibrato must stay within the delay lines too.
+        let f = BowedString::playable(sr, midi_to_freq(self.note as f32 + ctl.pitch + vib));
         b.d_neck_target = (b.loop_delay(sr, f) - b.d_bridge).max(2.0);
         let step = (b.d_neck_target - b.d_neck) / n as f32;
 
@@ -1747,6 +1753,25 @@ mod tests {
                 (p - note as f32).abs() < 0.12,
                 "bowed note {note}: measured {p}"
             );
+        }
+    }
+
+    /// The lowest and highest MIDI notes, bent fully either way with full
+    /// vibrato, stay inside the delay lines and finite.
+    #[test]
+    fn bowed_notes_stay_bounded_at_the_keyboard_extremes() {
+        for note in [0u8, 1, 127] {
+            for bend in [-1.0f32, 1.0] {
+                let mut s = synth_with(&[("model", 3.0), ("vibrato", 50.0)]);
+                s.poly.set_bend(bend);
+                s.poly.note_on(note, 1.0, &s.shared);
+                let out = render(&mut s, 48_000);
+                assert!(
+                    out.iter().all(|v| v.is_finite()) && peak(&out) < 2.0,
+                    "note {note} bend {bend}: peak {}",
+                    peak(&out)
+                );
+            }
         }
     }
 
