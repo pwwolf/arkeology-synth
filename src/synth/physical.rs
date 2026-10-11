@@ -443,6 +443,9 @@ pub struct PhysicalShared {
     breath: f32,
     breath_input: usize,
     dc_pole: f32,
+    /// Bumped by every settings update, so held notes re-tune their
+    /// resonators (decay, damping, material, bow position...) in place.
+    generation: u32,
 }
 
 /// Phase delay in samples of H(e^{jw}) given its value at `w`.
@@ -784,6 +787,8 @@ pub struct PhysicalVoice {
     released: bool,
     killed: bool,
     tuned_for: f32,
+    /// The settings generation the resonator was last tuned for.
+    tuned_gen: u32,
     age: u32,
     quiet_blocks: u32,
     rng: Rng,
@@ -823,6 +828,7 @@ impl PhysicalVoice {
             released: false,
             killed: false,
             tuned_for: f32::NAN,
+            tuned_gen: 0,
             age: 0,
             quiet_blocks: 0,
             rng: Rng::new(0xB0D1_0000 ^ seed.wrapping_mul(0x9E37_79B9)),
@@ -884,6 +890,11 @@ impl PhysicalVoice {
         // radiates most) loses energy quickly; the other, slightly detuned,
         // rings on. Together: a prompt attack, then a long, gently beating tail.
         let p = s.two_stage;
+        if self.string_count == 1 && !self.pending {
+            // Two-Stage switched on under a sounding note: the second plane
+            // starts from rest, not from whatever it last held.
+            self.strings[1].clear();
+        }
         self.string_count = 2;
         self.strings[0].tune(
             s.sample_rate,
@@ -1260,7 +1271,7 @@ impl Voice for PhysicalVoice {
         let n = l.len().min(MAX_BLOCK);
         let pitch = self.note as f32 + ctl.pitch;
         let f0 = midi_to_freq(pitch);
-        if self.tuned_for != pitch || self.pending {
+        if self.tuned_for != pitch || self.pending || self.tuned_gen != s.generation {
             match self.model {
                 Model::String => self.tune_string(s, f0),
                 Model::Piano => self.tune_piano(s, f0),
@@ -1282,6 +1293,7 @@ impl Voice for PhysicalVoice {
                 }
             }
             self.tuned_for = pitch;
+            self.tuned_gen = s.generation;
         }
         if self.pending {
             match self.model {
@@ -1485,6 +1497,7 @@ impl PhysicalSynth {
         // Physical models don't glide: pitch comes from the resonator itself.
         self.poly.update_common(params, p[VOICES], 0.0, sr);
         let s = &mut self.shared;
+        s.generation = s.generation.wrapping_add(1);
         s.sample_rate = sr;
         s.dc_pole = crate::dsp::dc_block_pole(sr);
         s.model = model_from(p[MODEL]);
@@ -2164,6 +2177,73 @@ mod tests {
         s.update(&params);
         let revived = peak(&render(&mut s, 9_600));
         assert!(revived < 1e-4, "old resonance came back: {revived}");
+    }
+
+    /// Resonator settings changed under a held note take effect on it, in
+    /// place (without re-striking): decay, material, unison, bow body.
+    #[test]
+    fn held_notes_follow_resonator_changes() {
+        // (what, base settings, the key changed mid-note, its new value)
+        type Case<'a> = (&'a str, &'a [(&'a str, f32)], &'a str, f32);
+        let cases: [Case; 4] = [
+            ("string decay", &[("decay", 8.0)], "decay", 0.3),
+            (
+                "mallet material",
+                &[("model", 1.0), ("decay", 4.0)],
+                "material",
+                1.0,
+            ),
+            (
+                "piano unison",
+                &[("model", 2.0), ("unison", 0.0)],
+                "unison",
+                12.0,
+            ),
+            (
+                "bowed body",
+                &[("model", 3.0), ("vibrato", 0.0)],
+                "bowed_body",
+                3.0,
+            ),
+        ];
+        for (what, base, key, value) in cases {
+            let run = |change: bool| {
+                let mut s = synth_with(base);
+                s.poly.note_on(60, 0.9, &s.shared);
+                let mut out = render(&mut s, 9_600);
+                if change {
+                    let mut params = SynthKind::Physical.defaults();
+                    for (k, v) in base.iter().chain(&[(key, value)]) {
+                        params[SynthKind::Physical.index_of(k).unwrap()] = *v;
+                    }
+                    s.update(&params);
+                }
+                out.extend(render(&mut s, 24_000));
+                out
+            };
+            let (kept, changed) = (run(false), run(true));
+            assert!(changed.iter().all(|v| v.is_finite()), "{what}");
+            // Identical up to the change, different after it.
+            assert_eq!(kept[..9_600], changed[..9_600], "{what}");
+            let diff = rms(&kept[9_600..]
+                .iter()
+                .zip(&changed[9_600..])
+                .map(|(a, b)| a - b)
+                .collect::<Vec<_>>());
+            assert!(
+                diff > 0.1 * rms(&kept[9_600..]),
+                "{what}: held note ignored the change ({diff})"
+            );
+        }
+        // Lowering the decay under a held string makes it die sooner.
+        let mut s = synth_with(&[("decay", 8.0)]);
+        s.poly.note_on(60, 0.9, &s.shared);
+        render(&mut s, 4_800);
+        let mut params = SynthKind::Physical.defaults();
+        params[SynthKind::Physical.index_of("decay").unwrap()] = 0.3;
+        s.update(&params);
+        render(&mut s, 48_000);
+        assert_eq!(s.poly.active_voices(), 0, "string kept ringing");
     }
 
     /// Pizzicato is short and plucky: held notes must die away quickly.
