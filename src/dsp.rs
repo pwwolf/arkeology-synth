@@ -28,6 +28,15 @@ pub fn sin_cycles(phase: f32) -> f32 {
     a + (t[i + 1] - a) * f
 }
 
+/// Cutoff of the DC blockers in physical-model outputs (0.995 at 48 kHz).
+pub const DC_BLOCK_HZ: f32 = 38.3;
+
+/// Pole of a DC blocker `y = x - x1 + p y1` with its cutoff at
+/// `DC_BLOCK_HZ`, so it behaves the same at any sample rate.
+pub fn dc_block_pole(sr: f32) -> f32 {
+    (-std::f32::consts::TAU * DC_BLOCK_HZ / sr).exp()
+}
+
 #[inline]
 pub fn midi_to_freq(note: f32) -> f32 {
     440.0 * semitones_to_ratio(note - 69.0)

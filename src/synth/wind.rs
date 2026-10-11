@@ -237,6 +237,7 @@ pub struct WindPipe {
     loop_x1: f32,
     loop_y1: f32,
     /// DC blocker on the output (the breath itself is a DC offset).
+    dc_pole: f32,
     dc_x1: f32,
     dc_y1: f32,
     /// Level follower for the flute's even-harmonic shaping.
@@ -273,6 +274,7 @@ impl WindPipe {
             loop_pole: 0.997,
             loop_x1: 0.0,
             loop_y1: 0.0,
+            dc_pole: 0.995,
             dc_x1: 0.0,
             dc_y1: 0.0,
             env: 0.0,
@@ -370,6 +372,7 @@ impl WindPipe {
         self.attack_coef = (-1.0 / (s.attack.max(0.002) * 0.3 * sr)).exp();
         self.release_coef = (-1.0 / (0.03 * sr)).exp();
         self.env_coef = (-1.0 / (0.02 * sr)).exp();
+        self.dc_pole = crate::dsp::dc_block_pole(sr);
         // Bilinear first-order high-pass: y = b0 (x - x1) + a1 y1. It
         // shapes each note's harmonics; its gain at the fundamental is
         // normalised (to A4's), or high notes would come out up to 18 dB
@@ -521,7 +524,7 @@ impl WindPipe {
                 }
             };
             self.w = (self.w + 1) & mask;
-            let v = y - self.dc_x1 + 0.995 * self.dc_y1;
+            let v = y - self.dc_x1 + self.dc_pole * self.dc_y1;
             self.dc_x1 = y;
             self.dc_y1 = v;
             // Radiation from the bell and tone holes.
@@ -628,5 +631,33 @@ mod tests {
             out
         };
         assert_eq!(run(false), run(true));
+    }
+
+    /// The same note has the same level and pitch at 96 kHz as at 48 kHz:
+    /// every filter is set from frequencies, not per-sample constants.
+    #[test]
+    fn winds_sound_the_same_at_96_khz() {
+        for inst in [Instrument::Clarinet, Instrument::Sax, Instrument::Flute] {
+            let note = range(inst)[0];
+            let s = settings(inst, 0.5, 0.0);
+            let measure = |sr: f32| {
+                let out = play(&s, sr, note, 0.5, 1.0);
+                let tail = &out[(0.5 * sr) as usize..];
+                let rms = (tail.iter().map(|x| x * x).sum::<f32>() / tail.len() as f32).sqrt();
+                let p = Sample::new("t", tail.to_vec(), None, sr)
+                    .detect_pitch()
+                    .unwrap_or(f32::NAN);
+                (20.0 * rms.log10(), p)
+            };
+            let ((db48, _), (db96, p96)) = (measure(48_000.0), measure(96_000.0));
+            assert!(
+                (db48 - db96).abs() < 0.3,
+                "{inst:?} note {note}: {db48:.1} dB at 48 kHz, {db96:.1} dB at 96 kHz"
+            );
+            assert!(
+                (p96 - note as f32).abs() < 0.15,
+                "{inst:?} note {note} at 96 kHz: {p96}"
+            );
+        }
     }
 }

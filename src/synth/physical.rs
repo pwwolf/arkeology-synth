@@ -436,6 +436,7 @@ pub struct PhysicalShared {
     two_stage: f32,
     wind: WindSettings,
     breath: f32,
+    dc_pole: f32,
 }
 
 /// Phase delay in samples of H(e^{jw}) given its value at `w`.
@@ -1040,8 +1041,8 @@ impl PhysicalVoice {
     }
 
     #[inline]
-    fn dc_block(&mut self, x: f32) -> f32 {
-        let y = x - self.dc_x1 + 0.995 * self.dc_y1;
+    fn dc_block(&mut self, x: f32, pole: f32) -> f32 {
+        let y = x - self.dc_x1 + pole * self.dc_y1;
         self.dc_x1 = x;
         self.dc_y1 = y;
         y
@@ -1147,7 +1148,7 @@ impl PhysicalVoice {
                 }
                 y = y * (1.0 - s.body) + body * s.body * 0.5;
             }
-            let o = self.dc_block(y) * BOWED_GAIN * self.bow.level;
+            let o = self.dc_block(y, s.dc_pole) * BOWED_GAIN * self.bow.level;
             peak = peak.max(o.abs());
             l[i] += o * self.pan.0;
             r[i] += o * self.pan.1;
@@ -1243,7 +1244,7 @@ impl Voice for PhysicalVoice {
                     for st in &mut self.strings[..self.string_count] {
                         z += st.tick();
                     }
-                    let mut o = self.dc_block(z * norm) * gain;
+                    let mut o = self.dc_block(z * norm, s.dc_pole) * gain;
                     if self.thump > 1e-5 {
                         self.thump_lp =
                             (1.0 - thump_c) * self.rng.bipolar() + thump_c * self.thump_lp;
@@ -1422,6 +1423,7 @@ impl PhysicalSynth {
         self.poly.update_common(params, p[VOICES], 0.0, sr);
         let s = &mut self.shared;
         s.sample_rate = sr;
+        s.dc_pole = crate::dsp::dc_block_pole(sr);
         s.model = model_from(p[MODEL]);
         s.hardness = p[HARDNESS];
         s.position = p[POSITION];
