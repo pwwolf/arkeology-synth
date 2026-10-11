@@ -1678,6 +1678,28 @@ mod tests {
         }
     }
 
+    /// Pizzicato is short and plucky: held notes must die away quickly.
+    #[test]
+    fn pizzicato_patch_is_short() {
+        crate::dsp::init_tables();
+        let patch = crate::patch::factory_patches()
+            .into_iter()
+            .find(|p| p.name == "Pizzicato Strings")
+            .unwrap();
+        for note in [43u8, 55, 67, 79] {
+            let mut s = PhysicalSynth::new(48_000.0);
+            s.update(&patch.values());
+            s.poly.note_on(note, 0.8, &s.shared);
+            let out = render(&mut s, 48_000);
+            let (attack, later) = (rms(&out[..2_400]), rms(&out[24_000..26_400]));
+            let drop = 20.0 * (attack / later.max(1e-9)).log10();
+            assert!(
+                drop > 30.0,
+                "note {note}: only {drop:.1} dB down after 0.5 s"
+            );
+        }
+    }
+
     #[test]
     fn release_damping_mutes_a_string() {
         let mut s = synth_with(&[("decay", 10.0), ("release_damp", 1.0)]);
