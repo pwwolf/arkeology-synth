@@ -87,7 +87,8 @@ controller or a DAW/sequencer.
     playing harder or pushing the wheel makes notes louder and brighter. **Embouchure**
     is reed stiffness (or jet length on the flute), and there's breath noise, attack and
     delayed vibrato. Breath is kept within the range where each instrument speaks
-    cleanly, so notes never squeak into the wrong register.
+    cleanly, so notes across its range don't squeak into the wrong register. For a
+    breath controller, MIDI-learn its CC (usually CC2) to Breath.
   - Every element's phase delay is compensated, so strings, mallets, pianos and winds
     measure within a few cents of pitch across the keyboard.
 - **Tonewheel organ**: a drawbar organ with a rotary speaker.

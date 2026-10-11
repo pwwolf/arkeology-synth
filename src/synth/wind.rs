@@ -35,6 +35,8 @@ const FLUTE_LOSS_HZ: f32 = 3_000.0;
 /// about a third of it.
 const FLUTE_BORE: f32 = 1.5;
 const FLUTE_JET: f32 = 0.32;
+/// How long a new note's bore stays dark before opening up (seconds).
+const ATTACK_DARK: f32 = 0.1;
 /// DC blocker inside the flute loop.
 const FLUTE_DC_HZ: f32 = 20.0;
 /// Output gain per instrument, bringing their natural levels together.
@@ -63,13 +65,13 @@ impl Instrument {
         match self {
             Instrument::Clarinet => {
                 let k = reed_stiffness(embouchure);
-                (0.64 / k, 0.86 / k)
+                (0.64 / k, 1.0 / k)
             }
             Instrument::Sax => {
                 let k = reed_stiffness(embouchure);
-                (0.64 / k, 0.86 / k)
+                (0.68 / k, 0.86 / k)
             }
-            Instrument::Flute => (0.92, 1.24),
+            Instrument::Flute => (0.95, 1.24),
         }
     }
 
@@ -104,16 +106,27 @@ pub struct WindSettings {
     pub vibrato_rate: f32,
 }
 
-/// Read a delay line `delay` samples behind the write head (linear
-/// interpolation).
+/// Read a delay line `delay` samples behind the write head, with cubic
+/// (Lagrange) interpolation. Linear interpolation's treble loss varies with
+/// the fractional delay, which tips some notes into the wrong register.
 #[inline]
 fn read(buf: &[f32], w: usize, delay: f32) -> f32 {
     let mask = DELAY_LEN - 1;
     let pos = w as f32 + DELAY_LEN as f32 - delay;
     let k = pos as usize;
-    let fr = pos - k as f32;
-    let a0 = buf[k & mask];
-    a0 + (buf[(k + 1) & mask] - a0) * fr
+    let d = pos - k as f32;
+    let (xm1, x0, x1, x2) = (
+        buf[(k + mask) & mask],
+        buf[k & mask],
+        buf[(k + 1) & mask],
+        buf[(k + 2) & mask],
+    );
+    // Third-order Lagrange through x[-1..2] at fraction d.
+    let c0 = -d * (d - 1.0) * (d - 2.0) / 6.0;
+    let c1 = (d + 1.0) * (d - 1.0) * (d - 2.0) / 2.0;
+    let c2 = -(d + 1.0) * d * (d - 2.0) / 2.0;
+    let c3 = (d + 1.0) * d * (d - 1.0) / 6.0;
+    c0 * xm1 + c1 * x0 + c2 * x1 + c3 * x2
 }
 
 /// Phase delay (samples) at `w` of the one-pole low-pass (1-p)/(1 - p z^-1).
@@ -155,7 +168,7 @@ pub struct WindPipe {
     attack_coef: f32,
     release_coef: f32,
     vib_phase: f32,
-    vib_time: f32,
+    age: f32,
     rng: Rng,
 }
 
@@ -181,7 +194,7 @@ impl WindPipe {
             attack_coef: 0.99,
             release_coef: 0.99,
             vib_phase: 0.0,
-            vib_time: 0.0,
+            age: 0.0,
             rng: Rng::new(0x5A5E_0000 ^ seed.wrapping_mul(0x9E37_79B9)),
         }
     }
@@ -195,7 +208,7 @@ impl WindPipe {
         self.dc_x1 = 0.0;
         self.dc_y1 = 0.0;
         self.pressure = 0.0;
-        self.vib_time = 0.0;
+        self.age = 0.0;
     }
 
     /// Set delay lengths (and loss filter) for `f0`. With `snap`, jump to
@@ -205,7 +218,11 @@ impl WindPipe {
         let f0 = f0.clamp(s.instrument.min_freq(sr), sr * 0.1);
         let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
         let total = sr / f0;
-        let loss_pole = |fc: f32| (-std::f32::consts::TAU * fc / sr).exp().min(0.95);
+        // While a note builds up, a darker bore favours the fundamental, so
+        // the oscillation can't lock onto a higher register (as a clean
+        // tongued attack does); the loss then opens up over the next 0.1 s.
+        let settle = 0.25 + 0.75 * ((self.age - ATTACK_DARK) / ATTACK_DARK).clamp(0.0, 1.0);
+        let loss_pole = |fc: f32| (-std::f32::consts::TAU * fc * settle / sr).exp().min(0.95);
         match s.instrument {
             Instrument::Clarinet => {
                 // The loop inverts, so it spans half a period.
@@ -224,7 +241,7 @@ impl WindPipe {
                 self.d_bore_target = d - self.d_aux_target;
             }
             Instrument::Flute => {
-                self.lp_pole = (-std::f32::consts::TAU * FLUTE_LOSS_HZ / sr).exp();
+                self.lp_pole = loss_pole(FLUTE_LOSS_HZ);
                 self.loop_pole = (-std::f32::consts::TAU * FLUTE_DC_HZ / sr).exp();
                 let filters = one_pole_delay(self.lp_pole, w) + dc_block_delay(self.loop_pole, w);
                 // The jet pulls the pitch sharp, increasingly so up the range
@@ -249,10 +266,10 @@ impl WindPipe {
         if s.instrument != self.instrument {
             self.clear();
         }
+        self.age = 0.0;
         self.tune(s, sr, f0, true);
         self.attack_coef = (-1.0 / (s.attack.max(0.002) * 0.3 * sr)).exp();
         self.release_coef = (-1.0 / (0.03 * sr)).exp();
-        self.vib_time = 0.0;
     }
 
     /// Render a block, adding `gain` times the output into `out`. `pitch` is
@@ -271,9 +288,9 @@ impl WindPipe {
     ) -> f32 {
         let n = out.len();
         // Delayed vibrato, fading in once the note has settled.
-        self.vib_time += n as f32 / sr;
+        self.age += n as f32 / sr;
         self.vib_phase = (self.vib_phase + s.vibrato_rate * n as f32 / sr).fract();
-        let onset = ((self.vib_time - 0.2) / 0.5).clamp(0.0, 1.0);
+        let onset = ((self.age - 0.2) / 0.5).clamp(0.0, 1.0);
         let vib = s.vibrato * onset * sin_cycles(self.vib_phase) / 100.0;
         self.tune(s, sr, midi_to_freq(pitch + vib), false);
 
@@ -292,12 +309,14 @@ impl WindPipe {
         let step_aux = (self.d_aux_target - self.d_aux) / n as f32;
         let reed_slope = -0.3 * reed_stiffness(s.embouchure);
         let level = LEVEL[self.instrument as usize];
-        // Breath noise as a fraction of the pressure; the flute's speaking
-        // window is narrower, so it gets less.
+        // Breath noise as a fraction of the pressure. Too much tips the sax
+        // into its octave and the flute (whose window is narrower) into
+        // higher registers.
         let noise = s.noise
             * match self.instrument {
+                Instrument::Clarinet => 0.2,
+                Instrument::Sax => 0.15,
                 Instrument::Flute => 0.12,
-                _ => 0.2,
             };
         let mask = DELAY_LEN - 1;
         let mut peak = 0.0f32;
