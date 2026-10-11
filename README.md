@@ -241,7 +241,7 @@ controller or a DAW/sequencer.
   Cloud, Grain Bass, Stutter Pluck, Reverse Swell, Rain, Lo-Fi Grains, Choir Cloud, Shimmer Pad.
   Bass: DnB Sub and Reese Mid (layer them on one channel), Reese, Neuro Growl, Wobble Bass.
   Plus Warm Pad, Poly Brass, Juno Strings, Supersaw Lead,
-  Poly Stab, Soft Bass, Grand/Upright/Felt/Honky-Tonk Piano, Solo Violin, Viola, Cello, Double Bass, String Section,
+  Poly Stab, Soft Bass, Grand/Upright/Felt/Honky-Tonk Piano, Solo Violin, Viola, Cello, Double Bass, String Section, Pizzicato Strings,
   Nylon/Steel Guitar, Harp, Clav, Koto, Modelled Marimba, Vibraphone, Xylophone, Church Bell,
   Kalimba, five acid basses, 808/909/Lo-Fi kits,
   sampler examples (Choir Loop, Pluck Slices, Saw Stab, Reverse Glass) and more. Press `l`

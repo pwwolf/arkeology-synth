@@ -1356,6 +1356,25 @@ pub fn factory_patches() -> Vec<Patch> {
             ],
         ),
         make(
+            "Pizzicato Strings",
+            Physical,
+            &[
+                ("volume", 0.85),
+                ("voices", 12.0),
+                ("hardness", 0.25),
+                ("position", 0.3),
+                ("vel_bright", 0.5),
+                ("hf_damp", 0.55),
+                ("decay", 1.2),
+                ("decay_track", 0.5),
+                ("two_stage", 0.5),
+                ("body", 0.5),
+                ("release_damp", 0.15),
+                ("width", 0.5),
+                ("reverb_send", 0.4),
+            ],
+        ),
+        make(
             "Solo Violin",
             Physical,
             &[
