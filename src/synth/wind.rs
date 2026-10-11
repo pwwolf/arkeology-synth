@@ -40,7 +40,15 @@ const ATTACK_DARK: f32 = 0.1;
 /// DC blocker inside the flute loop.
 const FLUTE_DC_HZ: f32 = 20.0;
 /// Output gain per instrument, bringing their natural levels together.
-const LEVEL: [f32; 3] = [1.5, 1.0, 0.5];
+const LEVEL: [f32; 3] = [3.8, 2.1, 1.3];
+/// Pitch wander at full Drift, cents.
+const DRIFT_CENTS: f32 = 8.0;
+/// Breath (level) wander at full Drift, as a fraction of the level.
+const DRIFT_LEVEL: f32 = 0.15;
+/// How far breath wander and breath vibrato also move the pressure (in units
+/// of breath drive). Kept small, and faded out near the edges of the speaking
+/// window, so it never tips a note into another register.
+const BREATH_TO_DRIVE: f32 = 0.08;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Instrument {
@@ -75,6 +83,28 @@ impl Instrument {
         }
     }
 
+    /// Sound radiated from the bell and tone holes: a first-order high-pass
+    /// (+6 dB/octave up to where the wavelength matches the opening, flat
+    /// above) with some of the bore pressure kept below it. Returns (cutoff
+    /// Hz, dry floor).
+    fn radiation(self) -> (f32, f32) {
+        match self {
+            Instrument::Clarinet => (1_500.0, 0.2),
+            Instrument::Sax => (1_200.0, 0.25),
+            Instrument::Flute => (2_000.0, 0.25),
+        }
+    }
+
+    /// How vibrato splits between pitch (the jaw or lip) and breath (the
+    /// diaphragm): flute vibrato is mostly breath.
+    fn vibrato_split(self) -> (f32, f32) {
+        match self {
+            Instrument::Clarinet => (1.0, 0.3),
+            Instrument::Sax => (1.0, 0.4),
+            Instrument::Flute => (0.3, 1.0),
+        }
+    }
+
     /// Lowest note frequency whose bore still fits the delay lines.
     fn min_freq(self, sr: f32) -> f32 {
         let periods = match self {
@@ -104,6 +134,29 @@ pub struct WindSettings {
     /// Vibrato depth in cents and rate in Hz.
     pub vibrato: f32,
     pub vibrato_rate: f32,
+    /// Slow random wander of pitch, breath and vibrato rate, 0..1.
+    pub drift: f32,
+}
+
+/// A slow random wander in -1..1: it heads for a new random target every
+/// 0.3-0.8 s and glides there, like a player's small unsteadiness.
+#[derive(Clone, Copy, Default)]
+struct Wander {
+    value: f32,
+    target: f32,
+    timer: f32,
+}
+
+impl Wander {
+    fn step(&mut self, rng: &mut Rng, dt: f32) -> f32 {
+        self.timer -= dt;
+        if self.timer <= 0.0 {
+            self.target = rng.bipolar();
+            self.timer = 0.3 + 0.5 * rng.unipolar();
+        }
+        self.value += (self.target - self.value) * (1.0 - (-dt / 0.35).exp());
+        self.value
+    }
 }
 
 /// Read a delay line `delay` samples behind the write head, with cubic
@@ -164,11 +217,17 @@ pub struct WindPipe {
     /// DC blocker on the output (the breath itself is a DC offset).
     dc_x1: f32,
     dc_y1: f32,
+    /// Radiation high-pass state and coefficients.
+    rad: (f32, f32, f32),
+    rad_x1: f32,
+    rad_y1: f32,
     pressure: f32,
     attack_coef: f32,
     release_coef: f32,
     vib_phase: f32,
     age: f32,
+    /// Wander of pitch, breath and vibrato rate.
+    wander: [Wander; 3],
     rng: Rng,
 }
 
@@ -190,11 +249,15 @@ impl WindPipe {
             loop_y1: 0.0,
             dc_x1: 0.0,
             dc_y1: 0.0,
+            rad: (1.0, 0.0, 0.0),
+            rad_x1: 0.0,
+            rad_y1: 0.0,
             pressure: 0.0,
             attack_coef: 0.99,
             release_coef: 0.99,
             vib_phase: 0.0,
             age: 0.0,
+            wander: [Wander::default(); 3],
             rng: Rng::new(0x5A5E_0000 ^ seed.wrapping_mul(0x9E37_79B9)),
         }
     }
@@ -207,6 +270,8 @@ impl WindPipe {
         self.loop_y1 = 0.0;
         self.dc_x1 = 0.0;
         self.dc_y1 = 0.0;
+        self.rad_x1 = 0.0;
+        self.rad_y1 = 0.0;
         self.pressure = 0.0;
         self.age = 0.0;
     }
@@ -270,6 +335,10 @@ impl WindPipe {
         self.tune(s, sr, f0, true);
         self.attack_coef = (-1.0 / (s.attack.max(0.002) * 0.3 * sr)).exp();
         self.release_coef = (-1.0 / (0.03 * sr)).exp();
+        // Bilinear first-order high-pass: y = b0 (x - x1) + a1 y1.
+        let (fc, floor) = s.instrument.radiation();
+        let k = (std::f32::consts::PI * fc / sr).tan();
+        self.rad = (1.0 / (1.0 + k), (1.0 - k) / (1.0 + k), floor);
     }
 
     /// Render a block, adding `gain` times the output into `out`. `pitch` is
@@ -287,13 +356,30 @@ impl WindPipe {
         out: &mut [f32],
     ) -> f32 {
         let n = out.len();
-        // Delayed vibrato, fading in once the note has settled.
-        self.age += n as f32 / sr;
-        self.vib_phase = (self.vib_phase + s.vibrato_rate * n as f32 / sr).fract();
+        let dt = n as f32 / sr;
+        self.age += dt;
+        let [w_pitch, w_breath, w_rate] = &mut self.wander;
+        let (drift_pitch, drift_breath, drift_rate) = (
+            w_pitch.step(&mut self.rng, dt) * s.drift,
+            w_breath.step(&mut self.rng, dt) * s.drift,
+            w_rate.step(&mut self.rng, dt) * s.drift,
+        );
+        // Delayed vibrato, fading in once the note has settled, its rate
+        // wandering a little.
+        let rate = s.vibrato_rate * (1.0 + 0.1 * drift_rate);
+        self.vib_phase = (self.vib_phase + rate * dt).fract();
         let onset = ((self.age - 0.2) / 0.5).clamp(0.0, 1.0);
-        let vib = s.vibrato * onset * sin_cycles(self.vib_phase) / 100.0;
-        self.tune(s, sr, midi_to_freq(pitch + vib), false);
+        let wave = onset * sin_cycles(self.vib_phase);
+        let (vib_pitch, vib_breath) = self.instrument.vibrato_split();
+        let cents = s.vibrato * vib_pitch * wave + DRIFT_CENTS * drift_pitch;
+        self.tune(s, sr, midi_to_freq(pitch + cents / 100.0), false);
 
+        // Breath vibrato and wander: mostly loudness, plus a little pressure
+        // away from the window's edges.
+        let breath_mod = vib_breath * s.vibrato / 50.0 * 0.3 * wave + DRIFT_LEVEL * drift_breath;
+        let drive = drive.clamp(0.0, 1.0);
+        let edge = (2.0 * drive.min(1.0 - drive)).min(1.0);
+        let drive = drive + BREATH_TO_DRIVE / 0.3 * breath_mod * edge;
         let (lo, hi) = self.instrument.window(s.embouchure);
         let target = if released {
             0.0
@@ -308,11 +394,15 @@ impl WindPipe {
         let step_bore = (self.d_bore_target - self.d_bore) / n as f32;
         let step_aux = (self.d_aux_target - self.d_aux) / n as f32;
         let reed_slope = -0.3 * reed_stiffness(s.embouchure);
-        let level = LEVEL[self.instrument as usize];
+        let level = LEVEL[self.instrument as usize] * (1.0 + breath_mod);
+        let (rad_b0, rad_a1, rad_floor) = self.rad;
         // Breath noise as a fraction of the pressure. Too much tips the sax
         // into its octave and the flute (whose window is narrower) into
-        // higher registers.
+        // higher registers, especially while a note builds up, so it fades
+        // in once the attack has settled.
+        let noise_in = ((self.age - 2.0 * ATTACK_DARK) / (2.0 * ATTACK_DARK)).clamp(0.0, 1.0);
         let noise = s.noise
+            * noise_in
             * match self.instrument {
                 Instrument::Clarinet => 0.2,
                 Instrument::Sax => 0.15,
@@ -366,7 +456,11 @@ impl WindPipe {
             let v = y - self.dc_x1 + 0.995 * self.dc_y1;
             self.dc_x1 = y;
             self.dc_y1 = v;
-            let v = v * level;
+            // Radiation from the bell and tone holes.
+            let hp = rad_b0 * (v - self.rad_x1) + rad_a1 * self.rad_y1;
+            self.rad_x1 = v;
+            self.rad_y1 = hp;
+            let v = (hp + rad_floor * v) * level;
             *o += v;
             peak = peak.max(v.abs());
         }
@@ -398,6 +492,7 @@ mod tests {
             attack: 0.05,
             vibrato: 0.0,
             vibrato_rate: 5.0,
+            drift: 0.0,
         }
     }
 

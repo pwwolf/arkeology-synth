@@ -69,8 +69,9 @@ pub const BREATH_NOISE: usize = 27;
 pub const WIND_ATTACK: usize = 28;
 pub const WIND_VIBRATO: usize = 29;
 pub const WIND_VIBRATO_RATE: usize = 30;
+pub const WIND_DRIFT: usize = 31;
 
-pub static PARAMS: [P; 31] = [
+pub static PARAMS: [P; 32] = [
     VOICES_PARAM,
     P::choice("model", "Model", "Model", &MODELS, 0),
     P::float(
@@ -292,6 +293,7 @@ pub static PARAMS: [P; 31] = [
         5.2,
         Unit::Hz,
     ),
+    P::float("wind_drift", "Drift", "Wind", 0.0, 1.0, 0.5, Unit::Percent),
 ];
 
 /// Which of this synth's own parameters apply to the selected model.
@@ -304,7 +306,7 @@ pub fn param_visible(p: &[f32], local: usize) -> bool {
         }
         HF_DAMP | BODY => model != Model::Wind,
         WIND_INSTRUMENT | BREATH | EMBOUCHURE | BREATH_NOISE | WIND_ATTACK | WIND_VIBRATO
-        | WIND_VIBRATO_RATE => model == Model::Wind,
+        | WIND_VIBRATO_RATE | WIND_DRIFT => model == Model::Wind,
         BOW_PRESSURE | BOW_POSITION | BOW_ATTACK | VIBRATO | VIBRATO_RATE | BOWED_BODY => {
             model == Model::Bowed
         }
@@ -1448,6 +1450,7 @@ impl PhysicalSynth {
             attack: p[WIND_ATTACK],
             vibrato: p[WIND_VIBRATO],
             vibrato_rate: p[WIND_VIBRATO_RATE],
+            drift: p[WIND_DRIFT],
         };
         self.sympathetic = if s.model == Model::String {
             p[SYMPATHETIC]
@@ -1788,6 +1791,7 @@ mod tests {
         assert!(
             param_visible(&p, BREATH)
                 && param_visible(&p, WIND_INSTRUMENT)
+                && param_visible(&p, WIND_DRIFT)
                 && param_visible(&p, TONE)
                 && !param_visible(&p, BODY)
                 && !param_visible(&p, DECAY)
@@ -1824,6 +1828,7 @@ mod tests {
             ("model", 4.0),
             ("wind_instrument", instrument as f32),
             ("wind_vibrato", 0.0),
+            ("wind_drift", 0.0),
         ];
         all.extend_from_slice(overrides);
         synth_with(&all)
@@ -1876,6 +1881,38 @@ mod tests {
                 loud > soft * 2.0,
                 "instrument {inst}: soft {soft} loud {loud}"
             );
+        }
+    }
+
+    /// Drift and breath vibrato keep moving the breath through a note: it
+    /// must never tip a held note into another register part-way through.
+    #[test]
+    fn winds_hold_their_register_with_drift_and_vibrato() {
+        let notes: [&[u8]; 3] = [&[52, 60, 69, 79], &[50, 58, 67, 77], &[62, 72, 81, 91]];
+        for (inst, notes) in notes.iter().enumerate() {
+            for &note in *notes {
+                for vel in [0.2f32, 1.0] {
+                    let mut s = wind_synth(
+                        inst,
+                        &[
+                            ("wind_drift", 1.0),
+                            ("wind_vibrato", 50.0),
+                            ("breath_noise", 0.6),
+                        ],
+                    );
+                    s.poly.note_on(note, vel, &s.shared);
+                    let out = render(&mut s, 48_000 * 3);
+                    for (k, win) in out[12_000..].chunks(12_000).enumerate() {
+                        let p = Sample::new("t", win.to_vec(), None, 48_000.0)
+                            .detect_pitch()
+                            .unwrap_or(f32::NAN);
+                        assert!(
+                            (p - note as f32).abs() < 1.0,
+                            "instrument {inst} note {note} vel {vel}: window {k} at {p}"
+                        );
+                    }
+                }
+            }
         }
     }
 

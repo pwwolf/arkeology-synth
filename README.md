@@ -86,7 +86,10 @@ controller or a DAW/sequencer.
     held. **Breath** sets how hard you blow; velocity and the mod wheel add to it, so
     playing harder or pushing the wheel makes notes louder and brighter. **Embouchure**
     is reed stiffness (or jet length on the flute), and there's breath noise, attack and
-    delayed vibrato. Breath is kept within the range where each instrument speaks
+    delayed vibrato (on the flute it's mostly breath, swelling the level, as flautists
+    do). **Drift** adds a player's small unsteadiness: pitch, breath and vibrato rate
+    wander slowly. The sound is heard as it leaves the bell and tone holes, not from
+    inside the tube. Breath is kept within the range where each instrument speaks
     cleanly, so notes across its range don't squeak into the wrong register. For a
     breath controller, MIDI-learn its CC (usually CC2) to Breath.
   - Every element's phase delay is compensated, so strings, mallets, pianos and winds
