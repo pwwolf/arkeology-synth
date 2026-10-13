@@ -1286,7 +1286,7 @@ pub fn factory_patches() -> Vec<Patch> {
             "Grand Piano",
             Physical,
             &[
-                ("volume", 0.85),
+                ("volume", 0.9),
                 ("model", 2.0),
                 ("hardness", 0.45),
                 ("position", 0.12),
@@ -1343,7 +1343,7 @@ pub fn factory_patches() -> Vec<Patch> {
             "Felt Piano",
             Physical,
             &[
-                ("volume", 0.85),
+                ("volume", 0.95),
                 ("model", 2.0),
                 ("hardness", 0.1),
                 ("position", 0.12),

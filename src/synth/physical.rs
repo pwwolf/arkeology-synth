@@ -416,6 +416,12 @@ const BOARD_TOP_NOTE: usize = 136;
 const PIANO_KNOCK: f32 = 0.5;
 /// The knock's low-pass (two poles): a thud, not a click.
 const PIANO_KNOCK_HZ: f32 = 700.0;
+/// The knock falls by half (6 dB) every this many semitones below middle C.
+const KNOCK_TAPER: f32 = 12.0;
+/// The soundboard radiates poorly below its lowest modes: a recorded
+/// grand's lowest fundamentals sit 27-40 dB below their strongest partial
+/// (you hear the bass through its overtones). Second-order high-pass (Hz).
+const PIANO_RADIATION_HZ: f32 = 110.0;
 /// Highest piano hammer cutoff (Hz).
 const PIANO_HAMMER_MAX_HZ: f32 = 4_000.0;
 /// Piano excitation level (calibrated against the earlier pulse).
@@ -902,6 +908,17 @@ impl WaveString {
         self.buf[self.w] = z * self.loop_gain + input;
         self.w = (self.w + 1) & (DELAY_LEN - 1);
     }
+
+    /// Like `loop_in`, but `strike` enters the string part-way along, so it
+    /// reaches the bridge `ahead` (0..1) of a period from now rather than a
+    /// whole period: the travel time from where the hammer hits.
+    #[inline]
+    fn loop_in_struck(&mut self, z: f32, back: f32, strike: f32, ahead: f32) {
+        let mask = DELAY_LEN - 1;
+        let d = ((ahead * self.period) as usize).min(self.n_int.saturating_sub(1));
+        self.buf[(self.w + DELAY_LEN - self.n_int + d) & mask] += strike;
+        self.loop_in(z, back);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1104,10 +1121,16 @@ pub struct PhysicalVoice {
     knock: f32,
     knock_lp: (f32, f32),
     knock_c: f32,
+    /// The knock's level: the strike's, without the register balance.
+    knock_amp: f32,
+    /// The soundboard radiates poorly below its lowest modes (high-pass).
+    radiation: Biquad,
     /// Piano bridge coupling: how much of the strings' summed motion each
     /// one loses to the bridge per pass (see `tune_piano`).
     bridge_c: f32,
     strike_d: f32,
+    /// How far into a period the strike's first wave reaches the bridge.
+    strike_ahead: f32,
     exc_amp: f32,
     board_amt: f32,
     // Mallet
@@ -1155,8 +1178,11 @@ impl PhysicalVoice {
             knock: 0.0,
             knock_lp: (0.0, 0.0),
             knock_c: 0.1,
+            knock_amp: 0.0,
+            radiation: Biquad::default(),
             bridge_c: 0.0,
             strike_d: 1.0,
+            strike_ahead: 1.0,
             exc_amp: 0.0,
             board_amt: 0.0,
             modes: [Mode::default(); MAX_MODES],
@@ -1348,6 +1374,11 @@ impl PhysicalVoice {
         // rounding the strike point to whole samples swung levels by 5 dB
         // between neighbouring notes.
         self.strike_d = (s.position * period).clamp(1.0, (DELAY_LEN / 2) as f32);
+        // The hammer strikes `position` from the far end: its first wave
+        // travels the rest of the string to the bridge, half a round trip
+        // less that share (a C1 is quiet for ~13 ms, as on a real grand,
+        // rather than a whole period).
+        self.strike_ahead = (1.0 - s.position.clamp(0.0, 1.0)) * 0.5;
         self.board_amt = BOARD_MIX * s.body;
         // Voicing: the board's (noise-like) response has random peaks and
         // dips, which would make some notes much louder than others. Scale
@@ -1382,10 +1413,18 @@ impl PhysicalVoice {
         // Balance across the keyboard (measured): the bass and the top
         // octaves, whose hammers are voiced darker, are short of energy.
         let note = self.note as f32;
-        let balance_db = 10.0 * ((45.0 - note) / 24.0).clamp(0.0, 1.0)
+        let balance_db = 14.0 * ((45.0 - note) / 24.0).clamp(0.0, 1.0)
             + 9.0 * ((note - 72.0) / 36.0).clamp(0.0, 1.0);
         self.exc_amp = self.vel_gain() * PIANO_EXC_GAIN * 10f32.powf(balance_db / 20.0)
             / (expected * at_f0.clamp(0.5, 2.0));
+        // The knock is the strike's, without the register balance, and
+        // tapers away below middle C: a bass string's energy is spread over
+        // many partials, and a recorded grand's bass attack is the strings
+        // arriving (~13 ms on C1), not a thud.
+        self.knock_amp = self.exc_amp / 10f32.powf(balance_db / 20.0)
+            * ((note - 60.0) / KNOCK_TAPER).exp2().min(1.0);
+        self.radiation
+            .retune(Biquad::high_pass(PIANO_RADIATION_HZ, 0.7, sr));
         self.age = 0;
     }
 
@@ -1428,7 +1467,7 @@ impl PhysicalVoice {
         let k2 = k2 + (k1 - k2) * self.knock_c;
         self.knock_lp = (k1, k2);
         let contact = (k as f32 / (0.004 * self.hammer_sr)).min(1.0);
-        self.knock = k2 * self.exc_amp * PIANO_KNOCK * contact;
+        self.knock = k2 * self.knock_amp * PIANO_KNOCK * contact;
         self.hammer_int * self.hammer_int_g * self.exc_amp
     }
 
@@ -1751,14 +1790,17 @@ impl Voice for PhysicalVoice {
                             .zip(&mut self.strings[..self.string_count])
                             .zip(strike)
                         {
-                            st.loop_in(*o, input * g - back);
+                            st.loop_in_struck(*o, -back, input * g, self.strike_ahead);
                         }
                     } else {
                         for st in &mut self.strings[..self.string_count] {
                             z += st.tick_in(input);
                         }
                     }
-                    let o = self.dc_block(z * norm + self.knock, s.dc_pole) * gain;
+                    let mut o = self.dc_block(z * norm + self.knock, s.dc_pole) * gain;
+                    if piano {
+                        o = self.radiation.process(o);
+                    }
                     peak = peak.max(o.abs());
                     l[i] += o * self.pan.0;
                     r[i] += o * self.pan.1;
@@ -2409,6 +2451,43 @@ mod tests {
             assert!(
                 early > 2.0 * late && late > 0.5,
                 "note {note}: {early:.1} dB/s early, {late:.1} dB/s late"
+            );
+        }
+    }
+
+    /// In the bass (as on a recorded grand) the strike's wave needs ~13 ms to
+    /// reach the bridge, so the note arrives rather than starting with a
+    /// thud, and it's heard through its overtones: the soundboard barely
+    /// radiates the lowest fundamentals.
+    #[test]
+    fn piano_bass_arrives_late_and_sings_through_its_overtones() {
+        let patch = crate::patch::factory_patches()
+            .into_iter()
+            .find(|p| p.name == "Grand Piano")
+            .unwrap();
+        for note in [24u8, 36] {
+            let mut s = PhysicalSynth::new(48_000.0);
+            s.update(&patch.values());
+            s.poly.note_on(note, 0.75, &s.shared);
+            let out = render(&mut s, 48_000);
+            let f0 = midi_to_freq(note as f32);
+            let db = |a: usize, b: usize| 20.0 * rms(&out[a..b]).log10();
+            // Before the strike's first wave can reach the bridge (0.44 of a
+            // period, struck at 0.12), and after.
+            let arrival = (0.35 * 48_000.0 / f0) as usize;
+            let (before, after) = (db(0, arrival), db(720, 2_880));
+            assert!(
+                before < after - 8.0,
+                "note {note}: before arrival {before:.1} dB, 15-60 ms {after:.1} dB"
+            );
+            let seg = &out[2_400..36_000];
+            let strongest = (2..=6)
+                .map(|k| harmonic(seg, f0 * k as f32 * 1.003))
+                .fold(0.0f32, f32::max);
+            let fundamental = 20.0 * (harmonic(seg, f0) / strongest).log10();
+            assert!(
+                fundamental < -15.0,
+                "note {note}: fundamental {fundamental:.1} dB below its strongest partial"
             );
         }
     }
