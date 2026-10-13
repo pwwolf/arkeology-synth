@@ -1369,7 +1369,7 @@ pub fn factory_patches() -> Vec<Patch> {
                 ("position", 0.3),
                 ("vel_bright", 0.3),
                 ("bright_track", 1.0),
-                ("pluck_time", 0.015),
+                ("pluck_time", 0.005),
                 ("hf_damp", 0.9),
                 ("decay", 1.5),
                 ("decay_track", 0.7),

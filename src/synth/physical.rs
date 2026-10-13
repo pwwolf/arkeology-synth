@@ -1849,8 +1849,11 @@ impl Voice for PhysicalVoice {
                     }
                     let mut o = self.dc_block(z * norm + self.knock, s.dc_pole) * gain;
                     if self.pluck_fade < 1.0 {
-                        // Raised-cosine fade-in over Pluck Time.
-                        o *= 0.5 - 0.5 * (std::f32::consts::PI * self.pluck_fade).cos();
+                        // Fade-in over Pluck Time, fast at first and easing
+                        // into the peak, as a recorded pluck rises (most of
+                        // the way within a few milliseconds); a raised cosine
+                        // starts too gently and blunts the pluck.
+                        o *= (1.0 - (-3.0 * self.pluck_fade).exp()) / (1.0 - (-3.0f32).exp());
                         self.pluck_fade = (self.pluck_fade + self.pluck_step).min(1.0);
                     }
                     if piano {
@@ -3127,9 +3130,9 @@ mod tests {
             let max = env.iter().fold(0.0f32, |m, v| m.max(*v));
             env.iter().position(|v| *v >= 0.85 * max).unwrap() as f32 * 2.0
         };
-        let (instant, soft) = (peak_ms(0.0), peak_ms(0.015));
+        let (instant, soft) = (peak_ms(0.0), peak_ms(0.02));
         assert!(
-            instant <= 4.0 && soft >= 10.0,
+            instant <= 4.0 && soft >= 8.0,
             "peak at {instant} ms, {soft} ms"
         );
     }
