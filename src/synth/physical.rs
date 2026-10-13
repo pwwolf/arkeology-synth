@@ -389,6 +389,10 @@ const BOARD_SECONDS: f32 = 0.12;
 /// How much soundboard tail Body adds to the hammer's direct strike (at
 /// Body 1 its response averages the strike's).
 const BOARD_MIX: f32 = 1.0;
+/// Resolution of the soundboard response table (steps per semitone) and its
+/// top note (MIDI 136, ~10.5 kHz).
+const BOARD_STEPS: usize = 4;
+const BOARD_TOP_NOTE: usize = 136;
 /// Highest piano hammer cutoff (Hz).
 const PIANO_HAMMER_MAX_HZ: f32 = 4_000.0;
 /// Piano excitation level (calibrated against the earlier pulse).
@@ -435,8 +439,9 @@ fn model_from(v: f32) -> Model {
 #[derive(Default)]
 pub struct PhysicalShared {
     /// Piano soundboard response (its tail; the direct strike is implicit),
-    /// built once with the synth, and its (complex) response at each MIDI
-    /// note's frequency, for voicing.
+    /// built once with the synth, and its (complex) response at every
+    /// quarter semitone (`BOARD_STEPS` per semitone from MIDI note 0), for
+    /// voicing.
     board: Vec<f32>,
     board_at: Vec<(f32, f32)>,
     sample_rate: f32,
@@ -515,19 +520,22 @@ fn make_soundboard(sr: f32) -> (Vec<f32>, Vec<(f32, f32)>) {
             *o += bp.process(rng.bipolar()) * gain * (k * i as f32).exp();
         }
     }
-    let response = |out: &[f32], note: usize| {
-        let w = std::f32::consts::TAU * midi_to_freq(note as f32) / sr;
+    let response = |out: &[f32], note: f32| {
+        let w = std::f32::consts::TAU * midi_to_freq(note) / sr;
         out.iter().enumerate().fold((0.0, 0.0), |(re, im), (k, x)| {
             let ph = w * k as f32;
             (re + x * ph.cos(), im - x * ph.sin())
         })
     };
-    let mut at: Vec<(f32, f32)> = (0..128).map(|note| response(&out, note)).collect();
-    let power = at[21..=108]
+    let mut at: Vec<(f32, f32)> = (0..=BOARD_TOP_NOTE * BOARD_STEPS)
+        .map(|step| response(&out, step as f32 / BOARD_STEPS as f32))
+        .collect();
+    let piano_range = &at[21 * BOARD_STEPS..=108 * BOARD_STEPS];
+    let power = piano_range
         .iter()
         .map(|(re, im)| re * re + im * im)
         .sum::<f32>()
-        / 88.0;
+        / piano_range.len() as f32;
     let scale = 1.0 / power.sqrt().max(1e-9);
     for o in &mut out {
         *o *= scale;
@@ -1158,15 +1166,29 @@ impl PhysicalVoice {
         self.strike_d = ((s.position * period).round() as usize).clamp(1, DELAY_LEN / 2);
         self.board_amt = BOARD_MIX * s.body;
         // Voicing: the board's (noise-like) response has random peaks and
-        // dips, which would make some notes much louder than others; scale
-        // the strike so every fundamental gets the same push (the board
-        // still colours the overtones).
-        let (re, im) = s
-            .board_at
-            .get(self.note as usize)
-            .copied()
-            .unwrap_or((0.0, 0.0));
-        let at_f0 = ((1.0 + self.board_amt * re).powi(2) + (self.board_amt * im).powi(2)).sqrt();
+        // dips, which would make some notes much louder than others. Scale
+        // the strike by the board's response averaged over the note's lower
+        // partials (weighted towards the fundamental), so a single dip
+        // can't swing it, and Body doesn't change the overall level.
+        let f0 = midi_to_freq(self.note as f32);
+        let a = self.board_amt;
+        let (mut energy, mut weights) = (0.0, 0.0);
+        for k in 1..=12 {
+            let f = k as f32 * f0;
+            if k > 1 && f > 5_000.0 {
+                break;
+            }
+            let step = ((69.0 + 12.0 * (f / 440.0).log2()) * BOARD_STEPS as f32).round();
+            let (re, im) = s
+                .board_at
+                .get(step.max(0.0) as usize)
+                .copied()
+                .unwrap_or((0.0, 0.0));
+            let w = 1.0 / k as f32;
+            energy += w * ((1.0 + a * re).powi(2) + (a * im).powi(2));
+            weights += w;
+        }
+        let at_f0 = (energy / weights.max(1e-9)).sqrt();
         // Balance across the keyboard (measured): the bass's darker, wider
         // hammers leave it short of energy, and the treble's harder ones
         // would make it too loud.
