@@ -393,6 +393,13 @@ const WIND_VELOCITY_SENS: f32 = 0.5;
 /// Bowed strings need substantial losses for a stable Helmholtz motion
 /// (with too little loss the bow locks onto higher modes): STK's value.
 const BOWED_LOSS: f32 = 0.95;
+/// Piano treble decay is specified at this frequency (Hz): the time its
+/// partials take to fall 60 dB runs from `PIANO_HF_T60_MAX` (HF Damping 0)
+/// down to `PIANO_HF_T60_MIN` (HF Damping 1), however long the fundamental
+/// rings.
+const PIANO_HF_REF: f32 = 3_000.0;
+const PIANO_HF_T60_MAX: f32 = 4.0;
+const PIANO_HF_T60_MIN: f32 = 0.25;
 /// Piano strings above this note have no dampers and ring after release.
 const PIANO_UNDAMPED_FROM: u8 = 89;
 
@@ -478,6 +485,12 @@ struct WaveString {
     disp: [(f32, f32); DISPERSION_STAGES],
     damp_s: f32,
     lp_x1: f32,
+    /// One-pole loss filter (`tune_two_decays`) instead of the one-zero
+    /// damping.
+    one_pole: bool,
+    pole: f32,
+    pole_b0: f32,
+    pole_y1: f32,
     loop_gain: f32,
 }
 
@@ -495,6 +508,10 @@ impl WaveString {
             disp: [(0.0, 0.0); DISPERSION_STAGES],
             damp_s: 0.25,
             lp_x1: 0.0,
+            one_pole: false,
+            pole: 0.0,
+            pole_b0: 1.0,
+            pole_y1: 0.0,
             loop_gain: 0.99,
         }
     }
@@ -504,6 +521,7 @@ impl WaveString {
         self.ap_x1 = 0.0;
         self.ap_y1 = 0.0;
         self.lp_x1 = 0.0;
+        self.pole_y1 = 0.0;
         self.disp = [(0.0, 0.0); DISPERSION_STAGES];
     }
 
@@ -527,11 +545,63 @@ impl WaveString {
             (1.0 - (1.0 - 4.0 * c).sqrt()) / 2.0
         };
         self.damp_s = wanted.min(max_s * 0.98);
+        self.one_pole = false;
         let sd = self.damp_s as f64;
         let (lp_re, lp_im) = ((1.0 - sd) + sd * w.cos(), -sd * w.sin());
         let lp_delay = phase_delay(lp_re, lp_im, w);
         let lp_mag = (lp_re * lp_re + lp_im * lp_im).sqrt() as f32;
+        self.fit_period(w, period, lp_delay, stiffness);
+        // Loop gain for a 60 dB decay, compensating the damping filter's loss
+        // at the fundamental.
+        self.loop_gain = (per_period / lp_mag).min(0.9999);
+    }
 
+    /// Tune the loop like `tune`, but with a one-pole loss filter designed
+    /// from two decay times: `t60` at the fundamental and `t60_hf` at
+    /// `PIANO_HF_REF` Hz (or twice the note, if higher). Treble partials can
+    /// then fade quickly while the fundamental sustains, independently: the
+    /// one-zero damping of `tune` can't, as its loss at the fundamental
+    /// grows with it and so has to be capped to keep the decay.
+    fn tune_two_decays(&mut self, sr: f32, f0: f32, stiffness: f32, t60: f32, t60_hf: f32) {
+        let f0 = f0.clamp(sr / (DELAY_LEN as f32 - 8.0), sr * 0.2);
+        let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
+        let period = (sr / f0) as f64;
+        // Loss per round trip (one period) wanted at the two frequencies;
+        // decay rates in between follow the filter's curve.
+        let f_hf = PIANO_HF_REF.max(2.0 * f0).min(0.45 * sr);
+        let w_hf = std::f64::consts::TAU * f_hf as f64 / sr as f64;
+        let g0 = 10f64.powf(-3.0 / (f0 as f64 * t60.max(0.005) as f64));
+        let t_hf = t60_hf.clamp(0.005, t60.max(0.005)) as f64;
+        let g_hf = 10f64.powf(-3.0 / (f0 as f64 * t_hf));
+        // |H(w)| of g (1 - p) / (1 - p z^-1), relative to its DC gain g.
+        let shape = |p: f64, w: f64| (1.0 - p) / (1.0 - 2.0 * p * w.cos() + p * p).sqrt();
+        // The DC gain must stay below 1 (or DC would grow): that limits the
+        // pole, i.e. how much faster the treble can decay.
+        let dc_ok = |p: f64| g0 / shape(p, w) < 0.9999;
+        let want = g_hf / g0;
+        let (mut lo, mut hi) = (0.0f64, 0.999f64);
+        for _ in 0..30 {
+            let mid = 0.5 * (lo + hi);
+            if shape(mid, w_hf) / shape(mid, w) > want && dc_ok(mid) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        let p = lo;
+        let g = g0 / shape(p, w);
+        self.one_pole = true;
+        self.pole = p as f32;
+        self.pole_b0 = (g * (1.0 - p)) as f32;
+        self.loop_gain = 1.0;
+        // Phase delay of b0 / (1 - p e^{-jw}) at the fundamental.
+        let lp_delay = phase_delay(1.0 - p * w.cos(), -p * w.sin(), w).abs();
+        self.fit_period(w, period, lp_delay, stiffness);
+    }
+
+    /// Fit the dispersion chain and the tuning all-pass into what's left of
+    /// the period after the loss filter's delay.
+    fn fit_period(&mut self, w: f64, period: f64, lp_delay: f64, stiffness: f32) {
         // Dispersion (stiffness): a chain of all-passes whose delay at the
         // fundamental must still fit in the period (with room for the
         // tuning all-pass), or the note would go flat. In the treble that
@@ -565,10 +635,6 @@ impl WaveString {
         self.n_int = n as usize;
         self.ap_a = ((1.0 - d) / (1.0 + d)) as f32;
         self.period = period as f32;
-
-        // Loop gain for a 60 dB decay, compensating the damping filter's loss
-        // at the fundamental.
-        self.loop_gain = (per_period / lp_mag).min(0.9999);
     }
 
     /// Add an excitation into the samples the loop reads next, so re-strikes
@@ -605,9 +671,16 @@ impl WaveString {
                 y = out;
             }
         }
-        let sd = self.damp_s;
-        let z = (1.0 - sd) * y + sd * self.lp_x1;
-        self.lp_x1 = y;
+        let z = if self.one_pole {
+            let z = self.pole_b0 * y + self.pole * self.pole_y1;
+            self.pole_y1 = z;
+            z
+        } else {
+            let sd = self.damp_s;
+            let z = (1.0 - sd) * y + sd * self.lp_x1;
+            self.lp_x1 = y;
+            z
+        };
         self.buf[self.w] = z * self.loop_gain + input;
         self.w = (self.w + 1) & mask;
         z
@@ -932,11 +1005,16 @@ impl PhysicalVoice {
         let t60 =
             (self.decay_time(s) * ((60.0 - self.note as f32) / 18.0).exp2()).clamp(0.02, 40.0);
         let stiffness = (s.stiffness * (0.4 + 1.2 * reg)).min(1.0);
+        // Treble partials fade on their own (shorter) clock, so a bright
+        // attack mellows while the fundamental sustains. Dampers and kills
+        // shorten both (the treble time is capped at the fundamental's).
+        let t60_hf = PIANO_HF_T60_MAX
+            * (PIANO_HF_T60_MIN / PIANO_HF_T60_MAX).powf(s.hf_damp.clamp(0.0, 1.0));
         // Slightly different decays per string give the two-stage decay.
         let spread = [1.0, 0.75, 1.3];
         for k in 0..count {
             let f = f0 * (detune[k] / 1200.0).exp2();
-            self.strings[k].tune(s.sample_rate, f, s.hf_damp, stiffness, t60 * spread[k]);
+            self.strings[k].tune_two_decays(s.sample_rate, f, stiffness, t60 * spread[k], t60_hf);
         }
     }
 
@@ -1720,16 +1798,64 @@ mod tests {
         }
     }
 
+    /// Measured at the fundamental itself: a stiff string's stretched
+    /// overtones (which ring on in the treble) pull a periodicity detector
+    /// sharp, as they do a piano tuner's ear.
     #[test]
     fn pianos_are_in_tune_across_the_keyboard() {
-        for note in [28u8, 40, 52, 64, 76, 88] {
+        for note in [28u8, 40, 52, 64, 76, 88, 100] {
             let mut s = synth_with(&[("model", 2.0), ("stiffness", 0.3), ("body", 0.0)]);
-            let p = measured_pitch(&mut s, note);
-            assert!(
-                (p - note as f32).abs() < 0.06,
-                "piano note {note}: measured {p}"
-            );
+            s.poly.note_on(note, 0.8, &s.shared);
+            let out = render(&mut s, 24_000);
+            let c = fundamental_cents(&out[2_400..21_600], midi_to_freq(note as f32));
+            assert!(c.abs() <= 3.0, "piano note {note}: {c:+} cents");
         }
+    }
+
+    /// A piano's treble partials fade on their own, faster clock (set by
+    /// HF Damping) while the fundamental sustains: bright attack, mellow tail.
+    #[test]
+    fn piano_treble_fades_faster_than_the_fundamental() {
+        let bands = |hf_damp: f32| {
+            let mut s = synth_with(&[
+                ("model", 2.0),
+                ("body", 0.0),
+                ("hf_damp", hf_damp),
+                ("hardness", 0.9),
+                ("decay", 9.0),
+            ]);
+            s.poly.note_on(45, 1.0, &s.shared);
+            let out = render(&mut s, 48_000 * 2);
+            // Level of the fundamental, and of everything above 2 kHz, early
+            // (50 ms) and late (1.5 s), in dB.
+            let at = |t: f32| {
+                let start = (t * 48_000.0) as usize;
+                let n = 4096;
+                let mut re: Vec<f32> = out[start..start + n].to_vec();
+                let mut im = vec![0.0f32; n];
+                crate::spectrum::fft(&mut re, &mut im);
+                let bin = 48_000.0 / n as f32;
+                let pw = |k: usize| re[k] * re[k] + im[k] * im[k];
+                let k0 = (midi_to_freq(45.0) / bin).round() as usize;
+                let fund = (k0 - 1..=k0 + 1).map(pw).fold(0.0f32, f32::max);
+                let high: f32 = ((2_000.0 / bin) as usize..n / 2).map(pw).sum();
+                (10.0 * fund.log10(), 10.0 * high.log10())
+            };
+            let ((f_early, h_early), (f_late, h_late)) = (at(0.05), at(1.5));
+            (f_early - f_late, h_early - h_late, h_late - f_late)
+        };
+        let (fund_drop, high_drop, _) = bands(0.35);
+        assert!(
+            fund_drop < 10.0 && high_drop > fund_drop + 20.0,
+            "fundamental fell {fund_drop:.1} dB, treble {high_drop:.1} dB"
+        );
+        // The treble left late in the note, relative to the fundamental.
+        let (_, _, light) = bands(0.0);
+        let (_, _, heavy) = bands(1.0);
+        assert!(
+            heavy < light - 15.0,
+            "HF Damping 0: {light:.1} dB, 1: {heavy:.1} dB"
+        );
     }
 
     #[test]
