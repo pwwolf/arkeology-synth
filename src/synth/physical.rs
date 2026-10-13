@@ -376,7 +376,10 @@ const MATERIAL_TABLE: [Material; 7] = [
 const MAX_MODES: usize = 8;
 const MAX_STRINGS: usize = 3;
 const DELAY_LEN: usize = 4096;
+/// Dispersion all-passes of the plucked string (Stiffness), and the most a
+/// piano string may use for its designed inharmonicity.
 const DISPERSION_STAGES: usize = 4;
+const MAX_DISPERSION_STAGES: usize = 16;
 const STRING_GAIN: f32 = 0.45;
 /// How much velocity sets strike strength (see `dsp::velocity_gain`).
 const VELOCITY_SENS: f32 = 0.65;
@@ -389,6 +392,11 @@ const BOARD_SECONDS: f32 = 0.12;
 /// How much soundboard tail Body adds to the hammer's direct strike (at
 /// Body 1 its response averages the strike's).
 const BOARD_MIX: f32 = 1.0;
+/// Piano inharmonicity is fitted at the highest partial up to this
+/// frequency (Hz). A chain of first-order all-passes stretches the lower
+/// partials relatively more than a stiff string does, so fitting low keeps
+/// the partials that matter most close (above it, they're under-stretched).
+const PIANO_STRETCH_REF: f32 = 2_000.0;
 /// Resolution of the soundboard response table (steps per semitone) and its
 /// top note (MIDI 136, ~10.5 kHz).
 const BOARD_STEPS: usize = 4;
@@ -547,6 +555,62 @@ fn make_soundboard(sr: f32) -> (Vec<f32>, Vec<(f32, f32)>) {
     (out, at)
 }
 
+/// Inharmonicity coefficient B of a piano string at `note` (partial k at
+/// k f0 sqrt(1 + B k^2)). Approximate, after published measurements of
+/// concert grands (Young; Conklin): about 1-3e-4 through the bass and lower
+/// tenor, then roughly tripling per octave, to ~3e-4 at middle C and
+/// ~2.5e-2 at C8.
+fn piano_inharmonicity(note: f32) -> f32 {
+    if note >= 50.0 {
+        1.3e-4 * 3f32.powf((note - 50.0) / 12.0)
+    } else {
+        1.3e-4 * (1.0 + (50.0 - note) / 29.0)
+    }
+}
+
+/// How a string's dispersion all-passes are set.
+enum Dispersion {
+    /// The plucked string's: `DISPERSION_STAGES` stages, coefficient -0.75 x
+    /// stiffness.
+    Stiffness(f32),
+    /// Designed (piano): the chain's phase delay at `w_k` must be `target`
+    /// samples (negative) different from its phase delay at the fundamental.
+    Designed { w_k: f64, target: f64 },
+}
+
+/// Stage count and coefficient of a chain of identical first-order
+/// all-passes whose phase delay at `w_k` differs from that at `w0` by
+/// `target` (negative) samples: the fewest stages that can, at a coefficient
+/// no stronger than -0.95, so as to spend as little of the period as
+/// possible. Bounded work: one bisection.
+fn design_dispersion(w0: f64, w_k: f64, target: f64) -> (usize, f64) {
+    if target >= 0.0 {
+        return (0, 0.0);
+    }
+    let delay = |a: f64, w: f64| {
+        let (re, im) = allpass_at(a, w);
+        phase_delay(re, im, w)
+    };
+    let diff = |a: f64| delay(a, w_k) - delay(a, w0);
+    let strongest = diff(-0.95);
+    if strongest >= 0.0 {
+        return (0, 0.0);
+    }
+    let stages = ((target / strongest).ceil() as usize).clamp(1, MAX_DISPERSION_STAGES);
+    let per_stage = target / stages as f64;
+    // diff() falls (more negative) as `a` goes from 0 towards -0.95.
+    let (mut lo, mut hi) = (-0.95f64, 0.0f64);
+    for _ in 0..30 {
+        let mid = 0.5 * (lo + hi);
+        if diff(mid) < per_stage {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (stages, 0.5 * (lo + hi))
+}
+
 // ---------------------------------------------------------------------------
 // Karplus-Strong string loop (used by String and Piano)
 // ---------------------------------------------------------------------------
@@ -560,7 +624,9 @@ struct WaveString {
     ap_x1: f32,
     ap_y1: f32,
     disp_a: f32,
-    disp: [(f32, f32); DISPERSION_STAGES],
+    disp: [(f32, f32); MAX_DISPERSION_STAGES],
+    /// Dispersion stages in use.
+    disp_n: usize,
     damp_s: f32,
     lp_x1: f32,
     /// One-pole loss filter (`tune_two_decays`) instead of the one-zero
@@ -583,7 +649,8 @@ impl WaveString {
             ap_x1: 0.0,
             ap_y1: 0.0,
             disp_a: 0.0,
-            disp: [(0.0, 0.0); DISPERSION_STAGES],
+            disp: [(0.0, 0.0); MAX_DISPERSION_STAGES],
+            disp_n: 0,
             damp_s: 0.25,
             lp_x1: 0.0,
             one_pole: false,
@@ -600,7 +667,7 @@ impl WaveString {
         self.ap_y1 = 0.0;
         self.lp_x1 = 0.0;
         self.pole_y1 = 0.0;
-        self.disp = [(0.0, 0.0); DISPERSION_STAGES];
+        self.disp = [(0.0, 0.0); MAX_DISPERSION_STAGES];
     }
 
     /// Tune the loop to `f0` with the given damping (0..1), stiffness (0..1)
@@ -628,7 +695,7 @@ impl WaveString {
         let (lp_re, lp_im) = ((1.0 - sd) + sd * w.cos(), -sd * w.sin());
         let lp_delay = phase_delay(lp_re, lp_im, w);
         let lp_mag = (lp_re * lp_re + lp_im * lp_im).sqrt() as f32;
-        self.fit_period(w, period, lp_delay, stiffness);
+        self.fit_period(w, period, lp_delay, Dispersion::Stiffness(stiffness));
         // Loop gain for a 60 dB decay, compensating the damping filter's loss
         // at the fundamental.
         self.loop_gain = (per_period / lp_mag).min(0.9999);
@@ -640,7 +707,10 @@ impl WaveString {
     /// then fade quickly while the fundamental sustains, independently: the
     /// one-zero damping of `tune` can't, as its loss at the fundamental
     /// grows with it and so has to be capped to keep the decay.
-    fn tune_two_decays(&mut self, sr: f32, f0: f32, stiffness: f32, t60: f32, t60_hf: f32) {
+    ///
+    /// Its dispersion is designed for inharmonicity `b` (a stiff string's
+    /// partial k sits at k f0 sqrt(1 + b k^2), relative to the fundamental).
+    fn tune_two_decays(&mut self, sr: f32, f0: f32, b: f32, t60: f32, t60_hf: f32) {
         let f0 = f0.clamp(sr / (DELAY_LEN as f32 - 8.0), sr * 0.2);
         let w = std::f64::consts::TAU * f0 as f64 / sr as f64;
         let period = (sr / f0) as f64;
@@ -672,24 +742,51 @@ impl WaveString {
         self.pole = p as f32;
         self.pole_b0 = (g * (1.0 - p)) as f32;
         self.loop_gain = 1.0;
-        // Phase delay of b0 / (1 - p e^{-jw}) at the fundamental.
-        let lp_delay = phase_delay(1.0 - p * w.cos(), -p * w.sin(), w).abs();
-        self.fit_period(w, period, lp_delay, stiffness);
+        // Phase delay of b0 / (1 - p e^{-jw}).
+        let lp_delay_at = |w: f64| (p * w.sin()).atan2(1.0 - p * w.cos()) / w;
+        let lp_delay = lp_delay_at(w);
+        // Inharmonicity: a reference partial (the highest up to
+        // `PIANO_STRETCH_REF`, at least the 2nd and at most the 16th) must
+        // land where a stiff string puts it, with the
+        // fundamental held at f0. The loop's phase delay there has to be
+        // shorter than at the fundamental by `delta`; the loss filter
+        // already provides some of that, the dispersion chain the rest.
+        let b = b.max(0.0) as f64;
+        let k = (PIANO_STRETCH_REF.min(0.4 * sr) / f0)
+            .floor()
+            .clamp(2.0, 16.0) as f64;
+        let dispersion = if b > 0.0 && k * (f0 as f64) < 0.4 * sr as f64 {
+            let stretch = ((1.0 + b * k * k) / (1.0 + b)).sqrt();
+            let w_k = (w * k * stretch).min(std::f64::consts::PI * 0.9);
+            let delta = period * (1.0 / stretch - 1.0);
+            Dispersion::Designed {
+                w_k,
+                target: delta - (lp_delay_at(w_k) - lp_delay),
+            }
+        } else {
+            Dispersion::Stiffness(0.0)
+        };
+        self.fit_period(w, period, lp_delay, dispersion);
     }
 
     /// Fit the dispersion chain and the tuning all-pass into what's left of
     /// the period after the loss filter's delay.
-    fn fit_period(&mut self, w: f64, period: f64, lp_delay: f64, stiffness: f32) {
+    fn fit_period(&mut self, w: f64, period: f64, lp_delay: f64, dispersion: Dispersion) {
         // Dispersion (stiffness): a chain of all-passes whose delay at the
         // fundamental must still fit in the period (with room for the
         // tuning all-pass), or the note would go flat. In the treble that
         // caps the stiffness: find the strongest coefficient that fits.
+        let (stages, mut a) = match dispersion {
+            Dispersion::Stiffness(stiffness) => {
+                (DISPERSION_STAGES, -0.75 * stiffness.clamp(0.0, 1.0) as f64)
+            }
+            Dispersion::Designed { w_k, target } => design_dispersion(w, w_k, target),
+        };
         let disp_delay_for = |a: f64| {
             let (dr, di) = allpass_at(a, w);
-            phase_delay(dr, di, w) * DISPERSION_STAGES as f64
+            phase_delay(dr, di, w) * stages as f64
         };
         let budget = period - lp_delay - 2.5;
-        let mut a = -0.75 * stiffness.clamp(0.0, 1.0) as f64;
         if a < 0.0 && disp_delay_for(a) > budget {
             // Phase delay grows as `a` goes more negative: bisect towards 0.
             let mut ok = 0.0;
@@ -703,6 +800,12 @@ impl WaveString {
             }
             a = ok;
         }
+        let stages = if a < 0.0 { stages } else { 0 };
+        // Stages switched on under a sounding note start from rest.
+        if stages > self.disp_n {
+            self.disp[self.disp_n..stages].fill((0.0, 0.0));
+        }
+        self.disp_n = stages;
         self.disp_a = a as f32;
         let disp_delay = if a < 0.0 { disp_delay_for(a) } else { 0.0 };
 
@@ -736,8 +839,8 @@ impl WaveString {
         self.ap_x1 = x;
         self.ap_y1 = y;
         let da = self.disp_a;
-        if da != 0.0 {
-            for st in &mut self.disp {
+        if self.disp_n > 0 {
+            for st in &mut self.disp[..self.disp_n] {
                 let out = da * y + st.0 - da * st.1;
                 st.0 = y;
                 st.1 = out;
@@ -1085,11 +1188,11 @@ impl PhysicalVoice {
         let (count, detune) = self.piano_layout(s);
         self.string_count = count;
         // Register: decay is long in the bass and short in the treble, and
-        // strings get stiffer (more inharmonic) towards the top.
-        let reg = ((self.note as f32 - 21.0) / 87.0).clamp(0.0, 1.0);
+        // strings get stiffer (more inharmonic) towards the top. Stiffness
+        // scales a real piano's inharmonicity (0.3 = typical).
         let t60 =
             (self.decay_time(s) * ((60.0 - self.note as f32) / 18.0).exp2()).clamp(0.02, 40.0);
-        let stiffness = (s.stiffness * (0.4 + 1.2 * reg)).min(1.0);
+        let b = piano_inharmonicity(self.note as f32) * s.stiffness.max(0.0) / 0.3;
         // Treble partials fade on their own (shorter) clock, so a bright
         // attack mellows while the fundamental sustains. Dampers and kills
         // shorten both (the treble time is capped at the fundamental's).
@@ -1099,7 +1202,7 @@ impl PhysicalVoice {
         let spread = [1.0, 0.75, 1.3];
         for k in 0..count {
             let f = f0 * (detune[k] / 1200.0).exp2();
-            self.strings[k].tune_two_decays(s.sample_rate, f, stiffness, t60 * spread[k], t60_hf);
+            self.strings[k].tune_two_decays(s.sample_rate, f, b, t60 * spread[k], t60_hf);
         }
     }
 
@@ -2014,6 +2117,65 @@ mod tests {
             .map(|(k, p)| (k + 1) as f32 * bin * p)
             .sum::<f32>()
             / total
+    }
+
+    /// Cents by which partial `k` of `out` sits above k x f0: the strongest
+    /// peak within 60 cents of `expected`.
+    fn partial_cents(out: &[f32], f0: f32, k: f32, expected: f32) -> f32 {
+        let n = out.len();
+        let mag = |f: f32| {
+            let (mut re, mut im) = (0.0f32, 0.0f32);
+            for (i, x) in out.iter().enumerate() {
+                let w = 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n as f32).cos();
+                let ph = std::f32::consts::TAU * f * i as f32 / 48_000.0;
+                re += x * w * ph.cos();
+                im += x * w * ph.sin();
+            }
+            re * re + im * im
+        };
+        (-60..=60)
+            .map(|c| expected + c as f32)
+            .map(|c| (c, mag(k * f0 * (c / 1200.0).exp2())))
+            .fold((0.0, -1.0), |b, (c, m)| if m > b.1 { (c, m) } else { b })
+            .0
+    }
+
+    /// Piano partials are stretched sharp like a real piano string's (the
+    /// stiffness of steel), increasingly up the keyboard: a cue the ear uses
+    /// to tell a piano from a guitar. The plucked string stays harmonic.
+    #[test]
+    fn piano_partials_stretch_like_piano_strings() {
+        for (note, k) in [
+            (60u8, 4.0f32),
+            (60, 8.0),
+            (72, 4.0),
+            (84, 2.0),
+            (84, 4.0),
+            (96, 2.0),
+        ] {
+            let mut s = synth_with(&[
+                ("model", 2.0),
+                ("stiffness", 0.3),
+                ("unison", 0.0),
+                ("body", 0.0),
+                ("hf_damp", 0.1),
+            ]);
+            s.poly.note_on(note, 1.0, &s.shared);
+            let out = render(&mut s, 24_000);
+            let b = piano_inharmonicity(note as f32);
+            let expected = 1200.0 * ((1.0 + b * k * k) / (1.0 + b)).sqrt().log2();
+            let f0 = midi_to_freq(note as f32);
+            let c = partial_cents(&out[2_400..18_784], f0, k, expected);
+            assert!(
+                (c - expected).abs() <= (0.3 * expected).max(4.0),
+                "note {note} partial {k}: {c:+} cents, expected {expected:+.0}"
+            );
+        }
+        let mut s = synth_with(&[("body", 0.0)]);
+        s.poly.note_on(60, 1.0, &s.shared);
+        let out = render(&mut s, 24_000);
+        let c = partial_cents(&out[2_400..18_784], midi_to_freq(60.0), 8.0, 0.0);
+        assert!(c.abs() <= 2.0, "plucked string partial 8: {c:+} cents");
     }
 
     /// The hammer's strike point puts a node in the strings' motion: struck

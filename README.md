@@ -74,8 +74,9 @@ controller or a DAW/sequencer.
     (commuted synthesis), shaped by the felt hammer, which gets brighter the harder you
     play, in every register, and by where it strikes the string. **Body** sets how much
     soundboard you hear. Treble partials fade on their own, faster clock (**HF
-    Damping**), so a bright attack mellows while the fundamental rings on. Stiffness
-    and decay vary across the keyboard, dampers stop notes on key-up (the top octave and
+    Damping**), so a bright attack mellows while the fundamental rings on. Partials are
+    stretched sharp like a real piano's steel strings, increasingly up the keyboard
+    (**Stiffness** scales it; 0.3 is a typical piano). Decay varies across the keyboard, dampers stop notes on key-up (the top octave and
     a half has none, as on a real piano), the sustain pedal holds, and each strike has a
     little hammer thump.
   - **Bowed** is a bowed-string waveguide with a nonlinear stick-slip friction junction.
