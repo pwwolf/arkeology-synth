@@ -384,6 +384,15 @@ const VELOCITY_SENS: f32 = 0.65;
 /// first, which is what makes the decay two-stage.
 const TWO_STAGE_TAIL: f32 = 1.4;
 const PIANO_GAIN: f32 = 0.16;
+/// Length of the piano soundboard response (seconds).
+const BOARD_SECONDS: f32 = 0.12;
+/// How much soundboard tail Body adds to the hammer's direct strike (at
+/// Body 1 its response averages the strike's).
+const BOARD_MIX: f32 = 1.0;
+/// Highest piano hammer cutoff (Hz).
+const PIANO_HAMMER_MAX_HZ: f32 = 4_000.0;
+/// Piano excitation level (calibrated against the earlier pulse).
+const PIANO_EXC_GAIN: f32 = 22.0;
 const MALLET_GAIN: f32 = 0.32;
 const BOWED_GAIN: f32 = 0.4;
 const WIND_GAIN: f32 = 0.22;
@@ -425,6 +434,11 @@ fn model_from(v: f32) -> Model {
 
 #[derive(Default)]
 pub struct PhysicalShared {
+    /// Piano soundboard response (its tail; the direct strike is implicit),
+    /// built once with the synth, and its (complex) response at each MIDI
+    /// note's frequency, for voicing.
+    board: Vec<f32>,
+    board_at: Vec<(f32, f32)>,
     sample_rate: f32,
     model: Model,
     hardness: f32,
@@ -467,6 +481,62 @@ fn allpass_at(a: f64, w: f64) -> (f64, f64) {
     let (dr, di) = (1.0 + a * c, -a * s);
     let den = dr * dr + di * di;
     ((nr * dr + ni * di) / den, (ni * dr - nr * di) / den)
+}
+
+/// A stand-in for a measured piano soundboard response, for commuted
+/// synthesis: a dense decaying tail of noise in octave bands, the lows
+/// ringing longest, with a soundboard's broad emphasis around 100-600 Hz
+/// and treble roll-off. Deterministic. Also returns its complex response at
+/// each MIDI note's frequency. It's scaled so that response averages unity
+/// across the piano's range: like the direct strike's, so the tail colours
+/// the strike rather than swamping it (where it did, its random peaks and
+/// dips made some notes 12 dB louder than their neighbours).
+fn make_soundboard(sr: f32) -> (Vec<f32>, Vec<(f32, f32)>) {
+    let len = (BOARD_SECONDS * sr) as usize;
+    let mut out = vec![0.0f32; len];
+    let mut rng = Rng::new(0x50_0A4D);
+    // (centre Hz, gain, 60 dB decay in seconds)
+    let bands = [
+        (80.0, 0.7, 0.25),
+        (160.0, 1.0, 0.2),
+        (320.0, 1.0, 0.15),
+        (640.0, 0.8, 0.1),
+        (1_280.0, 0.5, 0.07),
+        (2_560.0, 0.3, 0.05),
+        (5_120.0, 0.15, 0.03),
+    ];
+    for (f, gain, t60) in bands {
+        if f > 0.45 * sr {
+            continue;
+        }
+        let mut bp = Biquad::band_pass(f, 1.4, sr);
+        let k = -6.91 / (t60 * sr);
+        for (i, o) in out.iter_mut().enumerate() {
+            *o += bp.process(rng.bipolar()) * gain * (k * i as f32).exp();
+        }
+    }
+    let response = |out: &[f32], note: usize| {
+        let w = std::f32::consts::TAU * midi_to_freq(note as f32) / sr;
+        out.iter().enumerate().fold((0.0, 0.0), |(re, im), (k, x)| {
+            let ph = w * k as f32;
+            (re + x * ph.cos(), im - x * ph.sin())
+        })
+    };
+    let mut at: Vec<(f32, f32)> = (0..128).map(|note| response(&out, note)).collect();
+    let power = at[21..=108]
+        .iter()
+        .map(|(re, im)| re * re + im * im)
+        .sum::<f32>()
+        / 88.0;
+    let scale = 1.0 / power.sqrt().max(1e-9);
+    for o in &mut out {
+        *o *= scale;
+    }
+    for (re, im) in &mut at {
+        *re *= scale;
+        *im *= scale;
+    }
+    (out, at)
 }
 
 // ---------------------------------------------------------------------------
@@ -645,11 +715,6 @@ impl WaveString {
         for (i, e) in exc.iter().take(self.n_int).enumerate() {
             self.buf[(start + i) & mask] += e * amp;
         }
-    }
-
-    #[inline]
-    fn tick(&mut self) -> f32 {
-        self.tick_in(0.0)
     }
 
     /// One sample, with `input` driving the string where the loop closes
@@ -875,6 +940,13 @@ pub struct PhysicalVoice {
     thump: f32,
     thump_coef: f32,
     thump_lp: f32,
+    /// Piano hammer: low-pass coefficient and states, strike-position
+    /// delay (samples), level and soundboard amount for the excitation.
+    hammer_c: f32,
+    hammer_y: (f32, f32),
+    strike_d: usize,
+    exc_amp: f32,
+    board_amt: f32,
     // Mallet
     modes: [Mode; MAX_MODES],
     mode_count: usize,
@@ -914,6 +986,11 @@ impl PhysicalVoice {
             thump: 0.0,
             thump_coef: 0.0,
             thump_lp: 0.0,
+            hammer_c: 0.5,
+            hammer_y: (0.0, 0.0),
+            strike_d: 1,
+            exc_amp: 0.0,
+            board_amt: 0.0,
             modes: [Mode::default(); MAX_MODES],
             mode_count: 0,
             mallet_f0: 440.0,
@@ -1059,44 +1136,75 @@ impl PhysicalVoice {
         }
     }
 
+    /// Strike the piano strings (commuted synthesis, after Smith and Van
+    /// Duyne): the strings and soundboard are linear, so rather than
+    /// filtering the strings' output through the board, the board's
+    /// response is fed into the strings, shaped by the hammer. Over the next
+    /// `BOARD_SECONDS`, `hammer_input` streams it through the hammer (a
+    /// velocity-dependent low-pass: felt stiffens as it's hit harder) and
+    /// the strike-position comb (a node at the point the hammer hits).
     fn excite_piano(&mut self, s: &PhysicalShared) {
         let sr = s.sample_rate;
         let period = self.strings[0].period;
         let h = self.effective_hardness(s);
-        // Felt hammer: felt stiffens with force, so contact time shrinks
-        // steeply as the hammer hits harder (~3.5 ms soft to ~0.4 ms hard),
-        // capped to half a period so short treble strings still get a strike.
-        let contact = ((0.0045 * (1.0 - h).powf(1.5) + 0.0003) * sr)
-            .min(period * 0.5)
-            .max(2.0);
-        let width = contact as usize;
-        let strike = ((s.position * period).round() as usize).max(1);
-        let len = (width + strike)
-            .min(period as usize)
-            .max(width)
-            .min(DELAY_LEN - 1);
-        for (i, e) in self.exc[..len].iter_mut().enumerate() {
-            *e = if i < width {
-                0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / contact).cos()
-            } else {
-                0.0
-            };
-        }
-        // Hammer position: notches the harmonics with a node at the strike
-        // point. Only meaningful when the strike point is well clear of the
-        // contact width; on short treble strings it would cancel the strike.
-        if strike > 2 * width {
-            for i in (strike..len).rev() {
-                self.exc[i] -= self.exc[i - strike];
-            }
-        }
-        let amp = self.vel_gain() * 1.2;
-        for k in 0..self.string_count {
-            self.strings[k].inject(&self.exc[..len], amp);
-        }
+        // Treble hammers are voiced harder (brighter): an octave higher
+        // cutoff every three octaves up. Capped, as a hammer's contact time
+        // never gets much below half a millisecond: sharper strikes made
+        // spiky attacks (peaks 26 dB over the note's level).
+        let register = ((self.note as f32 - 60.0) / 36.0).exp2();
+        let fc = (400.0 * (4.0 * h).exp2() * register).min(PIANO_HAMMER_MAX_HZ);
+        self.hammer_c = 1.0 - (-std::f32::consts::TAU * fc / sr).exp();
+        self.hammer_y = (0.0, 0.0);
+        self.strike_d = ((s.position * period).round() as usize).clamp(1, DELAY_LEN / 2);
+        self.board_amt = BOARD_MIX * s.body;
+        // Voicing: the board's (noise-like) response has random peaks and
+        // dips, which would make some notes much louder than others; scale
+        // the strike so every fundamental gets the same push (the board
+        // still colours the overtones).
+        let (re, im) = s
+            .board_at
+            .get(self.note as usize)
+            .copied()
+            .unwrap_or((0.0, 0.0));
+        let at_f0 = ((1.0 + self.board_amt * re).powi(2) + (self.board_amt * im).powi(2)).sqrt();
+        // Balance across the keyboard (measured): the bass's darker, wider
+        // hammers leave it short of energy, and the treble's harder ones
+        // would make it too loud.
+        let note = self.note as f32;
+        let balance_db = 10.0 * ((45.0 - note) / 24.0).clamp(0.0, 1.0)
+            - 7.0 * ((note - 69.0) / 36.0).clamp(0.0, 1.0);
+        self.exc_amp = self.vel_gain() * PIANO_EXC_GAIN * 10f32.powf(balance_db / 20.0)
+            / at_f0.clamp(0.5, 2.0);
+        self.age = 0;
         // Key and hammer "thump": a short low burst.
         self.thump = self.vel_gain() * 0.15;
         self.thump_coef = (-1.0 / (0.012 * sr)).exp();
+    }
+
+    /// The next sample of a piano strike's excitation (see `excite_piano`).
+    #[inline]
+    fn hammer_input(&mut self, board: &[f32]) -> f32 {
+        let k = self.age as usize;
+        if k >= board.len() {
+            return 0.0;
+        }
+        self.age += 1;
+        let x = if k == 0 { 1.0 } else { 0.0 } + self.board_amt * board[k];
+        let c = self.hammer_c;
+        let (a, b) = self.hammer_y;
+        let a = a + (x - a) * c;
+        let b = b + (a - b) * c;
+        self.hammer_y = (a, b);
+        // Strike position: the wave reflected from the near end arrives
+        // `strike_d` later, inverted.
+        let mask = DELAY_LEN - 1;
+        self.exc[k & mask] = b;
+        let reflected = if k >= self.strike_d {
+            self.exc[(k - self.strike_d) & mask]
+        } else {
+            0.0
+        };
+        (b - reflected) * self.exc_amp
     }
 
     fn tune_mallet(&mut self, s: &PhysicalShared, f0: f32, keep_state: bool) {
@@ -1392,10 +1500,16 @@ impl Voice for PhysicalVoice {
                     (STRING_GAIN, 1.0)
                 };
                 let thump_c = (-std::f32::consts::TAU * 180.0 / s.sample_rate).exp();
+                let piano = self.model == Model::Piano;
                 for i in 0..n {
+                    let input = if piano {
+                        self.hammer_input(&s.board)
+                    } else {
+                        0.0
+                    };
                     let mut z = 0.0;
                     for st in &mut self.strings[..self.string_count] {
-                        z += st.tick();
+                        z += st.tick_in(input);
                     }
                     let mut o = self.dc_block(z * norm, s.dc_pole) * gain;
                     if self.thump > 1e-5 {
@@ -1565,6 +1679,9 @@ impl PhysicalSynth {
             tmp_l: [0.0; MAX_BLOCK],
             tmp_r: [0.0; MAX_BLOCK],
         };
+        let (board, board_at) = make_soundboard(sample_rate);
+        synth.shared.board = board;
+        synth.shared.board_at = board_at;
         synth.update(&super::SynthKind::Physical.defaults());
         synth
     }
@@ -1697,7 +1814,9 @@ impl PhysicalSynth {
         self.tmp_r[..n].fill(0.0);
         self.poly
             .render(&self.shared, &mut self.tmp_l[..n], &mut self.tmp_r[..n]);
-        let body = if matches!(self.shared.model, Model::Bowed | Model::Wind) {
+        // Bowed voices carry their own body, the piano's soundboard is in its
+        // excitation and winds have none.
+        let body = if matches!(self.shared.model, Model::Bowed | Model::Wind | Model::Piano) {
             0.0
         } else {
             self.body
@@ -1856,6 +1975,102 @@ mod tests {
             heavy < light - 15.0,
             "HF Damping 0: {light:.1} dB, 1: {heavy:.1} dB"
         );
+    }
+
+    /// Spectral centroid (Hz) of `out` from 20 ms to 190 ms: the attack's
+    /// brightness.
+    fn attack_centroid(out: &[f32]) -> f32 {
+        let n = 8192;
+        let mut re: Vec<f32> = out[960..960 + n].to_vec();
+        let mut im = vec![0.0f32; n];
+        crate::spectrum::fft(&mut re, &mut im);
+        let bin = 48_000.0 / n as f32;
+        let pw: Vec<f32> = (1..n / 2).map(|k| re[k] * re[k] + im[k] * im[k]).collect();
+        let total: f32 = pw.iter().sum();
+        pw.iter()
+            .enumerate()
+            .map(|(k, p)| (k + 1) as f32 * bin * p)
+            .sum::<f32>()
+            / total
+    }
+
+    /// The hammer's strike point puts a node in the strings' motion: struck
+    /// a quarter of the way along, the 4th harmonic all but vanishes. This
+    /// used to apply only at the very bottom of the keyboard.
+    #[test]
+    fn piano_strike_position_notches_harmonics_across_the_keyboard() {
+        for note in [48u8, 72] {
+            let notch = |position: f32| {
+                let mut s = synth_with(&[
+                    ("model", 2.0),
+                    ("position", position),
+                    ("stiffness", 0.0),
+                    ("unison", 0.0),
+                    ("body", 0.0),
+                    ("hardness", 0.9),
+                ]);
+                s.poly.note_on(note, 0.9, &s.shared);
+                let out = render(&mut s, 26_400);
+                let f0 = midi_to_freq(note as f32);
+                let h = |k: f32| harmonic(&out[2_400..], f0 * k);
+                20.0 * (h(4.0) / (0.5 * (h(3.0) + h(5.0)))).log10()
+            };
+            let (at_quarter, elsewhere) = (notch(0.25), notch(0.12));
+            assert!(
+                at_quarter < elsewhere - 10.0,
+                "note {note}: 4th harmonic {at_quarter:.1} dB struck at 1/4, {elsewhere:.1} dB at 0.12"
+            );
+        }
+    }
+
+    /// Harder strikes are brighter in every register (the hammer's felt
+    /// stiffens); this used to stop above A4.
+    #[test]
+    fn piano_velocity_brightens_every_register() {
+        for note in [36u8, 60, 84, 96] {
+            let centroid = |vel: f32| {
+                let mut s = synth_with(&[("model", 2.0), ("body", 0.25)]);
+                s.poly.note_on(note, vel, &s.shared);
+                attack_centroid(&render(&mut s, 12_000))
+            };
+            let (soft, hard) = (centroid(0.3), centroid(1.0));
+            assert!(
+                hard > soft * 1.2,
+                "note {note}: soft {soft:.0} Hz, hard {hard:.0} Hz"
+            );
+        }
+    }
+
+    /// The soundboard's random peaks and dips are voiced out: neighbouring
+    /// notes are evenly loud across the keyboard.
+    #[test]
+    fn piano_notes_are_evenly_loud_across_the_keyboard() {
+        let patch = crate::patch::factory_patches()
+            .into_iter()
+            .find(|p| p.name == "Grand Piano")
+            .unwrap();
+        let levels: Vec<f32> = (21u8..=108)
+            .map(|note| {
+                let mut s = PhysicalSynth::new(48_000.0);
+                s.update(&patch.values());
+                s.poly.note_on(note, 0.8, &s.shared);
+                20.0 * rms(&render(&mut s, 24_000)).log10()
+            })
+            .collect();
+        for (k, pair) in levels.windows(2).enumerate() {
+            assert!(
+                (pair[0] - pair[1]).abs() <= 5.0,
+                "notes {} and {}: {:.1} vs {:.1} dB",
+                21 + k,
+                22 + k,
+                pair[0],
+                pair[1]
+            );
+        }
+        let (lo, hi) = levels
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+        assert!(hi - lo < 14.0, "levels span {lo:.1} to {hi:.1} dB");
     }
 
     #[test]

@@ -1323,6 +1323,7 @@ pub fn factory_patches() -> Vec<Patch> {
             "Honky-Tonk",
             Physical,
             &[
+                ("volume", 0.62),
                 ("model", 2.0),
                 ("hardness", 0.7),
                 ("position", 0.12),
@@ -1340,6 +1341,7 @@ pub fn factory_patches() -> Vec<Patch> {
             "Felt Piano",
             Physical,
             &[
+                ("volume", 1.0),
                 ("model", 2.0),
                 ("hardness", 0.1),
                 ("position", 0.12),

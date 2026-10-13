@@ -70,10 +70,14 @@ controller or a DAW/sequencer.
   - **Mallet** is modal synthesis: a strike rings up to 8 resonators tuned to a material's
     partials (wood/marimba, metal/vibraphone, glass, free bar, bell, membrane, tine).
   - **Piano** uses 1–3 detuned stiff strings per note, as on a real piano, so notes beat
-    and decay in two stages. A felt hammer's contact time shortens as you play harder,
-    making loud notes brighter. Stiffness and decay vary across the keyboard, dampers
-    stop notes on key-up (the top octave and a half has none, as on a real piano), the
-    sustain pedal holds, and each strike has a little hammer thump.
+    and decay in two stages. Each strike drives the strings with a soundboard's response
+    (commuted synthesis), shaped by the felt hammer, which gets brighter the harder you
+    play, in every register, and by where it strikes the string. **Body** sets how much
+    soundboard you hear. Treble partials fade on their own, faster clock (**HF
+    Damping**), so a bright attack mellows while the fundamental rings on. Stiffness
+    and decay vary across the keyboard, dampers stop notes on key-up (the top octave and
+    a half has none, as on a real piano), the sustain pedal holds, and each strike has a
+    little hammer thump.
   - **Bowed** is a bowed-string waveguide with a nonlinear stick-slip friction junction.
     Velocity sets bow speed, Bow Pressure and the mod wheel set bow force, and you choose
     bow position, bow attack and delayed vibrato. Instrument picks a violin, viola, cello
