@@ -64,6 +64,10 @@ controller or a DAW/sequencer.
     - For long sustain, turn **Decay** up: it's the time to fall 60 dB, so a real
       steel string's low notes need 12–20 s. Lower **Release Damp** lets short key
       presses ring on instead of muting them.
+    - **Bright Track** makes the pluck's brightness follow pitch (at 100%, in
+      proportion), and **Pluck Time** lets a note take up to 30 ms to reach full level,
+      like a fingertip letting the string go. Pizzicato Strings uses both; it was fitted
+      to recorded violin and cello section pizzicato (the CC0 VSCO-2 library).
     - New controls default to the earlier sound, so existing patches are unchanged. The
       Steel, Nylon and Parlor Guitar patches use them all; Harp, Koto and the electric
       guitars use the decay features.

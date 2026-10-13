@@ -72,11 +72,13 @@ pub const WIND_VIBRATO: usize = 29;
 pub const WIND_VIBRATO_RATE: usize = 30;
 pub const WIND_DRIFT: usize = 31;
 pub const BREATH_INPUT: usize = 32;
+pub const BRIGHT_TRACK: usize = 33;
+pub const PLUCK_TIME: usize = 34;
 
 /// What blows a wind note: velocity and the mod wheel, or a controller.
 pub const BREATH_INPUTS: [&str; 3] = ["Keyboard", "Breath CC", "Aftertouch"];
 
-pub static PARAMS: [P; 33] = [
+pub static PARAMS: [P; 35] = [
     VOICES_PARAM,
     P::choice("model", "Model", "Model", &MODELS, 0),
     P::float(
@@ -300,6 +302,26 @@ pub static PARAMS: [P; 33] = [
     ),
     P::float("wind_drift", "Drift", "Wind", 0.0, 1.0, 0.5, Unit::Percent),
     P::choice("breath_input", "Breath Input", "Wind", &BREATH_INPUTS, 0),
+    // Appended so older patches keep their layout; 0 reproduces the
+    // earlier sound.
+    P::float(
+        "bright_track",
+        "Bright Track",
+        "Exciter",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Percent,
+    ),
+    P::float(
+        "pluck_time",
+        "Pluck Time",
+        "Exciter",
+        0.0,
+        0.03,
+        0.0,
+        Unit::Seconds,
+    ),
 ];
 
 /// Which of this synth's own parameters apply to the selected model.
@@ -317,7 +339,9 @@ pub fn param_visible(p: &[f32], local: usize) -> bool {
             model == Model::Bowed
         }
         UNISON => model == Model::Piano,
-        DECAY_TRACK | TWO_STAGE | BODY_TYPE | SYMPATHETIC => model == Model::String,
+        DECAY_TRACK | TWO_STAGE | BODY_TYPE | SYMPATHETIC | BRIGHT_TRACK | PLUCK_TIME => {
+            model == Model::String
+        }
         MATERIAL => model == Model::Mallet,
         _ => true,
     }
@@ -501,6 +525,8 @@ pub struct PhysicalShared {
     width: f32,
     decay_track: f32,
     two_stage: f32,
+    bright_track: f32,
+    pluck_time: f32,
     wind: WindSettings,
     breath: f32,
     breath_input: usize,
@@ -1123,6 +1149,11 @@ pub struct PhysicalVoice {
     knock_c: f32,
     /// The knock's level: the strike's, without the register balance.
     knock_amp: f32,
+    /// A plucked note's onset fade (0..1) and its step per sample: a
+    /// fingertip lets the string go over several milliseconds (recorded
+    /// pizzicato, solo or section, takes 8-16 ms to reach its peak).
+    pluck_fade: f32,
+    pluck_step: f32,
     /// The soundboard radiates poorly below its lowest modes (high-pass).
     radiation: Biquad,
     /// Piano bridge coupling: how much of the strings' summed motion each
@@ -1179,6 +1210,8 @@ impl PhysicalVoice {
             knock_lp: (0.0, 0.0),
             knock_c: 0.1,
             knock_amp: 0.0,
+            pluck_fade: 1.0,
+            pluck_step: 0.0,
             radiation: Biquad::default(),
             bridge_c: 0.0,
             strike_d: 1.0,
@@ -1303,7 +1336,15 @@ impl PhysicalVoice {
         let sr = s.sample_rate;
         let n = (self.strings[0].period.round() as usize).clamp(2, DELAY_LEN - 1);
         let h = self.effective_hardness(s);
-        let fc = 150.0 * 2f32.powf(h * 7.5);
+        let mut fc = 150.0 * 2f32.powf(h * 7.5);
+        if s.bright_track > 0.0 {
+            // Bright Track: the pluck's brightness follows pitch (1 = in
+            // proportion, as recorded pizzicato does across the range), but
+            // never below the fundamental, or a dark low note's excitation
+            // would be almost empty.
+            let f0 = midi_to_freq(self.note as f32);
+            fc = (fc * ((self.note as f32 - 60.0) / 12.0 * s.bright_track).exp2()).max(f0);
+        }
         let c = (-std::f32::consts::TAU * fc / sr).exp();
         let mut lp = 0.0;
         let mut mean = 0.0;
@@ -1531,6 +1572,7 @@ impl PhysicalVoice {
         self.dc_y1 = 0.0;
         self.knock = 0.0;
         self.knock_lp = (0.0, 0.0);
+        self.pluck_fade = 1.0;
         self.tuned_for = f32::NAN;
     }
 
@@ -1747,7 +1789,15 @@ impl Voice for PhysicalVoice {
         }
         if self.pending {
             match self.model {
-                Model::String => self.excite_string(s),
+                Model::String => {
+                    self.excite_string(s);
+                    if s.pluck_time > 0.0 {
+                        self.pluck_fade = 0.0;
+                        self.pluck_step = 1.0 / (s.pluck_time * s.sample_rate);
+                    } else {
+                        self.pluck_fade = 1.0;
+                    }
+                }
                 Model::Piano => self.excite_piano(s),
                 Model::Mallet => self.excite_mallet(s),
                 Model::Bowed | Model::Wind => {}
@@ -1798,6 +1848,11 @@ impl Voice for PhysicalVoice {
                         }
                     }
                     let mut o = self.dc_block(z * norm + self.knock, s.dc_pole) * gain;
+                    if self.pluck_fade < 1.0 {
+                        // Raised-cosine fade-in over Pluck Time.
+                        o *= 0.5 - 0.5 * (std::f32::consts::PI * self.pluck_fade).cos();
+                        self.pluck_fade = (self.pluck_fade + self.pluck_step).min(1.0);
+                    }
                     if piano {
                         o = self.radiation.process(o);
                     }
@@ -1998,6 +2053,8 @@ impl PhysicalSynth {
         s.width = p[WIDTH];
         s.decay_track = p[DECAY_TRACK];
         s.two_stage = p[TWO_STAGE];
+        s.bright_track = p[BRIGHT_TRACK];
+        s.pluck_time = p[PLUCK_TIME];
         s.breath = p[BREATH];
         s.breath_input = p[BREATH_INPUT].round() as usize;
         s.wind = WindSettings {
@@ -2642,6 +2699,8 @@ mod tests {
                 && param_visible(&p, WIND_INSTRUMENT)
                 && param_visible(&p, WIND_DRIFT)
                 && param_visible(&p, BREATH_INPUT)
+                && !param_visible(&p, BRIGHT_TRACK)
+                && !param_visible(&p, PLUCK_TIME)
                 && param_visible(&p, TONE)
                 && !param_visible(&p, BODY)
                 && !param_visible(&p, DECAY)
@@ -2988,26 +3047,91 @@ mod tests {
         assert_eq!(s.poly.active_voices(), 0, "string kept ringing");
     }
 
-    /// Pizzicato is short and plucky: held notes must die away quickly.
+    /// Pizzicato Strings is fitted to recorded section pizzicato (VSCO-2's
+    /// CC0 violin and cello sections): violin-range notes are ~15-45 dB down
+    /// half a second after the pluck and gone by a second at the top, the
+    /// cello range rings a little longer.
     #[test]
-    fn pizzicato_patch_is_short() {
+    fn pizzicato_decays_like_recorded_pizzicato() {
         crate::dsp::init_tables();
         let patch = crate::patch::factory_patches()
             .into_iter()
             .find(|p| p.name == "Pizzicato Strings")
             .unwrap();
-        for note in [43u8, 55, 67, 79] {
+        // (note, time in s, dB down from the loudest 20 ms: min, max)
+        for (note, t, lo, hi) in [
+            (57u8, 0.5, 12.0, 30.0),
+            (69, 0.5, 15.0, 40.0),
+            (76, 0.5, 25.0, 50.0),
+            (86, 0.5, 40.0, 80.0),
+            (36, 1.0, 8.0, 30.0),
+        ] {
             let mut s = PhysicalSynth::new(48_000.0);
             s.update(&patch.values());
             s.poly.note_on(note, 0.8, &s.shared);
-            let out = render(&mut s, 48_000);
-            let (attack, later) = (rms(&out[..2_400]), rms(&out[24_000..26_400]));
-            let drop = 20.0 * (attack / later.max(1e-9)).log10();
+            let out = render(&mut s, 72_000);
+            let loudest = out.chunks(960).take(20).map(rms).fold(0.0f32, f32::max);
+            let a = (t * 48_000.0) as usize;
+            let drop = 20.0 * (loudest / rms(&out[a..a + 960]).max(1e-9)).log10();
             assert!(
-                drop > 30.0,
-                "note {note}: only {drop:.1} dB down after 0.5 s"
+                (lo..=hi).contains(&drop),
+                "note {note}: {drop:.1} dB down at {t} s (want {lo}-{hi})"
             );
         }
+    }
+
+    /// Bright Track: the pluck's brightness follows pitch (recorded
+    /// pizzicato's does, roughly in proportion across the range).
+    #[test]
+    fn bright_track_makes_plucks_follow_pitch() {
+        let ratio = |track: f32| {
+            let centroid = |note: u8| {
+                let mut s = synth_with(&[
+                    ("hardness", 0.3),
+                    ("vel_bright", 0.0),
+                    ("body", 0.0),
+                    ("bright_track", track),
+                ]);
+                s.poly.note_on(note, 0.8, &s.shared);
+                let out = render(&mut s, 12_000);
+                let n = 8192;
+                let mut re: Vec<f32> = out[960..960 + n].to_vec();
+                let mut im = vec![0.0f32; n];
+                crate::spectrum::fft(&mut re, &mut im);
+                let pw: Vec<f32> = (1..n / 2).map(|k| re[k] * re[k] + im[k] * im[k]).collect();
+                let total: f32 = pw.iter().sum();
+                pw.iter()
+                    .enumerate()
+                    .map(|(k, p)| (k + 1) as f32 * p)
+                    .sum::<f32>()
+                    / total
+            };
+            centroid(72) / centroid(48)
+        };
+        let (fixed, tracked) = (ratio(0.0), ratio(1.0));
+        assert!(
+            tracked > 1.5 && tracked > fixed * 1.35,
+            "two octaves apart, brightness x{tracked:.2} tracked, x{fixed:.2} fixed"
+        );
+    }
+
+    /// Pluck Time: the note takes that long to reach its peak, like a
+    /// fingertip letting the string go; 0 is the instant pluck it was.
+    #[test]
+    fn pluck_time_softens_the_onset() {
+        let peak_ms = |pluck: f32| {
+            let mut s = synth_with(&[("pluck_time", pluck), ("body", 0.0)]);
+            s.poly.note_on(60, 0.8, &s.shared);
+            let out = render(&mut s, 4_800);
+            let env: Vec<f32> = out.chunks(96).take(25).map(rms).collect();
+            let max = env.iter().fold(0.0f32, |m, v| m.max(*v));
+            env.iter().position(|v| *v >= 0.85 * max).unwrap() as f32 * 2.0
+        };
+        let (instant, soft) = (peak_ms(0.0), peak_ms(0.015));
+        assert!(
+            instant <= 4.0 && soft >= 10.0,
+            "peak at {instant} ms, {soft} ms"
+        );
     }
 
     #[test]
