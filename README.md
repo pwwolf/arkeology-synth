@@ -69,16 +69,19 @@ controller or a DAW/sequencer.
       guitars use the decay features.
   - **Mallet** is modal synthesis: a strike rings up to 8 resonators tuned to a material's
     partials (wood/marimba, metal/vibraphone, glass, free bar, bell, membrane, tine).
-  - **Piano** uses 1–3 detuned stiff strings per note, as on a real piano, so notes beat
-    and decay in two stages. Each strike drives the strings with a soundboard's response
+  - **Piano** uses 1–3 detuned stiff strings per note, as on a real piano. They meet at
+    the bridge, so a note decays in two stages as a piano's does: a loud prompt sound
+    while the strings move together, then a long, gently beating aftersound once they
+    drift apart. Each strike drives the strings with a soundboard's response
     (commuted synthesis), shaped by the felt hammer, which gets brighter the harder you
     play, in every register, and by where it strikes the string. **Body** sets how much
     soundboard you hear. Treble partials fade on their own, faster clock (**HF
     Damping**), so a bright attack mellows while the fundamental rings on. Partials are
     stretched sharp like a real piano's steel strings, increasingly up the keyboard
     (**Stiffness** scales it; 0.3 is a typical piano). Decay varies across the keyboard, dampers stop notes on key-up (the top octave and
-    a half has none, as on a real piano), the sustain pedal holds, and each strike has a
-    little hammer thump.
+    a half has none, as on a real piano), the sustain pedal holds, and each strike has the
+    hammer's knock through the soundboard. Its spectra and decays were matched against a
+    recorded grand (the CC0 Kawai in VCSL).
   - **Bowed** is a bowed-string waveguide with a nonlinear stick-slip friction junction.
     Velocity sets bow speed, Bow Pressure and the mod wheel set bow force, and you choose
     bow position, bow attack and delayed vibrato. Instrument picks a violin, viola, cello

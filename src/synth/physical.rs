@@ -401,10 +401,16 @@ const PIANO_STRETCH_REF: f32 = 2_000.0;
 /// top note (MIDI 136, ~10.5 kHz).
 const BOARD_STEPS: usize = 4;
 const BOARD_TOP_NOTE: usize = 136;
+/// Level of the hammer's knock heard directly through the soundboard,
+/// relative to the strike driving the strings (matched against a recorded
+/// grand's first quarter-second).
+const PIANO_KNOCK: f32 = 5.0;
+/// The knock's low-pass (two poles): a thud, not a click.
+const PIANO_KNOCK_HZ: f32 = 700.0;
 /// Highest piano hammer cutoff (Hz).
 const PIANO_HAMMER_MAX_HZ: f32 = 4_000.0;
 /// Piano excitation level (calibrated against the earlier pulse).
-const PIANO_EXC_GAIN: f32 = 22.0;
+const PIANO_EXC_GAIN: f32 = 35.0;
 const MALLET_GAIN: f32 = 0.32;
 const BOWED_GAIN: f32 = 0.4;
 const WIND_GAIN: f32 = 0.22;
@@ -419,6 +425,14 @@ const BOWED_LOSS: f32 = 0.95;
 /// down to `PIANO_HF_T60_MIN` (HF Damping 1), however long the fundamental
 /// rings.
 const PIANO_HF_REF: f32 = 3_000.0;
+/// Decay of a piano note's in-phase string motion (the prompt sound), as a
+/// fraction of its decay (the aftersound).
+const PIANO_PROMPT: f32 = 0.4;
+/// The hammer never strikes a note's strings exactly equally: these relative
+/// strengths (by string count) put some out-of-phase motion, the
+/// aftersound, into a note from the start.
+const PIANO_STRIKE_SPREAD: [[f32; MAX_STRINGS]; MAX_STRINGS] =
+    [[1.0, 0.0, 0.0], [1.3, 0.7, 0.0], [1.3, 0.7, 1.0]];
 const PIANO_HF_T60_MAX: f32 = 4.0;
 const PIANO_HF_T60_MIN: f32 = 0.25;
 /// Piano strings above this note have no dampers and ring after release.
@@ -509,14 +523,18 @@ fn make_soundboard(sr: f32) -> (Vec<f32>, Vec<(f32, f32)>) {
     let mut out = vec![0.0f32; len];
     let mut rng = Rng::new(0x50_0A4D);
     // (centre Hz, gain, 60 dB decay in seconds)
+    // Fairly even across the range, with the lows ringing only a little
+    // longer: a strongly bass-heavy board reinforces each note's fundamental
+    // far more than its partials (middle C's 2nd partial fell from -2 dB to
+    // -25 dB at Body 0.7, against a recorded grand's -2 dB).
     let bands = [
-        (80.0, 0.7, 0.25),
-        (160.0, 1.0, 0.2),
-        (320.0, 1.0, 0.15),
-        (640.0, 0.8, 0.1),
-        (1_280.0, 0.5, 0.07),
-        (2_560.0, 0.3, 0.05),
-        (5_120.0, 0.15, 0.03),
+        (80.0, 0.5, 0.12),
+        (160.0, 0.7, 0.1),
+        (320.0, 0.8, 0.09),
+        (640.0, 0.8, 0.08),
+        (1_280.0, 0.7, 0.06),
+        (2_560.0, 0.5, 0.05),
+        (5_120.0, 0.3, 0.03),
     ];
     for (f, gain, t60) in bands {
         if f > 0.45 * sr {
@@ -832,6 +850,15 @@ impl WaveString {
     /// (the bridge): energy builds only at the string's own resonances.
     #[inline]
     fn tick_in(&mut self, input: f32) -> f32 {
+        let z = self.loop_out();
+        self.loop_in(z, input);
+        z
+    }
+
+    /// First half of a tick: the sample arriving at the bridge, through the
+    /// loop's filters.
+    #[inline]
+    fn loop_out(&mut self) -> f32 {
         let mask = DELAY_LEN - 1;
         let x = self.buf[(self.w + DELAY_LEN - self.n_int) & mask];
         let a = self.ap_a;
@@ -847,7 +874,7 @@ impl WaveString {
                 y = out;
             }
         }
-        let z = if self.one_pole {
+        if self.one_pole {
             let z = self.pole_b0 * y + self.pole * self.pole_y1;
             self.pole_y1 = z;
             z
@@ -856,10 +883,14 @@ impl WaveString {
             let z = (1.0 - sd) * y + sd * self.lp_x1;
             self.lp_x1 = y;
             z
-        };
+        }
+    }
+
+    /// Second half: reflect `z` back into the loop, adding `input`.
+    #[inline]
+    fn loop_in(&mut self, z: f32, input: f32) {
         self.buf[self.w] = z * self.loop_gain + input;
-        self.w = (self.w + 1) & mask;
-        z
+        self.w = (self.w + 1) & (DELAY_LEN - 1);
     }
 }
 
@@ -1055,6 +1086,20 @@ pub struct PhysicalVoice {
     /// delay (samples), level and soundboard amount for the excitation.
     hammer_c: f32,
     hammer_y: (f32, f32),
+    /// Leaky integrator turning the strike (velocity) into string motion,
+    /// and its gain normalisation at the fundamental.
+    hammer_int: f32,
+    hammer_int_g: f32,
+    hammer_leak: f32,
+    hammer_sr: f32,
+    /// The strike heard directly, through the soundboard (the knock), and
+    /// its low-pass state.
+    knock: f32,
+    knock_lp: (f32, f32),
+    knock_c: f32,
+    /// Piano bridge coupling: how much of the strings' summed motion each
+    /// one loses to the bridge per pass (see `tune_piano`).
+    bridge_c: f32,
     strike_d: usize,
     exc_amp: f32,
     board_amt: f32,
@@ -1099,6 +1144,14 @@ impl PhysicalVoice {
             thump_lp: 0.0,
             hammer_c: 0.5,
             hammer_y: (0.0, 0.0),
+            hammer_int: 0.0,
+            hammer_int_g: 1.0,
+            hammer_leak: 0.997,
+            hammer_sr: 48_000.0,
+            knock: 0.0,
+            knock_lp: (0.0, 0.0),
+            knock_c: 0.1,
+            bridge_c: 0.0,
             strike_d: 1,
             exc_amp: 0.0,
             board_amt: 0.0,
@@ -1178,7 +1231,10 @@ impl PhysicalVoice {
     fn piano_layout(&self, s: &PhysicalShared) -> (usize, [f32; MAX_STRINGS]) {
         let d = s.unison;
         match self.note {
-            0..=32 => (1, [0.0; 3]),
+            // One string, but it vibrates in two planes with slightly
+            // different tuning, which couple through the bridge like a
+            // unison pair.
+            0..=32 => (2, [-d * 0.15, d * 0.15, 0.0]),
             33..=44 => (2, [-d * 0.5, d * 0.5, 0.0]),
             _ => (3, [-d, 0.0, d]),
         }
@@ -1198,12 +1254,19 @@ impl PhysicalVoice {
         // shorten both (the treble time is capped at the fundamental's).
         let t60_hf = PIANO_HF_T60_MAX
             * (PIANO_HF_T60_MIN / PIANO_HF_T60_MAX).powf(s.hf_damp.clamp(0.0, 1.0));
-        // Slightly different decays per string give the two-stage decay.
-        let spread = [1.0, 0.75, 1.3];
-        for k in 0..count {
-            let f = f0 * (detune[k] / 1200.0).exp2();
-            self.strings[k].tune_two_decays(s.sample_rate, f, b, t60 * spread[k], t60_hf);
+        // Two-stage decay (Weinreich): the strings of a note start in phase
+        // and drive the bridge together, so that motion is drained quickly
+        // into the soundboard (the loud "prompt" sound); their slight
+        // mistuning moves them out of phase, where they cancel at the bridge
+        // and ring on at their own, slower rate (the "aftersound"). Each
+        // string keeps its own loss for the aftersound; the bridge coupling
+        // takes the in-phase motion down to `PIANO_PROMPT` of the decay.
+        for (st, cents) in self.strings[..count].iter_mut().zip(detune) {
+            let f = f0 * (cents / 1200.0).exp2();
+            st.tune_two_decays(s.sample_rate, f, b, t60, t60_hf);
         }
+        let per_period = |t: f32| 10f32.powf(-3.0 / (f0 * t.max(0.005)));
+        self.bridge_c = (per_period(t60) - per_period(t60 * PIANO_PROMPT)).max(0.0) / count as f32;
     }
 
     fn excite_string(&mut self, s: &PhysicalShared) {
@@ -1262,10 +1325,21 @@ impl PhysicalVoice {
         // cutoff every three octaves up. Capped, as a hammer's contact time
         // never gets much below half a millisecond: sharper strikes made
         // spiky attacks (peaks 26 dB over the note's level).
-        let register = ((self.note as f32 - 60.0) / 36.0).exp2();
-        let fc = (400.0 * (4.0 * h).exp2() * register).min(PIANO_HAMMER_MAX_HZ);
+        let register = ((60.0 - self.note as f32) / 48.0).exp2();
+        let fc = (350.0 * (4.0 * h).exp2() * register).min(PIANO_HAMMER_MAX_HZ);
         self.hammer_c = 1.0 - (-std::f32::consts::TAU * fc / sr).exp();
         self.hammer_y = (0.0, 0.0);
+        self.hammer_int = 0.0;
+        // A hammer sets the string moving (velocity) rather than displacing
+        // it, so its partials fall as 1/k: integrate the strike, normalised so
+        // the fundamental's level is unchanged. (Without it, the strike-point
+        // comb, which rises 6 dB/octave below its first notch, made partials
+        // 2-6 louder than the fundamental: bright and twangy, like a pluck.)
+        self.hammer_int_g = std::f32::consts::TAU * midi_to_freq(self.note as f32) / sr;
+        self.hammer_leak = 1.0 - std::f32::consts::TAU * 20.0 / sr;
+        self.knock_lp = (0.0, 0.0);
+        self.knock_c = 1.0 - (-std::f32::consts::TAU * PIANO_KNOCK_HZ / sr).exp();
+        self.hammer_sr = sr;
         self.strike_d = ((s.position * period).round() as usize).clamp(1, DELAY_LEN / 2);
         self.board_amt = BOARD_MIX * s.body;
         // Voicing: the board's (noise-like) response has random peaks and
@@ -1292,12 +1366,11 @@ impl PhysicalVoice {
             weights += w;
         }
         let at_f0 = (energy / weights.max(1e-9)).sqrt();
-        // Balance across the keyboard (measured): the bass's darker, wider
-        // hammers leave it short of energy, and the treble's harder ones
-        // would make it too loud.
+        // Balance across the keyboard (measured): the bass and the top
+        // octaves, whose hammers are voiced darker, are short of energy.
         let note = self.note as f32;
         let balance_db = 10.0 * ((45.0 - note) / 24.0).clamp(0.0, 1.0)
-            - 7.0 * ((note - 69.0) / 36.0).clamp(0.0, 1.0);
+            + 9.0 * ((note - 72.0) / 36.0).clamp(0.0, 1.0);
         self.exc_amp = self.vel_gain() * PIANO_EXC_GAIN * 10f32.powf(balance_db / 20.0)
             / at_f0.clamp(0.5, 2.0);
         self.age = 0;
@@ -1311,6 +1384,7 @@ impl PhysicalVoice {
     fn hammer_input(&mut self, board: &[f32]) -> f32 {
         let k = self.age as usize;
         if k >= board.len() {
+            self.knock = 0.0;
             return 0.0;
         }
         self.age += 1;
@@ -1329,7 +1403,18 @@ impl PhysicalVoice {
         } else {
             0.0
         };
-        (b - reflected) * self.exc_amp
+        self.hammer_int = self.hammer_int * self.hammer_leak + (b - reflected);
+        // The impact also reaches the soundboard directly: a short thud
+        // heard on top of the strings at the start of every note. It's the
+        // board's low ringing (not the strike's click): a thud, which builds
+        // over the hammer's contact time.
+        let (k1, k2) = self.knock_lp;
+        let k1 = k1 + (board[k] - k1) * self.knock_c;
+        let k2 = k2 + (k1 - k2) * self.knock_c;
+        self.knock_lp = (k1, k2);
+        let contact = (k as f32 / (0.004 * self.hammer_sr)).min(1.0);
+        self.knock = k2 * self.exc_amp * PIANO_KNOCK * contact;
+        self.hammer_int * self.hammer_int_g * self.exc_amp
     }
 
     fn tune_mallet(&mut self, s: &PhysicalShared, f0: f32, keep_state: bool) {
@@ -1392,6 +1477,8 @@ impl PhysicalVoice {
         self.dc_y1 = 0.0;
         self.thump = 0.0;
         self.thump_lp = 0.0;
+        self.knock = 0.0;
+        self.knock_lp = (0.0, 0.0);
         self.tuned_for = f32::NAN;
     }
 
@@ -1633,10 +1720,33 @@ impl Voice for PhysicalVoice {
                         0.0
                     };
                     let mut z = 0.0;
-                    for st in &mut self.strings[..self.string_count] {
-                        z += st.tick_in(input);
+                    if piano {
+                        // The strings meet at the bridge, which takes back
+                        // a share of their summed (in-phase) motion.
+                        let mut outs = [0.0f32; MAX_STRINGS];
+                        for (o, st) in outs.iter_mut().zip(&mut self.strings[..self.string_count]) {
+                            *o = st.loop_out();
+                            z += *o;
+                            // Judge silence by the strings themselves: their
+                            // sum at the bridge passes through long beat nulls
+                            // where they cancel, which mustn't end the note.
+                            peak = peak.max(o.abs() * gain);
+                        }
+                        let back = self.bridge_c * z;
+                        let strike = PIANO_STRIKE_SPREAD[self.string_count - 1];
+                        for ((o, st), g) in outs
+                            .iter()
+                            .zip(&mut self.strings[..self.string_count])
+                            .zip(strike)
+                        {
+                            st.loop_in(*o, input * g - back);
+                        }
+                    } else {
+                        for st in &mut self.strings[..self.string_count] {
+                            z += st.tick_in(input);
+                        }
                     }
-                    let mut o = self.dc_block(z * norm, s.dc_pole) * gain;
+                    let mut o = self.dc_block(z * norm + self.knock, s.dc_pole) * gain;
                     if self.thump > 1e-5 {
                         self.thump_lp =
                             (1.0 - thump_c) * self.rng.bipolar() + thump_c * self.thump_lp;
@@ -2071,11 +2181,19 @@ mod tests {
             s.poly.note_on(45, 1.0, &s.shared);
             let out = render(&mut s, 48_000 * 2);
             // Level of the fundamental, and of everything above 2 kHz, early
-            // (50 ms) and late (1.5 s), in dB.
+            // (150 ms, after the knock) and late (1.5 s), in dB.
             let at = |t: f32| {
                 let start = (t * 48_000.0) as usize;
                 let n = 4096;
-                let mut re: Vec<f32> = out[start..start + n].to_vec();
+                // Hann-windowed, or the strong low partials leak a floor
+                // across the treble band.
+                let mut re: Vec<f32> = out[start..start + n]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, x)| {
+                        x * (0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n as f32).cos())
+                    })
+                    .collect();
                 let mut im = vec![0.0f32; n];
                 crate::spectrum::fft(&mut re, &mut im);
                 let bin = 48_000.0 / n as f32;
@@ -2085,12 +2203,14 @@ mod tests {
                 let high: f32 = ((2_000.0 / bin) as usize..n / 2).map(pw).sum();
                 (10.0 * fund.log10(), 10.0 * high.log10())
             };
-            let ((f_early, h_early), (f_late, h_late)) = (at(0.05), at(1.5));
+            let ((f_early, h_early), (f_late, h_late)) = (at(0.15), at(1.5));
             (f_early - f_late, h_early - h_late, h_late - f_late)
         };
+        // Both fall (the two-stage decay drains every partial early on), but
+        // the treble much faster.
         let (fund_drop, high_drop, _) = bands(0.35);
         assert!(
-            fund_drop < 10.0 && high_drop > fund_drop + 20.0,
+            high_drop > fund_drop + 10.0,
             "fundamental fell {fund_drop:.1} dB, treble {high_drop:.1} dB"
         );
         // The treble left late in the note, relative to the fundamental.
@@ -2100,23 +2220,6 @@ mod tests {
             heavy < light - 15.0,
             "HF Damping 0: {light:.1} dB, 1: {heavy:.1} dB"
         );
-    }
-
-    /// Spectral centroid (Hz) of `out` from 20 ms to 190 ms: the attack's
-    /// brightness.
-    fn attack_centroid(out: &[f32]) -> f32 {
-        let n = 8192;
-        let mut re: Vec<f32> = out[960..960 + n].to_vec();
-        let mut im = vec![0.0f32; n];
-        crate::spectrum::fft(&mut re, &mut im);
-        let bin = 48_000.0 / n as f32;
-        let pw: Vec<f32> = (1..n / 2).map(|k| re[k] * re[k] + im[k] * im[k]).collect();
-        let total: f32 = pw.iter().sum();
-        pw.iter()
-            .enumerate()
-            .map(|(k, p)| (k + 1) as f32 * bin * p)
-            .sum::<f32>()
-            / total
     }
 
     /// Cents by which partial `k` of `out` sits above k x f0: the strongest
@@ -2207,20 +2310,40 @@ mod tests {
         }
     }
 
-    /// Harder strikes are brighter in every register (the hammer's felt
-    /// stiffens); this used to stop above A4.
+    /// Harder strikes are brighter through the keyboard (the hammer's felt
+    /// stiffens); this used to stop above A4. (The top octave is nearly a pure
+    /// tone at any strength, as on a real grand.)
     #[test]
     fn piano_velocity_brightens_every_register() {
-        for note in [36u8, 60, 84, 96] {
-            let centroid = |vel: f32| {
+        for note in [36u8, 48, 60, 72, 84] {
+            // Share of the attack's energy above the 4th partial, or 1.5 kHz in
+            // the bass (dB): the fundamental dominates a piano's spectrum, so a
+            // centroid hardly moves even when the upper partials change a lot.
+            let upper = |vel: f32| {
                 let mut s = synth_with(&[("model", 2.0), ("body", 0.25)]);
                 s.poly.note_on(note, vel, &s.shared);
-                attack_centroid(&render(&mut s, 12_000))
+                let out = render(&mut s, 12_000);
+                let n = 8192;
+                let mut re: Vec<f32> = out[960..960 + n]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, x)| {
+                        x * (0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n as f32).cos())
+                    })
+                    .collect();
+                let mut im = vec![0.0f32; n];
+                crate::spectrum::fft(&mut re, &mut im);
+                let bin = 48_000.0 / n as f32;
+                let split = ((4.5 * midi_to_freq(note as f32)).max(1_500.0) / bin) as usize;
+                let pw = |k: usize| re[k] * re[k] + im[k] * im[k];
+                let total: f32 = (1..n / 2).map(pw).sum();
+                let high: f32 = (split..n / 2).map(pw).sum();
+                10.0 * (high / total).log10()
             };
-            let (soft, hard) = (centroid(0.3), centroid(1.0));
+            let (soft, hard) = (upper(0.3), upper(1.0));
             assert!(
-                hard > soft * 1.2,
-                "note {note}: soft {soft:.0} Hz, hard {hard:.0} Hz"
+                hard > soft + 6.0,
+                "note {note}: upper partials {soft:.1} dB soft, {hard:.1} dB hard"
             );
         }
     }
@@ -2257,6 +2380,33 @@ mod tests {
         assert!(hi - lo < 14.0, "levels span {lo:.1} to {hi:.1} dB");
     }
 
+    /// Two-stage decay: a note's strings start in phase and drain into the
+    /// bridge quickly (the prompt sound), then ring on out of phase much
+    /// longer (the aftersound). A single-slope decay is what a pluck does.
+    #[test]
+    fn piano_notes_decay_in_two_stages() {
+        let patch = crate::patch::factory_patches()
+            .into_iter()
+            .find(|p| p.name == "Grand Piano")
+            .unwrap();
+        for note in [48u8, 60, 72] {
+            let mut s = PhysicalSynth::new(48_000.0);
+            s.update(&patch.values());
+            s.poly.note_on(note, 0.8, &s.shared);
+            let out = render(&mut s, 48_000 * 7);
+            // Half-second averages, so the strings' beating doesn't skew it.
+            let db = |a: f32, b: f32| {
+                20.0 * rms(&out[(a * 48_000.0) as usize..(b * 48_000.0) as usize]).log10()
+            };
+            let early = (db(0.1, 0.4) - db(0.9, 1.2)) / 0.8;
+            let late = (db(3.0, 3.5) - db(6.0, 6.5)) / 3.0;
+            assert!(
+                early > 2.0 * late && late > 0.5,
+                "note {note}: {early:.1} dB/s early, {late:.1} dB/s late"
+            );
+        }
+    }
+
     #[test]
     fn piano_dampers_stop_notes_except_the_top_octaves() {
         for (note, should_ring) in [(60u8, false), (96, true)] {
@@ -2272,24 +2422,6 @@ mod tests {
                 "note {note}: rms after release {late}"
             );
         }
-    }
-
-    #[test]
-    fn harder_piano_strikes_are_brighter() {
-        let zc = |vel: f32| {
-            let mut s = synth_with(&[("model", 2.0), ("body", 0.0)]);
-            s.poly.note_on(48, vel, &s.shared);
-            let out = render(&mut s, 9_600);
-            out.windows(2)
-                .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
-                .count()
-        };
-        assert!(
-            zc(1.0) as f32 > zc(0.2) as f32 * 1.3,
-            "loud {} soft {}",
-            zc(1.0),
-            zc(0.2)
-        );
     }
 
     #[test]
