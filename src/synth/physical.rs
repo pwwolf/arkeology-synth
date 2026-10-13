@@ -13,7 +13,8 @@
 //! - **Piano**: one to three slightly detuned stiff strings per note (as on a
 //!   real piano), struck by a felt hammer whose contact time shortens with
 //!   velocity, with register-dependent stiffness and decay, dampers that act
-//!   on key release (none in the top octave and a half) and a hammer thump.
+//!   on key release (none in the top octave and a half) and the hammer's
+//!   knock through the soundboard.
 //! - **Bowed**: a bowed-string waveguide (McIntyre/Schumacher/Woodhouse,
 //!   Smith). The string is split at the bow into neck and bridge segments and
 //!   the bow drives it through a nonlinear stick-slip friction curve. Bow
@@ -387,6 +388,12 @@ const VELOCITY_SENS: f32 = 0.65;
 /// first, which is what makes the decay two-stage.
 const TWO_STAGE_TAIL: f32 = 1.4;
 const PIANO_GAIN: f32 = 0.16;
+/// Rise time constant of the soundboard's response (seconds), and the
+/// weight of the strike's instantaneous part against it. A recorded grand's
+/// sound builds over its first ~18 ms; an instant peak that then decays is
+/// the shape of a pluck.
+const BOARD_RISE: f32 = 0.006;
+const PIANO_DIRECT: f32 = 0.1;
 /// Length of the piano soundboard response (seconds).
 const BOARD_SECONDS: f32 = 0.12;
 /// How much soundboard tail Body adds to the hammer's direct strike (at
@@ -402,9 +409,11 @@ const PIANO_STRETCH_REF: f32 = 2_000.0;
 const BOARD_STEPS: usize = 4;
 const BOARD_TOP_NOTE: usize = 136;
 /// Level of the hammer's knock heard directly through the soundboard,
-/// relative to the strike driving the strings (matched against a recorded
-/// grand's first quarter-second).
-const PIANO_KNOCK: f32 = 5.0;
+/// relative to the strike driving the strings: matched to a recorded
+/// grand's low thud (energy below the fundamental) over its first 60 ms. Any
+/// louder and it dominates the attack, which then spikes and falls away like
+/// a pluck instead of building up.
+const PIANO_KNOCK: f32 = 0.5;
 /// The knock's low-pass (two poles): a thud, not a click.
 const PIANO_KNOCK_HZ: f32 = 700.0;
 /// Highest piano hammer cutoff (Hz).
@@ -461,9 +470,8 @@ fn model_from(v: f32) -> Model {
 #[derive(Default)]
 pub struct PhysicalShared {
     /// Piano soundboard response (its tail; the direct strike is implicit),
-    /// built once with the synth, and its (complex) response at every
-    /// quarter semitone (`BOARD_STEPS` per semitone from MIDI note 0), for
-    /// voicing.
+    /// built once with the synth, and its (complex) response every quarter
+    /// semitone (`BOARD_STEPS` per semitone from MIDI note 0), for voicing.
     board: Vec<f32>,
     board_at: Vec<(f32, f32)>,
     sample_rate: f32,
@@ -543,7 +551,9 @@ fn make_soundboard(sr: f32) -> (Vec<f32>, Vec<(f32, f32)>) {
         let mut bp = Biquad::band_pass(f, 1.4, sr);
         let k = -6.91 / (t60 * sr);
         for (i, o) in out.iter_mut().enumerate() {
-            *o += bp.process(rng.bipolar()) * gain * (k * i as f32).exp();
+            // The board's response takes a few milliseconds to build.
+            let rise = 1.0 - (-(i as f32) / (BOARD_RISE * sr)).exp();
+            *o += bp.process(rng.bipolar()) * gain * (k * i as f32).exp() * rise;
         }
     }
     let response = |out: &[f32], note: f32| {
@@ -1079,9 +1089,6 @@ pub struct PhysicalVoice {
     string_count: usize,
     dc_x1: f32,
     dc_y1: f32,
-    thump: f32,
-    thump_coef: f32,
-    thump_lp: f32,
     /// Piano hammer: low-pass coefficient and states, strike-position
     /// delay (samples), level and soundboard amount for the excitation.
     hammer_c: f32,
@@ -1100,7 +1107,7 @@ pub struct PhysicalVoice {
     /// Piano bridge coupling: how much of the strings' summed motion each
     /// one loses to the bridge per pass (see `tune_piano`).
     bridge_c: f32,
-    strike_d: usize,
+    strike_d: f32,
     exc_amp: f32,
     board_amt: f32,
     // Mallet
@@ -1139,9 +1146,6 @@ impl PhysicalVoice {
             string_count: 1,
             dc_x1: 0.0,
             dc_y1: 0.0,
-            thump: 0.0,
-            thump_coef: 0.0,
-            thump_lp: 0.0,
             hammer_c: 0.5,
             hammer_y: (0.0, 0.0),
             hammer_int: 0.0,
@@ -1152,7 +1156,7 @@ impl PhysicalVoice {
             knock_lp: (0.0, 0.0),
             knock_c: 0.1,
             bridge_c: 0.0,
-            strike_d: 1,
+            strike_d: 1.0,
             exc_amp: 0.0,
             board_amt: 0.0,
             modes: [Mode::default(); MAX_MODES],
@@ -1340,13 +1344,17 @@ impl PhysicalVoice {
         self.knock_lp = (0.0, 0.0);
         self.knock_c = 1.0 - (-std::f32::consts::TAU * PIANO_KNOCK_HZ / sr).exp();
         self.hammer_sr = sr;
-        self.strike_d = ((s.position * period).round() as usize).clamp(1, DELAY_LEN / 2);
+        // Fractional: on the shortest strings a period is ~12 samples, and
+        // rounding the strike point to whole samples swung levels by 5 dB
+        // between neighbouring notes.
+        self.strike_d = (s.position * period).clamp(1.0, (DELAY_LEN / 2) as f32);
         self.board_amt = BOARD_MIX * s.body;
         // Voicing: the board's (noise-like) response has random peaks and
         // dips, which would make some notes much louder than others. Scale
         // the strike by the board's response averaged over the note's lower
-        // partials (weighted towards the fundamental), so a single dip
-        // can't swing it, and Body doesn't change the overall level.
+        // partials, weighted by their share of the energy (about 1/k^2, the
+        // strike being integrated), so a single dip can't swing it, and Body
+        // doesn't change the overall level.
         let f0 = midi_to_freq(self.note as f32);
         let a = self.board_amt;
         let (mut energy, mut weights) = (0.0, 0.0);
@@ -1355,28 +1363,30 @@ impl PhysicalVoice {
             if k > 1 && f > 5_000.0 {
                 break;
             }
-            let step = ((69.0 + 12.0 * (f / 440.0).log2()) * BOARD_STEPS as f32).round();
-            let (re, im) = s
-                .board_at
-                .get(step.max(0.0) as usize)
-                .copied()
-                .unwrap_or((0.0, 0.0));
-            let w = 1.0 / k as f32;
-            energy += w * ((1.0 + a * re).powi(2) + (a * im).powi(2));
+            // Interpolated between table steps: high up, the board's response
+            // changes within a few tens of Hz.
+            let pos = ((69.0 + 12.0 * (f / 440.0).log2()) * BOARD_STEPS as f32).max(0.0);
+            let i = pos as usize;
+            let t = pos - i as f32;
+            let at = |i: usize| s.board_at.get(i).copied().unwrap_or((0.0, 0.0));
+            let ((r0, i0), (r1, i1)) = (at(i), at(i + 1));
+            let (re, im) = (r0 + (r1 - r0) * t, i0 + (i1 - i0) * t);
+            let w = 1.0 / (k * k) as f32;
+            energy += w * ((PIANO_DIRECT + a * re).powi(2) + (a * im).powi(2));
             weights += w;
         }
-        let at_f0 = (energy / weights.max(1e-9)).sqrt();
+        // Relative to the strike's average response (the board's averages
+        // unity), so the clamp limits only the voicing correction.
+        let expected = (PIANO_DIRECT * PIANO_DIRECT + a * a).sqrt().max(1e-3);
+        let at_f0 = (energy / weights.max(1e-9)).sqrt() / expected;
         // Balance across the keyboard (measured): the bass and the top
         // octaves, whose hammers are voiced darker, are short of energy.
         let note = self.note as f32;
         let balance_db = 10.0 * ((45.0 - note) / 24.0).clamp(0.0, 1.0)
             + 9.0 * ((note - 72.0) / 36.0).clamp(0.0, 1.0);
         self.exc_amp = self.vel_gain() * PIANO_EXC_GAIN * 10f32.powf(balance_db / 20.0)
-            / at_f0.clamp(0.5, 2.0);
+            / (expected * at_f0.clamp(0.5, 2.0));
         self.age = 0;
-        // Key and hammer "thump": a short low burst.
-        self.thump = self.vel_gain() * 0.15;
-        self.thump_coef = (-1.0 / (0.012 * sr)).exp();
     }
 
     /// The next sample of a piano strike's excitation (see `excite_piano`).
@@ -1388,7 +1398,7 @@ impl PhysicalVoice {
             return 0.0;
         }
         self.age += 1;
-        let x = if k == 0 { 1.0 } else { 0.0 } + self.board_amt * board[k];
+        let x = if k == 0 { PIANO_DIRECT } else { 0.0 } + self.board_amt * board[k];
         let c = self.hammer_c;
         let (a, b) = self.hammer_y;
         let a = a + (x - a) * c;
@@ -1398,11 +1408,16 @@ impl PhysicalVoice {
         // `strike_d` later, inverted.
         let mask = DELAY_LEN - 1;
         self.exc[k & mask] = b;
-        let reflected = if k >= self.strike_d {
-            self.exc[(k - self.strike_d) & mask]
-        } else {
-            0.0
+        let d = self.strike_d;
+        let (i, frac) = (d as usize, d - d.floor());
+        let at = |j: usize| {
+            if k >= j {
+                self.exc[(k - j) & mask]
+            } else {
+                0.0
+            }
         };
+        let reflected = at(i) * (1.0 - frac) + at(i + 1) * frac;
         self.hammer_int = self.hammer_int * self.hammer_leak + (b - reflected);
         // The impact also reaches the soundboard directly: a short thud
         // heard on top of the strings at the start of every note. It's the
@@ -1475,8 +1490,6 @@ impl PhysicalVoice {
         self.modes = [Mode::default(); MAX_MODES];
         self.dc_x1 = 0.0;
         self.dc_y1 = 0.0;
-        self.thump = 0.0;
-        self.thump_lp = 0.0;
         self.knock = 0.0;
         self.knock_lp = (0.0, 0.0);
         self.tuned_for = f32::NAN;
@@ -1711,7 +1724,6 @@ impl Voice for PhysicalVoice {
                 } else {
                     (STRING_GAIN, 1.0)
                 };
-                let thump_c = (-std::f32::consts::TAU * 180.0 / s.sample_rate).exp();
                 let piano = self.model == Model::Piano;
                 for i in 0..n {
                     let input = if piano {
@@ -1746,13 +1758,7 @@ impl Voice for PhysicalVoice {
                             z += st.tick_in(input);
                         }
                     }
-                    let mut o = self.dc_block(z * norm + self.knock, s.dc_pole) * gain;
-                    if self.thump > 1e-5 {
-                        self.thump_lp =
-                            (1.0 - thump_c) * self.rng.bipolar() + thump_c * self.thump_lp;
-                        o += self.thump_lp * self.thump * 6.0;
-                        self.thump *= self.thump_coef;
-                    }
+                    let o = self.dc_block(z * norm + self.knock, s.dc_pole) * gain;
                     peak = peak.max(o.abs());
                     l[i] += o * self.pan.0;
                     r[i] += o * self.pan.1;
